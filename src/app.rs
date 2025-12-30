@@ -673,8 +673,12 @@ impl App {
     pub fn continue_resize(&mut self, pos: Position) {
         if let Some(ref resize) = self.resize_state {
             if let Some(shape) = self.shape_view.get(resize.shape_id) {
-                let new_kind = resize_shape(&shape.kind, resize.handle, pos);
-                if self.doc.update_shape(resize.shape_id, new_kind).is_ok() {
+                let old_kind = shape.kind.clone();
+                let new_kind = resize_shape(&old_kind, resize.handle, pos);
+                let shape_id = resize.shape_id;
+                if self.doc.update_shape(shape_id, new_kind.clone()).is_ok() {
+                    // Update connected lines to follow the resized shape's snap points
+                    let _ = self.doc.update_connections_for_resize(shape_id, &old_kind, &new_kind);
                     self.rebuild_view();
                     self.doc.mark_dirty();
                 }

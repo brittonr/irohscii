@@ -383,6 +383,88 @@ impl Document {
         Ok(())
     }
 
+    /// Update connected lines when a shape is resized
+    /// This handles the case where different snap points move by different amounts
+    pub fn update_connections_for_resize(&mut self, resized_id: ShapeId, old_kind: &ShapeKind, new_kind: &ShapeKind) -> Result<()> {
+        let old_snaps = old_kind.snap_points();
+        let new_snaps = new_kind.snap_points();
+
+        // If snap point counts don't match, we can't reliably update connections
+        if old_snaps.len() != new_snaps.len() {
+            return Ok(());
+        }
+
+        let all_shapes = self.read_all_shapes()?;
+        let resized_conn_id = resized_id.0.as_u128() as u64;
+
+        for (id, kind) in all_shapes {
+            match kind {
+                ShapeKind::Line { start, end, style, start_connection, end_connection } => {
+                    let mut changed = false;
+                    let mut new_start = start;
+                    let mut new_end = end;
+
+                    // If start is connected to the resized shape, find which snap point it was at
+                    if start_connection == Some(resized_conn_id) {
+                        if let Some(new_pos) = find_corresponding_snap(&start, &old_snaps, &new_snaps) {
+                            new_start = new_pos;
+                            changed = true;
+                        }
+                    }
+
+                    // If end is connected to the resized shape, find which snap point it was at
+                    if end_connection == Some(resized_conn_id) {
+                        if let Some(new_pos) = find_corresponding_snap(&end, &old_snaps, &new_snaps) {
+                            new_end = new_pos;
+                            changed = true;
+                        }
+                    }
+
+                    if changed {
+                        self.update_shape(id, ShapeKind::Line {
+                            start: new_start,
+                            end: new_end,
+                            style,
+                            start_connection,
+                            end_connection,
+                        })?;
+                    }
+                }
+                ShapeKind::Arrow { start, end, style, start_connection, end_connection } => {
+                    let mut changed = false;
+                    let mut new_start = start;
+                    let mut new_end = end;
+
+                    if start_connection == Some(resized_conn_id) {
+                        if let Some(new_pos) = find_corresponding_snap(&start, &old_snaps, &new_snaps) {
+                            new_start = new_pos;
+                            changed = true;
+                        }
+                    }
+
+                    if end_connection == Some(resized_conn_id) {
+                        if let Some(new_pos) = find_corresponding_snap(&end, &old_snaps, &new_snaps) {
+                            new_end = new_pos;
+                            changed = true;
+                        }
+                    }
+
+                    if changed {
+                        self.update_shape(id, ShapeKind::Arrow {
+                            start: new_start,
+                            end: new_end,
+                            style,
+                            start_connection,
+                            end_connection,
+                        })?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     // --- Global Undo/Redo (synced via CRDT) ---
 
     /// Maximum undo history size
@@ -874,4 +956,22 @@ fn str_to_line_style(s: &str) -> LineStyle {
         "OrthogonalVH" => LineStyle::OrthogonalVH,
         _ => LineStyle::default(),
     }
+}
+
+/// Find which old snap point a position matches and return the corresponding new snap point
+fn find_corresponding_snap(pos: &Position, old_snaps: &[Position], new_snaps: &[Position]) -> Option<Position> {
+    // Find the closest old snap point to this position
+    let mut best_idx = None;
+    let mut best_dist = i32::MAX;
+
+    for (idx, old_snap) in old_snaps.iter().enumerate() {
+        let dist = (pos.x - old_snap.x).abs() + (pos.y - old_snap.y).abs();
+        if dist < best_dist {
+            best_dist = dist;
+            best_idx = Some(idx);
+        }
+    }
+
+    // If we found a matching snap point and the new snaps have the same index, return it
+    best_idx.and_then(|idx| new_snaps.get(idx).copied())
 }

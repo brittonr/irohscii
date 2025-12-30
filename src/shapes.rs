@@ -148,6 +148,66 @@ impl ShapeKind {
                 | ShapeKind::Ellipse { .. }
         )
     }
+
+    /// Get snap points for this shape (used for connection updates during resize)
+    pub fn snap_points(&self) -> Vec<Position> {
+        match self {
+            ShapeKind::Rectangle { start, end, .. } | ShapeKind::DoubleBox { start, end, .. } => {
+                let min_x = start.x.min(end.x);
+                let max_x = start.x.max(end.x);
+                let min_y = start.y.min(end.y);
+                let max_y = start.y.max(end.y);
+                let mid_x = (min_x + max_x) / 2;
+                let mid_y = (min_y + max_y) / 2;
+
+                vec![
+                    Position::new(min_x, min_y),
+                    Position::new(max_x, min_y),
+                    Position::new(min_x, max_y),
+                    Position::new(max_x, max_y),
+                    Position::new(mid_x, min_y),
+                    Position::new(mid_x, max_y),
+                    Position::new(min_x, mid_y),
+                    Position::new(max_x, mid_y),
+                ]
+            }
+            ShapeKind::Line { start, end, .. } | ShapeKind::Arrow { start, end, .. } => {
+                vec![*start, *end]
+            }
+            ShapeKind::Diamond { center, half_width, half_height, .. } => {
+                vec![
+                    Position::new(center.x, center.y - *half_height),
+                    Position::new(center.x, center.y + *half_height),
+                    Position::new(center.x - *half_width, center.y),
+                    Position::new(center.x + *half_width, center.y),
+                ]
+            }
+            ShapeKind::Ellipse { center, radius_x, radius_y, .. } => {
+                vec![
+                    Position::new(center.x, center.y - *radius_y),
+                    Position::new(center.x, center.y + *radius_y),
+                    Position::new(center.x - *radius_x, center.y),
+                    Position::new(center.x + *radius_x, center.y),
+                ]
+            }
+            ShapeKind::Text { pos, content } => {
+                let end_x = pos.x + content.len() as i32 - 1;
+                vec![*pos, Position::new(end_x, pos.y)]
+            }
+            ShapeKind::Freehand { points, .. } => {
+                let mut snaps = Vec::new();
+                if let Some(first) = points.first() {
+                    snaps.push(*first);
+                }
+                if let Some(last) = points.last() {
+                    if points.len() > 1 {
+                        snaps.push(*last);
+                    }
+                }
+                snaps
+            }
+        }
+    }
 }
 
 /// Snap point on a shape edge
