@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -178,6 +178,8 @@ fn run_app(
 ) -> Result<()> {
     let mut last_presence_broadcast = Instant::now();
     let mut last_stale_prune = Instant::now();
+    // Track which key triggered the current popup (for release-to-confirm)
+    let mut popup_trigger_key: Option<KeyCode> = None;
 
     while app.running {
         terminal.draw(|frame| ui::render(frame, app))?;
@@ -230,27 +232,87 @@ fn run_app(
         if event::poll(Duration::from_millis(16))? {
             match event::read()? {
                 Event::Key(key) => {
-                    // Clear status message on any keypress
-                    app.clear_status();
+                    // Handle key press vs release for popup confirmation
+                    match key.kind {
+                        KeyEventKind::Press => {
+                            // Clear status message on any keypress
+                            app.clear_status();
 
-                    match &app.mode {
-                        Mode::Normal => handle_normal_mode(app, key),
-                        Mode::TextInput { .. } => handle_text_input_mode(app, key),
-                        Mode::LabelInput { .. } => handle_label_input_mode(app, key),
-                        Mode::FileSave { .. } => handle_file_save_mode(app, key),
-                        Mode::FileOpen { .. } => handle_file_open_mode(app, key),
-                        Mode::SvgExport { .. } => handle_svg_export_mode(app, key),
-                        Mode::RecentFiles { .. } => handle_recent_files_mode(app, key),
-                    }
+                            // Check if we're in a popup and this is a re-press of trigger key (fallback confirm)
+                            if let Mode::SelectionPopup { .. } = &app.mode {
+                                if Some(key.code) == popup_trigger_key {
+                                    // Same key pressed again = confirm (fallback for terminals without release)
+                                    app.confirm_popup_selection();
+                                    popup_trigger_key = None;
+                                } else {
+                                    handle_selection_popup_mode(app, key);
+                                }
+                            } else {
+                                // Check for popup triggers in Normal mode
+                                let triggered_popup = if matches!(app.mode, Mode::Normal) {
+                                    match key.code {
+                                        KeyCode::Char(' ') => {
+                                            app.open_tool_popup();
+                                            popup_trigger_key = Some(key.code);
+                                            true
+                                        }
+                                        KeyCode::Char('C') => {
+                                            app.open_color_popup();
+                                            popup_trigger_key = Some(key.code);
+                                            true
+                                        }
+                                        KeyCode::Char('c') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                            app.open_brush_popup();
+                                            popup_trigger_key = Some(key.code);
+                                            true
+                                        }
+                                        _ => false,
+                                    }
+                                } else {
+                                    false
+                                };
 
-                    // After any change in Normal mode, sync if enabled and autosave
-                    if matches!(app.mode, Mode::Normal) {
-                        if let Some(handle) = sync_handle {
-                            let doc = app.clone_automerge();
-                            let _ = handle.send_command(sync::SyncCommand::SyncDoc { doc });
+                                if !triggered_popup {
+                                    match &app.mode {
+                                        Mode::Normal => handle_normal_mode(app, key),
+                                        Mode::TextInput { .. } => handle_text_input_mode(app, key),
+                                        Mode::LabelInput { .. } => handle_label_input_mode(app, key),
+                                        Mode::FileSave { .. } => handle_file_save_mode(app, key),
+                                        Mode::FileOpen { .. } => handle_file_open_mode(app, key),
+                                        Mode::SvgExport { .. } => handle_svg_export_mode(app, key),
+                                        Mode::RecentFiles { .. } => handle_recent_files_mode(app, key),
+                                        Mode::SelectionPopup { .. } => {} // Handled above
+                                    }
+                                }
+                            }
+
+                            // After any change in Normal mode, sync if enabled and autosave
+                            if matches!(app.mode, Mode::Normal) {
+                                if let Some(handle) = sync_handle {
+                                    let doc = app.clone_automerge();
+                                    let _ = handle.send_command(sync::SyncCommand::SyncDoc { doc });
+                                }
+                                // Autosave after changes
+                                app.autosave();
+                            }
                         }
-                        // Autosave after changes
-                        app.autosave();
+                        KeyEventKind::Release => {
+                            // Check if this is the release of the popup trigger key
+                            if let Mode::SelectionPopup { .. } = &app.mode {
+                                if Some(key.code) == popup_trigger_key {
+                                    app.confirm_popup_selection();
+                                    popup_trigger_key = None;
+                                }
+                            }
+                        }
+                        KeyEventKind::Repeat => {
+                            // Handle repeats same as press for navigation
+                            if let Mode::SelectionPopup { .. } = &app.mode {
+                                if Some(key.code) != popup_trigger_key {
+                                    handle_selection_popup_mode(app, key);
+                                }
+                            }
+                        }
                     }
                 }
                 Event::Mouse(mouse) => {
@@ -327,10 +389,8 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
         KeyCode::Char('d') => app.set_tool(Tool::Diamond),
         KeyCode::Char('e') => app.set_tool(Tool::Ellipse),
 
-        // Character/style/color cycling
-        KeyCode::Char('c') => app.cycle_brush(),
+        // Line style cycling (c and C are now popup triggers for brush/color)
         KeyCode::Char('v') => app.cycle_line_style(),
-        KeyCode::Char('C') => app.cycle_color(),
 
         // Undo/Redo (Helix/Kakoune keymaps)
         KeyCode::Char('u') => app.undo(),
@@ -574,5 +634,20 @@ fn handle_recent_files_mode(app: &mut App, key: event::KeyEvent) {
             }
             _ => {}
         }
+    }
+}
+
+fn handle_selection_popup_mode(app: &mut App, key: event::KeyEvent) {
+    match key.code {
+        // hjkl navigation
+        KeyCode::Char('h') | KeyCode::Left => app.popup_navigate(-1, 0),
+        KeyCode::Char('l') | KeyCode::Right => app.popup_navigate(1, 0),
+        KeyCode::Char('j') | KeyCode::Down => app.popup_navigate(0, 1),
+        KeyCode::Char('k') | KeyCode::Up => app.popup_navigate(0, -1),
+        // Enter to confirm
+        KeyCode::Enter => app.confirm_popup_selection(),
+        // Escape to cancel
+        KeyCode::Esc => app.cancel_popup(),
+        _ => {}
     }
 }

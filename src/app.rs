@@ -12,6 +12,52 @@ pub const SNAP_THRESHOLD: i32 = 3;
 /// Grid size for snap-to-grid (in characters)
 pub const GRID_SIZE: i32 = 5;
 
+/// Available brush characters for freehand drawing
+pub const BRUSHES: &[char] = &[
+    '*', '#', '@', '+', '.', 'o', 'x', 'O', '~',
+    // Full and shade blocks
+    '█', '░', '▒', '▓',
+    // Half blocks
+    '▀', '▄', '▌', '▐',
+    // Quadrant blocks
+    '▖', '▗', '▘', '▝',
+    // Shapes
+    '●', '○', '■', '□', '◆', '◇', '▪', '▫',
+];
+
+/// All available tools in order
+pub const TOOLS: &[Tool] = &[
+    Tool::Select,
+    Tool::Freehand,
+    Tool::Text,
+    Tool::Line,
+    Tool::Arrow,
+    Tool::Rectangle,
+    Tool::DoubleBox,
+    Tool::Diamond,
+    Tool::Ellipse,
+];
+
+/// All available colors in order
+pub const COLORS: &[ShapeColor] = &[
+    ShapeColor::White,
+    ShapeColor::Red,
+    ShapeColor::Green,
+    ShapeColor::Yellow,
+    ShapeColor::Blue,
+    ShapeColor::Magenta,
+    ShapeColor::Cyan,
+    ShapeColor::Gray,
+    ShapeColor::DarkGray,
+    ShapeColor::LightRed,
+    ShapeColor::LightGreen,
+    ShapeColor::LightYellow,
+    ShapeColor::LightBlue,
+    ShapeColor::LightMagenta,
+    ShapeColor::LightCyan,
+    ShapeColor::Black,
+];
+
 /// Available drawing tools
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
@@ -52,6 +98,15 @@ pub enum Mode {
     FileOpen { path: String },
     SvgExport { path: String },
     RecentFiles { selected: usize },
+    SelectionPopup { kind: PopupKind, selected: usize },
+}
+
+/// Kind of popup selection window
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PopupKind {
+    Tool,
+    Color,
+    Brush,
 }
 
 /// State for shape drawing (line, rectangle)
@@ -788,17 +843,6 @@ impl App {
 
     /// Cycle through brush characters
     pub fn cycle_brush(&mut self) {
-        const BRUSHES: &[char] = &[
-            '*', '#', '@', '+', '.', 'o', 'x', 'O', '~',
-            // Full and shade blocks
-            '█', '░', '▒', '▓',
-            // Half blocks
-            '▀', '▄', '▌', '▐',
-            // Quadrant blocks
-            '▖', '▗', '▘', '▝',
-            // Shapes
-            '●', '○', '■', '□', '◆', '◇', '▪', '▫',
-        ];
         let current_idx = BRUSHES.iter().position(|&c| c == self.brush_char);
         let next_idx = match current_idx {
             Some(i) => (i + 1) % BRUSHES.len(),
@@ -927,6 +971,85 @@ impl App {
             Some(snapped)
         } else {
             None
+        }
+    }
+
+    // ========== Popup Selection Methods ==========
+
+    /// Open the tool selection popup
+    pub fn open_tool_popup(&mut self) {
+        let selected = TOOLS.iter().position(|&t| t == self.current_tool).unwrap_or(0);
+        self.mode = Mode::SelectionPopup {
+            kind: PopupKind::Tool,
+            selected,
+        };
+    }
+
+    /// Open the color selection popup
+    pub fn open_color_popup(&mut self) {
+        let selected = COLORS.iter().position(|&c| c == self.current_color).unwrap_or(0);
+        self.mode = Mode::SelectionPopup {
+            kind: PopupKind::Color,
+            selected,
+        };
+    }
+
+    /// Open the brush character selection popup
+    pub fn open_brush_popup(&mut self) {
+        let selected = BRUSHES.iter().position(|&c| c == self.brush_char).unwrap_or(0);
+        self.mode = Mode::SelectionPopup {
+            kind: PopupKind::Brush,
+            selected,
+        };
+    }
+
+    /// Confirm the current popup selection
+    pub fn confirm_popup_selection(&mut self) {
+        if let Mode::SelectionPopup { kind, selected } = self.mode {
+            match kind {
+                PopupKind::Tool => {
+                    if let Some(&tool) = TOOLS.get(selected) {
+                        self.current_tool = tool;
+                        self.set_status(format!("Tool: {}", tool.name()));
+                    }
+                }
+                PopupKind::Color => {
+                    if let Some(&color) = COLORS.get(selected) {
+                        self.current_color = color;
+                        self.set_status(format!("Color: {}", color.name()));
+                    }
+                }
+                PopupKind::Brush => {
+                    if let Some(&brush) = BRUSHES.get(selected) {
+                        self.brush_char = brush;
+                        self.set_status(format!("Brush: '{}'", brush));
+                    }
+                }
+            }
+        }
+        self.mode = Mode::Normal;
+    }
+
+    /// Cancel the popup without changing selection
+    pub fn cancel_popup(&mut self) {
+        self.mode = Mode::Normal;
+    }
+
+    /// Navigate within the popup selection grid
+    pub fn popup_navigate(&mut self, dx: i32, dy: i32) {
+        if let Mode::SelectionPopup { kind, ref mut selected } = self.mode {
+            let (cols, total) = match kind {
+                PopupKind::Tool => (3, TOOLS.len()),   // 3x3 grid for 9 tools
+                PopupKind::Color => (4, COLORS.len()), // 4x4 grid for 16 colors
+                PopupKind::Brush => (6, BRUSHES.len()), // 6 columns for brushes
+            };
+            let rows = (total + cols - 1) / cols;
+            let row = *selected / cols;
+            let col = *selected % cols;
+            let new_col = (col as i32 + dx).clamp(0, cols as i32 - 1) as usize;
+            let new_row = (row as i32 + dy).clamp(0, rows as i32 - 1) as usize;
+            let new_selected = new_row * cols + new_col;
+            *selected = new_selected.min(total - 1);
         }
     }
 }

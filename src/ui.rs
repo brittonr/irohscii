@@ -7,7 +7,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, Mode, Tool, GRID_SIZE};
+use crate::app::{App, Mode, PopupKind, Tool, BRUSHES, COLORS, GRID_SIZE, TOOLS};
 use crate::canvas::{arrow_points_styled, diamond_points, double_rect_points, ellipse_points, line_points_styled, rect_points, Position};
 use crate::document::ShapeId;
 use crate::presence::{peer_color, CursorActivity, PeerPresence, ToolKind};
@@ -63,6 +63,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
         Mode::RecentFiles { selected } => {
             render_recent_files_menu(frame, app, *selected, canvas_area);
+        }
+        Mode::SelectionPopup { kind, selected } => {
+            render_selection_popup(frame, *kind, *selected, canvas_area);
         }
         Mode::Normal => {}
     }
@@ -544,7 +547,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
     let help_text = match &app.mode {
         Mode::Normal => {
-            "[s]el [f]ree [l]ine [a]rrow [r]ect [b]ox [d]iamond [e]llipse [t]ext | [y]ank [p]aste [u]ndo | [q]uit"
+            "[Space] Tools  [c] Brush  [C] Color | [f]ree [l]ine [a]rrow [r]ect | [y]ank [p]aste [u]ndo | [q]uit"
         }
         Mode::TextInput { .. } | Mode::LabelInput { .. } => {
             "[Type] Add text  [Enter/Esc] Done  [Backspace] Delete"
@@ -554,6 +557,9 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
         }
         Mode::RecentFiles { .. } => {
             "[↑/↓] Select  [Enter] Open  [Esc] Cancel"
+        }
+        Mode::SelectionPopup { .. } => {
+            "[hjkl/←↓↑→] Navigate  [Release/Enter] Select  [Esc] Cancel"
         }
     };
 
@@ -715,4 +721,129 @@ fn render_recent_files_menu(frame: &mut Frame, app: &App, selected: usize, area:
         .style(Style::default().bg(Color::Black));
 
     frame.render_widget(paragraph, popup_area);
+}
+
+/// Render selection popup for tools, colors, or brushes
+fn render_selection_popup(frame: &mut Frame, kind: PopupKind, selected: usize, area: Rect) {
+    let (title, cols, items): (&str, usize, Vec<(String, Option<Color>)>) = match kind {
+        PopupKind::Tool => {
+            let items: Vec<_> = TOOLS.iter().map(|t| (t.name().to_string(), None)).collect();
+            (" Select Tool ", 3, items)
+        }
+        PopupKind::Color => {
+            let items: Vec<_> = COLORS.iter().map(|c| {
+                (c.name().to_string(), Some(c.to_ratatui()))
+            }).collect();
+            (" Select Color ", 4, items)
+        }
+        PopupKind::Brush => {
+            let items: Vec<_> = BRUSHES.iter().map(|&ch| (ch.to_string(), None)).collect();
+            (" Select Brush ", 6, items)
+        }
+    };
+
+    let rows = (items.len() + cols - 1) / cols;
+
+    // Calculate popup size based on grid
+    let cell_width: u16 = match kind {
+        PopupKind::Tool => 10,  // Tool names are longer
+        PopupKind::Color => 8,  // Color names + colored block
+        PopupKind::Brush => 3,  // Just the character
+    };
+    let width = (cols as u16 * cell_width + 2).min(area.width.saturating_sub(4));
+    let height = (rows as u16 + 2).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(width)) / 2 + area.x;
+    let y = (area.height.saturating_sub(height)) / 2 + area.y;
+
+    let popup_area = Rect::new(x, y, width, height);
+
+    // Clear the popup area
+    for py in popup_area.y..popup_area.y + popup_area.height {
+        for px in popup_area.x..popup_area.x + popup_area.width {
+            frame.buffer_mut()[(px, py)]
+                .set_char(' ')
+                .set_style(Style::default().bg(Color::Black));
+        }
+    }
+
+    // Draw border
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    frame.render_widget(block, popup_area);
+
+    // Render grid items
+    let inner_x = popup_area.x + 1;
+    let inner_y = popup_area.y + 1;
+    let inner_width = popup_area.width.saturating_sub(2);
+
+    for (idx, (label, color_opt)) in items.iter().enumerate() {
+        let row = idx / cols;
+        let col = idx % cols;
+        let item_x = inner_x + (col as u16 * cell_width);
+        let item_y = inner_y + row as u16;
+
+        if item_y >= popup_area.y + popup_area.height - 1 {
+            break;
+        }
+        if item_x >= inner_x + inner_width {
+            continue;
+        }
+
+        let is_selected = idx == selected;
+        let base_style = if is_selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::White).bg(Color::Black)
+        };
+
+        match kind {
+            PopupKind::Tool => {
+                // Render tool name
+                let display = format!("{:^width$}", label, width = (cell_width - 1) as usize);
+                for (i, ch) in display.chars().take((cell_width - 1) as usize).enumerate() {
+                    let px = item_x + i as u16;
+                    if px < inner_x + inner_width {
+                        frame.buffer_mut()[(px, item_y)]
+                            .set_char(ch)
+                            .set_style(base_style);
+                    }
+                }
+            }
+            PopupKind::Color => {
+                // Render colored block + abbreviated name
+                if let Some(color) = color_opt {
+                    let color_style = if is_selected {
+                        Style::default().fg(*color).bg(Color::Cyan)
+                    } else {
+                        Style::default().fg(*color).bg(Color::Black)
+                    };
+                    frame.buffer_mut()[(item_x, item_y)]
+                        .set_char('█')
+                        .set_style(color_style);
+                    frame.buffer_mut()[(item_x + 1, item_y)]
+                        .set_char('█')
+                        .set_style(color_style);
+                }
+                // Render abbreviated name (first 4 chars)
+                let abbrev: String = label.chars().take(4).collect();
+                for (i, ch) in abbrev.chars().enumerate() {
+                    let px = item_x + 2 + i as u16;
+                    if px < inner_x + inner_width {
+                        frame.buffer_mut()[(px, item_y)]
+                            .set_char(ch)
+                            .set_style(base_style);
+                    }
+                }
+            }
+            PopupKind::Brush => {
+                // Render just the brush character, centered
+                let ch = label.chars().next().unwrap_or(' ');
+                frame.buffer_mut()[(item_x + 1, item_y)]
+                    .set_char(ch)
+                    .set_style(base_style);
+            }
+        }
+    }
 }
