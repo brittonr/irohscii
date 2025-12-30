@@ -373,7 +373,7 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
         }
         KeyCode::Esc => {
             app.cancel_shape();
-            app.selected = None; // Deselect
+            app.clear_selection(); // Deselect
         }
 
         // Tool selection
@@ -409,7 +409,7 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
 
         // Edit label of selected shape
         KeyCode::Enter => {
-            if app.current_tool == Tool::Select && app.selected.is_some() {
+            if app.current_tool == Tool::Select && !app.selected.is_empty() {
                 if app.start_label_input() {
                     app.set_status("Editing label - type text, Enter/Esc to finish");
                 }

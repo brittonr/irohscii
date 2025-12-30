@@ -162,7 +162,7 @@ impl Widget for CanvasWidget<'_> {
 
         // Render all shapes
         for shape in self.app.shape_view.iter() {
-            let is_selected = self.app.selected == Some(shape.id);
+            let is_selected = self.app.selected.contains(&shape.id);
             // Use shape's color, but override with cyan when selected
             let style = if is_selected {
                 selected_style
@@ -313,11 +313,34 @@ impl Widget for CanvasWidget<'_> {
             self.render_char(buf, area, grid_pos, '◉', snap_active_style);
         }
 
-        // Render selection bounding box and resize handles
-        if let Some(id) = self.app.selected {
+        // Render marquee selection box while dragging
+        if let Some(ref marquee) = self.app.marquee_state {
+            let marquee_style = Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::DIM);
+            let min_x = marquee.start.x.min(marquee.current.x);
+            let max_x = marquee.start.x.max(marquee.current.x);
+            let min_y = marquee.start.y.min(marquee.current.y);
+            let max_y = marquee.start.y.max(marquee.current.y);
+
+            // Draw marquee border
+            for x in min_x..=max_x {
+                self.render_char(buf, area, Position::new(x, min_y), '-', marquee_style);
+                self.render_char(buf, area, Position::new(x, max_y), '-', marquee_style);
+            }
+            for y in (min_y + 1)..max_y {
+                self.render_char(buf, area, Position::new(min_x, y), '|', marquee_style);
+                self.render_char(buf, area, Position::new(max_x, y), '|', marquee_style);
+            }
+        }
+
+        // Render selection bounding box for all selected shapes
+        let box_style = Style::default().fg(Color::Cyan);
+        let single_selection = self.app.selected.len() == 1;
+
+        for &id in &self.app.selected {
             if let Some(shape) = self.app.shape_view.get(id) {
                 let (min_x, min_y, max_x, max_y) = shape.bounds();
-                let box_style = Style::default().fg(Color::Cyan);
 
                 // Draw corners of selection box (offset from shape)
                 for (x, y, ch) in [
@@ -329,13 +352,15 @@ impl Widget for CanvasWidget<'_> {
                     self.render_char(buf, area, Position::new(x, y), ch, box_style);
                 }
 
-                // Draw resize handles on the shape corners
-                let handle_style = Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD);
+                // Draw resize handles only for single selection
+                if single_selection {
+                    let handle_style = Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD);
 
-                for handle_info in shape.resize_handles() {
-                    self.render_char(buf, area, handle_info.pos, '■', handle_style);
+                    for handle_info in shape.resize_handles() {
+                        self.render_char(buf, area, handle_info.pos, '■', handle_style);
+                    }
                 }
             }
         }

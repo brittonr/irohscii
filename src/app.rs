@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::canvas::{LineStyle, Position, Viewport};
@@ -147,14 +148,21 @@ pub struct FreehandState {
     pub points: Vec<Position>,
 }
 
+/// State for marquee selection drag
+#[derive(Debug, Clone, Copy)]
+pub struct MarqueeState {
+    pub start: Position,
+    pub current: Position,
+}
+
 /// Main application state
 pub struct App {
     /// The automerge document - THE source of truth
     pub doc: Document,
     /// Cached shape view for fast rendering
     pub shape_view: ShapeView,
-    /// Currently selected shape
-    pub selected: Option<ShapeId>,
+    /// Currently selected shapes (supports multi-select)
+    pub selected: HashSet<ShapeId>,
     pub viewport: Viewport,
     pub current_tool: Tool,
     pub mode: Mode,
@@ -168,10 +176,13 @@ pub struct App {
     pub drag_state: Option<DragState>,
     pub resize_state: Option<ResizeState>,
     pub freehand_state: Option<FreehandState>,
+    /// State for marquee selection
+    pub marquee_state: Option<MarqueeState>,
     pub status_message: Option<String>,
     pub hover_snap: Option<SnapPoint>,
     pub hover_grid_snap: Option<Position>,
-    clipboard: Option<ShapeKind>,
+    /// Clipboard for copy/paste (supports multiple shapes)
+    clipboard: Vec<ShapeKind>,
     /// Sync session ticket for sharing
     pub sync_ticket: Option<String>,
     /// Presence manager for remote cursors
@@ -193,7 +204,7 @@ impl App {
         Self {
             doc: Document::new(),
             shape_view: ShapeView::new(),
-            selected: None,
+            selected: HashSet::new(),
             viewport: Viewport::new(width, height),
             current_tool: Tool::Select,
             mode: Mode::Normal,
@@ -207,10 +218,11 @@ impl App {
             drag_state: None,
             resize_state: None,
             freehand_state: None,
+            marquee_state: None,
             status_message: None,
             hover_snap: None,
             hover_grid_snap: None,
-            clipboard: None,
+            clipboard: Vec::new(),
             sync_ticket: None,
             presence: None,
             local_peer_id: None,
@@ -245,7 +257,8 @@ impl App {
             }
         } else if let Mode::TextInput { start_pos, .. } = &self.mode {
             CursorActivity::Typing { position: *start_pos }
-        } else if let Some(id) = self.selected {
+        } else if self.selected.len() == 1 {
+            let id = *self.selected.iter().next().unwrap();
             CursorActivity::Selected { shape_id: id }
         } else {
             CursorActivity::Idle
@@ -389,28 +402,46 @@ impl App {
         }
     }
 
-    /// Copy selected shape to clipboard
+    /// Copy selected shapes to clipboard
     pub fn yank(&mut self) {
-        if let Some(id) = self.selected {
+        if self.selected.is_empty() {
+            return;
+        }
+        self.clipboard.clear();
+        for &id in &self.selected {
             if let Some(shape) = self.shape_view.get(id) {
-                self.clipboard = Some(shape.kind.clone());
-                self.set_status("Yanked shape");
+                self.clipboard.push(shape.kind.clone());
             }
         }
+        let count = self.clipboard.len();
+        self.set_status(format!(
+            "Yanked {} shape{}",
+            count,
+            if count == 1 { "" } else { "s" }
+        ));
     }
 
-    /// Paste shape from clipboard
+    /// Paste shapes from clipboard
     pub fn paste(&mut self) {
-        if let Some(kind) = self.clipboard.clone() {
-            self.save_undo_state();
+        if self.clipboard.is_empty() {
+            return;
+        }
+        self.save_undo_state();
+        self.selected.clear();
+        for kind in self.clipboard.clone() {
             let new_kind = kind.translated(2, 1);
             if let Ok(id) = self.doc.add_shape(new_kind) {
-                self.rebuild_view();
-                self.selected = Some(id);
-                self.doc.mark_dirty();
-                self.set_status("Pasted shape");
+                self.selected.insert(id);
             }
         }
+        self.rebuild_view();
+        self.doc.mark_dirty();
+        let count = self.selected.len();
+        self.set_status(format!(
+            "Pasted {} shape{}",
+            count,
+            if count == 1 { "" } else { "s" }
+        ));
     }
 
     /// Switch to a different tool
@@ -667,30 +698,107 @@ impl App {
         self.hover_grid_snap = None;
     }
 
-    /// Try to select a shape at position
+    // ========== Selection Methods ==========
+
+    /// Select a single shape (replaces current selection)
+    pub fn select_single(&mut self, id: ShapeId) {
+        self.selected.clear();
+        self.selected.insert(id);
+        self.set_status("Selected shape - drag to move, [Del] to delete");
+    }
+
+    /// Toggle shape in selection (for Shift+click)
+    pub fn toggle_selection(&mut self, id: ShapeId) {
+        if self.selected.contains(&id) {
+            self.selected.remove(&id);
+        } else {
+            self.selected.insert(id);
+        }
+    }
+
+    /// Clear all selection
+    pub fn clear_selection(&mut self) {
+        self.selected.clear();
+    }
+
+    /// Check if a shape is selected
+    pub fn is_selected(&self, id: ShapeId) -> bool {
+        self.selected.contains(&id)
+    }
+
+    /// Select all shapes within a rectangle
+    pub fn select_in_rect(&mut self, min: Position, max: Position) {
+        self.selected.clear();
+        for shape in self.shape_view.iter() {
+            let (sx_min, sy_min, sx_max, sy_max) = shape.bounds();
+            // Check if shape bounds intersect with selection rect
+            if sx_max >= min.x && sx_min <= max.x && sy_max >= min.y && sy_min <= max.y {
+                self.selected.insert(shape.id);
+            }
+        }
+    }
+
+    /// Try to select a shape at position (replaces selection)
     pub fn try_select(&mut self, pos: Position) -> bool {
         if let Some(id) = self.shape_view.shape_at(pos) {
-            self.selected = Some(id);
-            self.set_status("Selected shape - drag to move, [Del] to delete");
+            self.select_single(id);
             true
         } else {
-            self.selected = None;
+            self.clear_selection();
             false
         }
     }
 
-    /// Start dragging the selected shape
+    // ========== Marquee Selection Methods ==========
+
+    /// Start marquee selection
+    pub fn start_marquee(&mut self, pos: Position) {
+        self.marquee_state = Some(MarqueeState {
+            start: pos,
+            current: pos,
+        });
+    }
+
+    /// Continue marquee selection
+    pub fn continue_marquee(&mut self, pos: Position) {
+        if let Some(ref mut state) = self.marquee_state {
+            state.current = pos;
+        }
+    }
+
+    /// Finish marquee selection
+    pub fn finish_marquee(&mut self) {
+        if let Some(state) = self.marquee_state.take() {
+            let min_x = state.start.x.min(state.current.x);
+            let max_x = state.start.x.max(state.current.x);
+            let min_y = state.start.y.min(state.current.y);
+            let max_y = state.start.y.max(state.current.y);
+            self.select_in_rect(Position::new(min_x, min_y), Position::new(max_x, max_y));
+            let count = self.selected.len();
+            if count > 0 {
+                self.set_status(format!(
+                    "Selected {} shape{}",
+                    count,
+                    if count == 1 { "" } else { "s" }
+                ));
+            }
+        }
+    }
+
+    // ========== Drag Methods ==========
+
+    /// Start dragging the selected shapes
     pub fn start_drag(&mut self, pos: Position) {
-        if let Some(id) = self.selected {
+        if !self.selected.is_empty() {
             self.save_undo_state();
             self.drag_state = Some(DragState {
-                shape_id: id,
+                shape_id: ShapeId::default(), // Not used for multi-select
                 last_mouse: pos,
             });
         }
     }
 
-    /// Continue dragging
+    /// Continue dragging all selected shapes
     pub fn continue_drag(&mut self, pos: Position) {
         let Some(drag) = self.drag_state.as_ref() else {
             return;
@@ -698,21 +806,23 @@ impl App {
 
         let dx = pos.x - drag.last_mouse.x;
         let dy = pos.y - drag.last_mouse.y;
-        let shape_id = drag.shape_id;
 
         if dx == 0 && dy == 0 {
             return;
         }
 
-        if self.doc.translate_shape(shape_id, dx, dy).is_ok() {
-            // Update connected lines
-            let _ = self.doc.update_connections_for_shape(shape_id, dx, dy);
-            self.rebuild_view();
-            if let Some(ref mut drag) = self.drag_state {
-                drag.last_mouse = pos;
+        // Move all selected shapes
+        let selected_ids: Vec<_> = self.selected.iter().copied().collect();
+        for id in selected_ids {
+            if self.doc.translate_shape(id, dx, dy).is_ok() {
+                let _ = self.doc.update_connections_for_shape(id, dx, dy);
             }
-            self.doc.mark_dirty();
         }
+        self.rebuild_view();
+        if let Some(ref mut drag) = self.drag_state {
+            drag.last_mouse = pos;
+        }
+        self.doc.mark_dirty();
     }
 
     /// Finish dragging
@@ -720,18 +830,20 @@ impl App {
         self.drag_state = None;
     }
 
-    /// Try to start resizing at a position (returns true if resize handle found)
+    // ========== Resize Methods ==========
+
+    /// Try to start resizing at a position (only works with single selection)
     pub fn try_start_resize(&mut self, pos: Position) -> bool {
-        if let Some(id) = self.selected {
-            if let Some(handle) = self.shape_view.find_resize_handle(id, pos, SNAP_THRESHOLD) {
-                self.save_undo_state();
-                self.resize_state = Some(ResizeState {
-                    shape_id: id,
-                    handle,
-                });
-                self.set_status("Resizing shape");
-                return true;
-            }
+        // Only allow resize with single selection
+        if self.selected.len() != 1 {
+            return false;
+        }
+        let id = *self.selected.iter().next().unwrap();
+        if let Some(handle) = self.shape_view.find_resize_handle(id, pos, SNAP_THRESHOLD) {
+            self.save_undo_state();
+            self.resize_state = Some(ResizeState { shape_id: id, handle });
+            self.set_status("Resizing shape");
+            return true;
         }
         false
     }
@@ -758,17 +870,25 @@ impl App {
         self.resize_state = None;
     }
 
-    /// Delete selected shape
+    /// Delete all selected shapes
     pub fn delete_selected(&mut self) {
-        if let Some(id) = self.selected {
-            self.save_undo_state();
-            if self.doc.delete_shape(id).is_ok() {
-                self.selected = None;
-                self.rebuild_view();
-                self.doc.mark_dirty();
-                self.set_status("Deleted shape");
-            }
+        if self.selected.is_empty() {
+            return;
         }
+        self.save_undo_state();
+        let ids: Vec<_> = self.selected.iter().copied().collect();
+        for id in ids {
+            let _ = self.doc.delete_shape(id);
+        }
+        let count = self.selected.len();
+        self.selected.clear();
+        self.rebuild_view();
+        self.doc.mark_dirty();
+        self.set_status(format!(
+            "Deleted {} shape{}",
+            count,
+            if count == 1 { "" } else { "s" }
+        ));
     }
 
     /// Start text input at a position
@@ -867,9 +987,10 @@ impl App {
         self.set_status(format!("Color: {}", self.current_color.name()));
     }
 
-    /// Start label input for the selected shape
+    /// Start label input for the selected shape (only works with single selection)
     pub fn start_label_input(&mut self) -> bool {
-        if let Some(id) = self.selected {
+        if self.selected.len() == 1 {
+            let id = *self.selected.iter().next().unwrap();
             if let Some(shape) = self.shape_view.get(id) {
                 if shape.supports_label() {
                     let existing_label = shape.label().unwrap_or("").to_string();
@@ -956,7 +1077,7 @@ impl App {
         self.doc = Document::new();
         self.doc.set_storage_path(default_storage_path());
         self.shape_view = ShapeView::new();
-        self.selected = None;
+        self.selected.clear();
         self.file_path = None;
         // Clear global undo history (it's stored in the new doc already)
         let _ = self.doc.clear_undo_history();
