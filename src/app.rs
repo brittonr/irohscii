@@ -788,7 +788,17 @@ impl App {
 
     /// Cycle through brush characters
     pub fn cycle_brush(&mut self) {
-        const BRUSHES: &[char] = &['*', '#', '@', '+', '.', 'o', 'x', '█', '░', '▒', '▓'];
+        const BRUSHES: &[char] = &[
+            '*', '#', '@', '+', '.', 'o', 'x', 'O', '~',
+            // Full and shade blocks
+            '█', '░', '▒', '▓',
+            // Half blocks
+            '▀', '▄', '▌', '▐',
+            // Quadrant blocks
+            '▖', '▗', '▘', '▝',
+            // Shapes
+            '●', '○', '■', '□', '◆', '◇', '▪', '▫',
+        ];
         let current_idx = BRUSHES.iter().position(|&c| c == self.brush_char);
         let next_idx = match current_idx {
             Some(i) => (i + 1) % BRUSHES.len(),
