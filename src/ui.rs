@@ -483,11 +483,27 @@ fn render_participants_panel(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-/// Render the status bar
+/// Render the status bar (Helix-style with mode indicator)
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let tool_style = Style::default()
+    // Determine mode name and color (Helix-style)
+    let (mode_name, mode_bg) = match &app.mode {
+        Mode::Normal => match app.current_tool {
+            Tool::Select => ("SEL", Color::Blue),
+            Tool::Text => ("TXT", Color::Green),
+            _ => ("DRAW", Color::Yellow),
+        },
+        Mode::TextInput { .. } | Mode::LabelInput { .. } => ("INS", Color::Green),
+        Mode::FileSave { .. } | Mode::FileOpen { .. } | Mode::SvgExport { .. } => ("CMD", Color::Magenta),
+        Mode::RecentFiles { .. } | Mode::SelectionPopup { .. } => ("MENU", Color::Cyan),
+    };
+
+    let mode_style = Style::default()
         .fg(Color::Black)
-        .bg(Color::Cyan)
+        .bg(mode_bg)
+        .add_modifier(Modifier::BOLD);
+
+    let tool_style = Style::default()
+        .fg(Color::White)
         .add_modifier(Modifier::BOLD);
 
     let file_name = app
@@ -499,23 +515,18 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let dirty_marker = if app.is_dirty() { " *" } else { "" };
 
     let char_info = match app.current_tool {
-        Tool::Freehand => format!(" | Brush: '{}' | Color: {}", app.brush_char, app.current_color.name()),
-        Tool::Line | Tool::Arrow => format!(" | Style: {} | Color: {}", app.line_style.name(), app.current_color.name()),
+        Tool::Freehand => format!(" brush:'{}' {}", app.brush_char, app.current_color.name()),
+        Tool::Line | Tool::Arrow => format!(" {} {}", app.line_style.name(), app.current_color.name()),
         Tool::Rectangle | Tool::DoubleBox | Tool::Diamond | Tool::Ellipse | Tool::Text => {
-            format!(" | Color: {}", app.current_color.name())
+            format!(" {}", app.current_color.name())
         }
         _ => String::new(),
     };
 
-    let pos_info = format!(
-        " | Pos: ({}, {})",
-        app.viewport.offset_x, app.viewport.offset_y
-    );
-
     let peer_info = if let Some(ref presence) = app.presence {
         let count = presence.peer_count();
         if count > 0 {
-            format!(" | {} peer{}", count, if count == 1 { "" } else { "s" })
+            format!(" {}p", count)
         } else {
             String::new()
         }
@@ -526,14 +537,22 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let status_text = app
         .status_message
         .as_ref()
-        .map(|m| format!(" | {}", m))
+        .map(|m| format!(" {}", m))
         .unwrap_or_default();
 
+    // Tool info (only show if not in Select mode)
+    let tool_info = if app.current_tool != Tool::Select {
+        format!(" {}", app.current_tool.name().to_lowercase())
+    } else {
+        String::new()
+    };
+
     let spans = vec![
-        Span::styled(format!(" {} ", app.current_tool.name()), tool_style),
+        Span::styled(format!(" {} ", mode_name), mode_style),
+        Span::styled(tool_info, tool_style),
         Span::raw(format!(
-            " {}{}{}{}{}{}",
-            file_name, dirty_marker, char_info, pos_info, peer_info, status_text
+            " {}{}{}{}{}",
+            file_name, dirty_marker, char_info, peer_info, status_text
         )),
     ];
 
@@ -546,20 +565,31 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 /// Render the help bar
 fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
     let help_text = match &app.mode {
-        Mode::Normal => {
-            "[Space] Tools  [c] Brush  [C] Color | [f]ree [l]ine [a]rrow [r]ect | [y]ank [p]aste [u]ndo | [q]uit"
+        Mode::Normal => match app.current_tool {
+            Tool::Select => {
+                "[Space] tools [c] brush [C] color | [d]el [y]ank [p]aste [u]ndo U:redo | [q]uit"
+            }
+            Tool::Freehand => {
+                "[Space] tools [c] brush [C] color | drag to draw | [s] select [Esc] cancel"
+            }
+            Tool::Text => {
+                "[Space] tools [C] color | click to place text | [s] select [Esc] cancel"
+            }
+            _ => {
+                "[Space] tools [v] style [C] color | drag to draw | [s] select [Esc] cancel"
+            }
         }
         Mode::TextInput { .. } | Mode::LabelInput { .. } => {
-            "[Type] Add text  [Enter/Esc] Done  [Backspace] Delete"
+            "type text | [Enter] confirm [Esc] cancel [Backspace] delete"
         }
         Mode::FileSave { .. } | Mode::FileOpen { .. } | Mode::SvgExport { .. } => {
-            "[Type] Path  [Enter] Confirm  [Esc] Cancel"
+            "type path | [Enter] confirm [Esc] cancel"
         }
         Mode::RecentFiles { .. } => {
-            "[↑/↓] Select  [Enter] Open  [Esc] Cancel"
+            "[j/k] navigate [Enter] open [Esc] cancel"
         }
         Mode::SelectionPopup { .. } => {
-            "[hjkl/←↓↑→] Navigate  [Release/Enter] Select  [Esc] Cancel"
+            "[hjkl] navigate | release key or [Enter] to select | [Esc] cancel"
         }
     };
 

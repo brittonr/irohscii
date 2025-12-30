@@ -601,10 +601,10 @@ fn handle_recent_files_mode(app: &mut App, key: event::KeyEvent) {
             KeyCode::Esc => {
                 app.mode = Mode::Normal;
             }
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k') => {
                 *selected = selected.saturating_sub(1);
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 let max = app.recent_files.len().saturating_sub(1);
                 *selected = (*selected + 1).min(max);
             }
