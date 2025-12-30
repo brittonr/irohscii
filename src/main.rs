@@ -327,9 +327,10 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
         KeyCode::Char('d') => app.set_tool(Tool::Diamond),
         KeyCode::Char('e') => app.set_tool(Tool::Ellipse),
 
-        // Character/style cycling
+        // Character/style/color cycling
         KeyCode::Char('c') => app.cycle_brush(),
         KeyCode::Char('v') => app.cycle_line_style(),
+        KeyCode::Char('C') => app.cycle_color(),
 
         // Undo/Redo (Helix/Kakoune keymaps)
         KeyCode::Char('u') => app.undo(),

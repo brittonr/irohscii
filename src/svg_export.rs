@@ -101,30 +101,31 @@ fn calculate_bounds(shapes: &ShapeView) -> (i32, i32, i32, i32) {
 
 /// Render a single shape to SVG
 fn render_shape(output: &mut String, shape: &CachedShape, offset_x: i32, offset_y: i32) {
+    let color = shape.kind.color().to_css();
     match &shape.kind {
         ShapeKind::Line { start, end, style, .. } => {
-            render_line(output, *start, *end, *style, false, offset_x, offset_y);
+            render_line(output, *start, *end, *style, false, color, offset_x, offset_y);
         }
         ShapeKind::Arrow { start, end, style, .. } => {
-            render_line(output, *start, *end, *style, true, offset_x, offset_y);
+            render_line(output, *start, *end, *style, true, color, offset_x, offset_y);
         }
-        ShapeKind::Rectangle { start, end, label } => {
-            render_rectangle(output, *start, *end, label.as_deref(), false, offset_x, offset_y);
+        ShapeKind::Rectangle { start, end, label, .. } => {
+            render_rectangle(output, *start, *end, label.as_deref(), false, color, offset_x, offset_y);
         }
-        ShapeKind::DoubleBox { start, end, label } => {
-            render_rectangle(output, *start, *end, label.as_deref(), true, offset_x, offset_y);
+        ShapeKind::DoubleBox { start, end, label, .. } => {
+            render_rectangle(output, *start, *end, label.as_deref(), true, color, offset_x, offset_y);
         }
-        ShapeKind::Diamond { center, half_width, half_height, label } => {
-            render_diamond(output, *center, *half_width, *half_height, label.as_deref(), offset_x, offset_y);
+        ShapeKind::Diamond { center, half_width, half_height, label, .. } => {
+            render_diamond(output, *center, *half_width, *half_height, label.as_deref(), color, offset_x, offset_y);
         }
-        ShapeKind::Ellipse { center, radius_x, radius_y, label } => {
-            render_ellipse(output, *center, *radius_x, *radius_y, label.as_deref(), offset_x, offset_y);
+        ShapeKind::Ellipse { center, radius_x, radius_y, label, .. } => {
+            render_ellipse(output, *center, *radius_x, *radius_y, label.as_deref(), color, offset_x, offset_y);
         }
         ShapeKind::Freehand { points, .. } => {
-            render_freehand(output, points, offset_x, offset_y);
+            render_freehand(output, points, color, offset_x, offset_y);
         }
-        ShapeKind::Text { pos, content } => {
-            render_text(output, *pos, content, offset_x, offset_y);
+        ShapeKind::Text { pos, content, .. } => {
+            render_text(output, *pos, content, color, offset_x, offset_y);
         }
     }
 }
@@ -136,6 +137,7 @@ fn render_line(
     end: Position,
     style: LineStyle,
     is_arrow: bool,
+    color: &str,
     offset_x: i32,
     offset_y: i32,
 ) {
@@ -154,8 +156,8 @@ fn render_line(
         LineStyle::Straight => {
             writeln!(
                 output,
-                r#"  <line x1="{}" y1="{}" x2="{}" y2="{}" stroke="black" stroke-width="1"{}/>"#,
-                x1, y1, x2, y2, marker
+                r#"  <line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="1"{}/>"#,
+                x1, y1, x2, y2, color, marker
             )
             .unwrap();
         }
@@ -164,8 +166,8 @@ fn render_line(
             let path = format!("M {} {} L {} {} L {} {}", x1, y1, x2, y1, x2, y2);
             writeln!(
                 output,
-                r#"  <path d="{}" stroke="black" stroke-width="1" fill="none"{}/>"#,
-                path, marker
+                r#"  <path d="{}" stroke="{}" stroke-width="1" fill="none"{}/>"#,
+                path, color, marker
             )
             .unwrap();
         }
@@ -174,8 +176,8 @@ fn render_line(
             let path = format!("M {} {} L {} {} L {} {}", x1, y1, x1, y2, x2, y2);
             writeln!(
                 output,
-                r#"  <path d="{}" stroke="black" stroke-width="1" fill="none"{}/>"#,
-                path, marker
+                r#"  <path d="{}" stroke="{}" stroke-width="1" fill="none"{}/>"#,
+                path, color, marker
             )
             .unwrap();
         }
@@ -189,6 +191,7 @@ fn render_rectangle(
     end: Position,
     label: Option<&str>,
     is_double: bool,
+    color: &str,
     offset_x: i32,
     offset_y: i32,
 ) {
@@ -209,8 +212,8 @@ fn render_rectangle(
 
     writeln!(
         output,
-        r#"  <rect x="{}" y="{}" width="{}" height="{}" stroke="black" stroke-width="{}" fill="white"/>"#,
-        x, y, width, height, stroke_width
+        r#"  <rect x="{}" y="{}" width="{}" height="{}" stroke="{}" stroke-width="{}" fill="white"/>"#,
+        x, y, width, height, color, stroke_width
     )
     .unwrap();
 
@@ -220,8 +223,8 @@ fn render_rectangle(
         let center_y = y + height / 2;
         writeln!(
             output,
-            r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12">{}</text>"#,
-            center_x, center_y, escape_xml(text)
+            r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
+            center_x, center_y, color, escape_xml(text)
         )
         .unwrap();
     }
@@ -234,6 +237,7 @@ fn render_diamond(
     half_width: i32,
     half_height: i32,
     label: Option<&str>,
+    color: &str,
     offset_x: i32,
     offset_y: i32,
 ) {
@@ -253,8 +257,8 @@ fn render_diamond(
 
     writeln!(
         output,
-        r#"  <polygon points="{}" stroke="black" stroke-width="1" fill="white"/>"#,
-        points
+        r#"  <polygon points="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
+        points, color
     )
     .unwrap();
 
@@ -262,8 +266,8 @@ fn render_diamond(
     if let Some(text) = label {
         writeln!(
             output,
-            r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12">{}</text>"#,
-            cx, cy, escape_xml(text)
+            r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
+            cx, cy, color, escape_xml(text)
         )
         .unwrap();
     }
@@ -276,6 +280,7 @@ fn render_ellipse(
     radius_x: i32,
     radius_y: i32,
     label: Option<&str>,
+    color: &str,
     offset_x: i32,
     offset_y: i32,
 ) {
@@ -286,8 +291,8 @@ fn render_ellipse(
 
     writeln!(
         output,
-        r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="black" stroke-width="1" fill="white"/>"#,
-        cx, cy, rx, ry
+        r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
+        cx, cy, rx, ry, color
     )
     .unwrap();
 
@@ -295,15 +300,15 @@ fn render_ellipse(
     if let Some(text) = label {
         writeln!(
             output,
-            r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12">{}</text>"#,
-            cx, cy, escape_xml(text)
+            r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
+            cx, cy, color, escape_xml(text)
         )
         .unwrap();
     }
 }
 
 /// Render freehand strokes as a path
-fn render_freehand(output: &mut String, points: &[Position], offset_x: i32, offset_y: i32) {
+fn render_freehand(output: &mut String, points: &[Position], color: &str, offset_x: i32, offset_y: i32) {
     if points.is_empty() {
         return;
     }
@@ -315,22 +320,22 @@ fn render_freehand(output: &mut String, points: &[Position], offset_x: i32, offs
         // Small circle at each point
         writeln!(
             output,
-            r#"  <circle cx="{}" cy="{}" r="3" fill="black"/>"#,
-            x, y
+            r#"  <circle cx="{}" cy="{}" r="3" fill="{}"/>"#,
+            x, y, color
         )
         .unwrap();
     }
 }
 
 /// Render text
-fn render_text(output: &mut String, pos: Position, content: &str, offset_x: i32, offset_y: i32) {
+fn render_text(output: &mut String, pos: Position, content: &str, color: &str, offset_x: i32, offset_y: i32) {
     let pos = Position::new(pos.x + offset_x, pos.y + offset_y);
     let (x, y) = to_svg_coords(pos);
 
     writeln!(
         output,
-        r#"  <text x="{}" y="{}" font-family="monospace" font-size="14" dominant-baseline="middle">{}</text>"#,
-        x, y, escape_xml(content)
+        r#"  <text x="{}" y="{}" font-family="monospace" font-size="14" dominant-baseline="middle" fill="{}">{}</text>"#,
+        x, y, color, escape_xml(content)
     )
     .unwrap();
 }

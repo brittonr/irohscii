@@ -12,7 +12,7 @@ use automerge::{transaction::Transactable, Automerge, ObjId, ObjType, ReadDoc, R
 use uuid::Uuid;
 
 use crate::canvas::{LineStyle, Position};
-use crate::shapes::ShapeKind;
+use crate::shapes::{ShapeColor, ShapeKind};
 
 /// Get the default storage path for the automerge document
 pub fn default_storage_path() -> PathBuf {
@@ -329,7 +329,7 @@ impl Document {
 
         for (id, kind) in all_shapes {
             match kind {
-                ShapeKind::Line { start, end, style, start_connection, end_connection } => {
+                ShapeKind::Line { start, end, style, start_connection, end_connection, color } => {
                     let mut changed = false;
                     let mut new_start = start;
                     let mut new_end = end;
@@ -350,10 +350,11 @@ impl Document {
                             style,
                             start_connection,
                             end_connection,
+                            color,
                         })?;
                     }
                 }
-                ShapeKind::Arrow { start, end, style, start_connection, end_connection } => {
+                ShapeKind::Arrow { start, end, style, start_connection, end_connection, color } => {
                     let mut changed = false;
                     let mut new_start = start;
                     let mut new_end = end;
@@ -374,6 +375,7 @@ impl Document {
                             style,
                             start_connection,
                             end_connection,
+                            color,
                         })?;
                     }
                 }
@@ -399,7 +401,7 @@ impl Document {
 
         for (id, kind) in all_shapes {
             match kind {
-                ShapeKind::Line { start, end, style, start_connection, end_connection } => {
+                ShapeKind::Line { start, end, style, start_connection, end_connection, color } => {
                     let mut changed = false;
                     let mut new_start = start;
                     let mut new_end = end;
@@ -427,10 +429,11 @@ impl Document {
                             style,
                             start_connection,
                             end_connection,
+                            color,
                         })?;
                     }
                 }
-                ShapeKind::Arrow { start, end, style, start_connection, end_connection } => {
+                ShapeKind::Arrow { start, end, style, start_connection, end_connection, color } => {
                     let mut changed = false;
                     let mut new_start = start;
                     let mut new_end = end;
@@ -456,6 +459,7 @@ impl Document {
                             style,
                             start_connection,
                             end_connection,
+                            color,
                         })?;
                     }
                 }
@@ -706,6 +710,7 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
             style,
             start_connection,
             end_connection,
+            color,
         } => {
             tx.put(obj, "kind", "Line")?;
             tx.put(obj, "start_x", start.x as i64)?;
@@ -713,6 +718,7 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
             tx.put(obj, "end_x", end.x as i64)?;
             tx.put(obj, "end_y", end.y as i64)?;
             tx.put(obj, "style", line_style_to_str(*style))?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
             if let Some(conn) = start_connection {
                 tx.put(obj, "start_conn", *conn as i64)?;
             }
@@ -726,6 +732,7 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
             style,
             start_connection,
             end_connection,
+            color,
         } => {
             tx.put(obj, "kind", "Arrow")?;
             tx.put(obj, "start_x", start.x as i64)?;
@@ -733,6 +740,7 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
             tx.put(obj, "end_x", end.x as i64)?;
             tx.put(obj, "end_y", end.y as i64)?;
             tx.put(obj, "style", line_style_to_str(*style))?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
             if let Some(conn) = start_connection {
                 tx.put(obj, "start_conn", *conn as i64)?;
             }
@@ -740,22 +748,24 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
                 tx.put(obj, "end_conn", *conn as i64)?;
             }
         }
-        ShapeKind::Rectangle { start, end, label } => {
+        ShapeKind::Rectangle { start, end, label, color } => {
             tx.put(obj, "kind", "Rectangle")?;
             tx.put(obj, "start_x", start.x as i64)?;
             tx.put(obj, "start_y", start.y as i64)?;
             tx.put(obj, "end_x", end.x as i64)?;
             tx.put(obj, "end_y", end.y as i64)?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
             if let Some(l) = label {
                 tx.put(obj, "label", l.as_str())?;
             }
         }
-        ShapeKind::DoubleBox { start, end, label } => {
+        ShapeKind::DoubleBox { start, end, label, color } => {
             tx.put(obj, "kind", "DoubleBox")?;
             tx.put(obj, "start_x", start.x as i64)?;
             tx.put(obj, "start_y", start.y as i64)?;
             tx.put(obj, "end_x", end.x as i64)?;
             tx.put(obj, "end_y", end.y as i64)?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
             if let Some(l) = label {
                 tx.put(obj, "label", l.as_str())?;
             }
@@ -765,12 +775,14 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
             half_width,
             half_height,
             label,
+            color,
         } => {
             tx.put(obj, "kind", "Diamond")?;
             tx.put(obj, "center_x", center.x as i64)?;
             tx.put(obj, "center_y", center.y as i64)?;
             tx.put(obj, "half_width", *half_width as i64)?;
             tx.put(obj, "half_height", *half_height as i64)?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
             if let Some(l) = label {
                 tx.put(obj, "label", l.as_str())?;
             }
@@ -780,19 +792,22 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
             radius_x,
             radius_y,
             label,
+            color,
         } => {
             tx.put(obj, "kind", "Ellipse")?;
             tx.put(obj, "center_x", center.x as i64)?;
             tx.put(obj, "center_y", center.y as i64)?;
             tx.put(obj, "radius_x", *radius_x as i64)?;
             tx.put(obj, "radius_y", *radius_y as i64)?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
             if let Some(l) = label {
                 tx.put(obj, "label", l.as_str())?;
             }
         }
-        ShapeKind::Freehand { points, char } => {
+        ShapeKind::Freehand { points, char, color } => {
             tx.put(obj, "kind", "Freehand")?;
             tx.put(obj, "char", char.to_string())?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
             let points_obj = tx.put_object(obj, "points", ObjType::List)?;
             for (i, point) in points.iter().enumerate() {
                 let point_obj = tx.insert_object(&points_obj, i, ObjType::Map)?;
@@ -800,11 +815,12 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
                 tx.put(&point_obj, "y", point.y as i64)?;
             }
         }
-        ShapeKind::Text { pos, content } => {
+        ShapeKind::Text { pos, content, color } => {
             tx.put(obj, "kind", "Text")?;
             tx.put(obj, "pos_x", pos.x as i64)?;
             tx.put(obj, "pos_y", pos.y as i64)?;
             tx.put(obj, "content", content.as_str())?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
         }
     }
     Ok(())
@@ -829,6 +845,7 @@ fn read_shape_kind(doc: &Automerge, obj: &ObjId) -> Result<Option<ShapeKind>> {
             style: get_line_style(doc, obj)?,
             start_connection: get_opt_u64(doc, obj, "start_conn")?,
             end_connection: get_opt_u64(doc, obj, "end_conn")?,
+            color: get_shape_color(doc, obj)?,
         },
         "Arrow" => ShapeKind::Arrow {
             start: Position::new(get_i32(doc, obj, "start_x")?, get_i32(doc, obj, "start_y")?),
@@ -836,28 +853,33 @@ fn read_shape_kind(doc: &Automerge, obj: &ObjId) -> Result<Option<ShapeKind>> {
             style: get_line_style(doc, obj)?,
             start_connection: get_opt_u64(doc, obj, "start_conn")?,
             end_connection: get_opt_u64(doc, obj, "end_conn")?,
+            color: get_shape_color(doc, obj)?,
         },
         "Rectangle" => ShapeKind::Rectangle {
             start: Position::new(get_i32(doc, obj, "start_x")?, get_i32(doc, obj, "start_y")?),
             end: Position::new(get_i32(doc, obj, "end_x")?, get_i32(doc, obj, "end_y")?),
             label: get_opt_string(doc, obj, "label")?,
+            color: get_shape_color(doc, obj)?,
         },
         "DoubleBox" => ShapeKind::DoubleBox {
             start: Position::new(get_i32(doc, obj, "start_x")?, get_i32(doc, obj, "start_y")?),
             end: Position::new(get_i32(doc, obj, "end_x")?, get_i32(doc, obj, "end_y")?),
             label: get_opt_string(doc, obj, "label")?,
+            color: get_shape_color(doc, obj)?,
         },
         "Diamond" => ShapeKind::Diamond {
             center: Position::new(get_i32(doc, obj, "center_x")?, get_i32(doc, obj, "center_y")?),
             half_width: get_i32(doc, obj, "half_width")?,
             half_height: get_i32(doc, obj, "half_height")?,
             label: get_opt_string(doc, obj, "label")?,
+            color: get_shape_color(doc, obj)?,
         },
         "Ellipse" => ShapeKind::Ellipse {
             center: Position::new(get_i32(doc, obj, "center_x")?, get_i32(doc, obj, "center_y")?),
             radius_x: get_i32(doc, obj, "radius_x")?,
             radius_y: get_i32(doc, obj, "radius_y")?,
             label: get_opt_string(doc, obj, "label")?,
+            color: get_shape_color(doc, obj)?,
         },
         "Freehand" => {
             let char_str = get_string(doc, obj, "char")?;
@@ -879,11 +901,12 @@ fn read_shape_kind(doc: &Automerge, obj: &ObjId) -> Result<Option<ShapeKind>> {
                 None => Vec::new(),
             };
 
-            ShapeKind::Freehand { points, char: ch }
+            ShapeKind::Freehand { points, char: ch, color: get_shape_color(doc, obj)? }
         }
         "Text" => ShapeKind::Text {
             pos: Position::new(get_i32(doc, obj, "pos_x")?, get_i32(doc, obj, "pos_y")?),
             content: get_string(doc, obj, "content")?,
+            color: get_shape_color(doc, obj)?,
         },
         _ => return Ok(None),
     };
@@ -955,6 +978,59 @@ fn str_to_line_style(s: &str) -> LineStyle {
         "OrthogonalHV" => LineStyle::OrthogonalHV,
         "OrthogonalVH" => LineStyle::OrthogonalVH,
         _ => LineStyle::default(),
+    }
+}
+
+fn shape_color_to_str(color: ShapeColor) -> &'static str {
+    match color {
+        ShapeColor::White => "White",
+        ShapeColor::Black => "Black",
+        ShapeColor::Red => "Red",
+        ShapeColor::Green => "Green",
+        ShapeColor::Yellow => "Yellow",
+        ShapeColor::Blue => "Blue",
+        ShapeColor::Magenta => "Magenta",
+        ShapeColor::Cyan => "Cyan",
+        ShapeColor::Gray => "Gray",
+        ShapeColor::DarkGray => "DarkGray",
+        ShapeColor::LightRed => "LightRed",
+        ShapeColor::LightGreen => "LightGreen",
+        ShapeColor::LightYellow => "LightYellow",
+        ShapeColor::LightBlue => "LightBlue",
+        ShapeColor::LightMagenta => "LightMagenta",
+        ShapeColor::LightCyan => "LightCyan",
+    }
+}
+
+fn str_to_shape_color(s: &str) -> ShapeColor {
+    match s {
+        "White" => ShapeColor::White,
+        "Black" => ShapeColor::Black,
+        "Red" => ShapeColor::Red,
+        "Green" => ShapeColor::Green,
+        "Yellow" => ShapeColor::Yellow,
+        "Blue" => ShapeColor::Blue,
+        "Magenta" => ShapeColor::Magenta,
+        "Cyan" => ShapeColor::Cyan,
+        "Gray" => ShapeColor::Gray,
+        "DarkGray" => ShapeColor::DarkGray,
+        "LightRed" => ShapeColor::LightRed,
+        "LightGreen" => ShapeColor::LightGreen,
+        "LightYellow" => ShapeColor::LightYellow,
+        "LightBlue" => ShapeColor::LightBlue,
+        "LightMagenta" => ShapeColor::LightMagenta,
+        "LightCyan" => ShapeColor::LightCyan,
+        _ => ShapeColor::default(),
+    }
+}
+
+fn get_shape_color(doc: &Automerge, obj: &ObjId) -> Result<ShapeColor> {
+    match doc.get(obj, "color")? {
+        Some((automerge::Value::Scalar(s), _)) => {
+            let color_str = s.to_string();
+            Ok(str_to_shape_color(color_str.trim_matches('"')))
+        },
+        _ => Ok(ShapeColor::default()),
     }
 }
 

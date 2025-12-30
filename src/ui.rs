@@ -144,7 +144,6 @@ impl CanvasWidget<'_> {
 
 impl Widget for CanvasWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let default_style = Style::default();
         let selected_style = Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD);
@@ -161,10 +160,11 @@ impl Widget for CanvasWidget<'_> {
         // Render all shapes
         for shape in self.app.shape_view.iter() {
             let is_selected = self.app.selected == Some(shape.id);
+            // Use shape's color, but override with cyan when selected
             let style = if is_selected {
                 selected_style
             } else {
-                default_style
+                Style::default().fg(shape.kind.color().to_ratatui())
             };
 
             match &shape.kind {
@@ -178,7 +178,7 @@ impl Widget for CanvasWidget<'_> {
                         self.render_char(buf, area, pos, ch, style);
                     }
                 }
-                ShapeKind::Rectangle { start, end, label } => {
+                ShapeKind::Rectangle { start, end, label, .. } => {
                     for (pos, ch) in rect_points(*start, *end) {
                         self.render_char(buf, area, pos, ch, style);
                     }
@@ -186,7 +186,7 @@ impl Widget for CanvasWidget<'_> {
                         self.render_label(buf, area, shape.bounds(), text, style);
                     }
                 }
-                ShapeKind::DoubleBox { start, end, label } => {
+                ShapeKind::DoubleBox { start, end, label, .. } => {
                     for (pos, ch) in double_rect_points(*start, *end) {
                         self.render_char(buf, area, pos, ch, style);
                     }
@@ -194,7 +194,7 @@ impl Widget for CanvasWidget<'_> {
                         self.render_label(buf, area, shape.bounds(), text, style);
                     }
                 }
-                ShapeKind::Diamond { center, half_width, half_height, label } => {
+                ShapeKind::Diamond { center, half_width, half_height, label, .. } => {
                     for (pos, ch) in diamond_points(*center, *half_width, *half_height) {
                         self.render_char(buf, area, pos, ch, style);
                     }
@@ -202,7 +202,7 @@ impl Widget for CanvasWidget<'_> {
                         self.render_label(buf, area, shape.bounds(), text, style);
                     }
                 }
-                ShapeKind::Ellipse { center, radius_x, radius_y, label } => {
+                ShapeKind::Ellipse { center, radius_x, radius_y, label, .. } => {
                     for (pos, ch) in ellipse_points(*center, *radius_x, *radius_y) {
                         self.render_char(buf, area, pos, ch, style);
                     }
@@ -210,12 +210,12 @@ impl Widget for CanvasWidget<'_> {
                         self.render_label(buf, area, shape.bounds(), text, style);
                     }
                 }
-                ShapeKind::Freehand { points, char } => {
+                ShapeKind::Freehand { points, char, .. } => {
                     for &pos in points {
                         self.render_char(buf, area, pos, *char, style);
                     }
                 }
-                ShapeKind::Text { pos, content } => {
+                ShapeKind::Text { pos, content, .. } => {
                     for (i, ch) in content.chars().enumerate() {
                         let char_pos = Position::new(pos.x + i as i32, pos.y);
                         self.render_char(buf, area, char_pos, ch, style);
@@ -496,8 +496,11 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let dirty_marker = if app.is_dirty() { " *" } else { "" };
 
     let char_info = match app.current_tool {
-        Tool::Freehand => format!(" | Brush: '{}'", app.brush_char),
-        Tool::Line => format!(" | Style: {}", app.line_style.name()),
+        Tool::Freehand => format!(" | Brush: '{}' | Color: {}", app.brush_char, app.current_color.name()),
+        Tool::Line | Tool::Arrow => format!(" | Style: {} | Color: {}", app.line_style.name(), app.current_color.name()),
+        Tool::Rectangle | Tool::DoubleBox | Tool::Diamond | Tool::Ellipse | Tool::Text => {
+            format!(" | Color: {}", app.current_color.name())
+        }
         _ => String::new(),
     };
 

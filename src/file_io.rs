@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::canvas::{arrow_points_styled, diamond_points, double_rect_points, ellipse_points, line_points_styled, rect_points, Position};
-use crate::shapes::{ShapeKind, ShapeView};
+use crate::shapes::{ShapeColor, ShapeKind, ShapeView};
 
 /// Render a label centered inside a shape's bounds
 fn render_label_to_grid(grid: &mut HashMap<Position, char>, bounds: (i32, i32, i32, i32), text: &str) {
@@ -48,7 +48,7 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     grid.insert(pos, ch);
                 }
             }
-            ShapeKind::Rectangle { start, end, label } => {
+            ShapeKind::Rectangle { start, end, label, .. } => {
                 for (pos, ch) in rect_points(*start, *end) {
                     grid.insert(pos, ch);
                 }
@@ -56,7 +56,7 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     render_label_to_grid(&mut grid, shape.bounds(), text);
                 }
             }
-            ShapeKind::DoubleBox { start, end, label } => {
+            ShapeKind::DoubleBox { start, end, label, .. } => {
                 for (pos, ch) in double_rect_points(*start, *end) {
                     grid.insert(pos, ch);
                 }
@@ -64,7 +64,7 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     render_label_to_grid(&mut grid, shape.bounds(), text);
                 }
             }
-            ShapeKind::Diamond { center, half_width, half_height, label } => {
+            ShapeKind::Diamond { center, half_width, half_height, label, .. } => {
                 for (pos, ch) in diamond_points(*center, *half_width, *half_height) {
                     grid.insert(pos, ch);
                 }
@@ -72,7 +72,7 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     render_label_to_grid(&mut grid, shape.bounds(), text);
                 }
             }
-            ShapeKind::Ellipse { center, radius_x, radius_y, label } => {
+            ShapeKind::Ellipse { center, radius_x, radius_y, label, .. } => {
                 for (pos, ch) in ellipse_points(*center, *radius_x, *radius_y) {
                     grid.insert(pos, ch);
                 }
@@ -80,12 +80,12 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     render_label_to_grid(&mut grid, shape.bounds(), text);
                 }
             }
-            ShapeKind::Freehand { points, char } => {
+            ShapeKind::Freehand { points, char, .. } => {
                 for &pos in points {
                     grid.insert(pos, *char);
                 }
             }
-            ShapeKind::Text { pos, content } => {
+            ShapeKind::Text { pos, content, .. } => {
                 for (i, ch) in content.chars().enumerate() {
                     grid.insert(Position::new(pos.x + i as i32, pos.y), ch);
                 }
@@ -149,6 +149,7 @@ pub fn load_ascii(path: &Path) -> Result<Vec<ShapeKind>> {
             shapes.push(ShapeKind::Text {
                 pos: Position::new(0, y as i32),
                 content: line.to_string(),
+                color: ShapeColor::default(),
             });
         }
     }

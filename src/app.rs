@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::canvas::{LineStyle, Position, Viewport};
 use crate::document::{default_storage_path, Document, ShapeId};
 use crate::presence::{CursorActivity, PeerId, PeerPresence, PresenceManager, ToolKind};
-use crate::shapes::{resize_shape, ResizeHandle, ShapeKind, ShapeView, SnapPoint};
+use crate::shapes::{resize_shape, ResizeHandle, ShapeColor, ShapeKind, ShapeView, SnapPoint};
 use crate::recent_files::RecentFiles;
 
 /// Snap distance threshold (in characters)
@@ -105,6 +105,7 @@ pub struct App {
     pub mode: Mode,
     pub brush_char: char,
     pub line_style: LineStyle,
+    pub current_color: ShapeColor,
     pub running: bool,
     pub file_path: Option<PathBuf>,
     pub mouse: MouseState,
@@ -143,6 +144,7 @@ impl App {
             mode: Mode::Normal,
             brush_char: '*',
             line_style: LineStyle::default(),
+            current_color: ShapeColor::default(),
             running: true,
             file_path: None,
             mouse: MouseState::default(),
@@ -387,7 +389,7 @@ impl App {
 
         if let Some((pos, content)) = text_data {
             self.save_undo_state();
-            if self.doc.add_shape(ShapeKind::Text { pos, content }).is_ok() {
+            if self.doc.add_shape(ShapeKind::Text { pos, content, color: self.current_color }).is_ok() {
                 self.rebuild_view();
                 self.doc.mark_dirty();
             }
@@ -423,6 +425,7 @@ impl App {
                 if self.doc.add_shape(ShapeKind::Freehand {
                     points: state.points,
                     char: self.brush_char,
+                    color: self.current_color,
                 }).is_ok() {
                     self.rebuild_view();
                     self.doc.mark_dirty();
@@ -513,6 +516,7 @@ impl App {
                         style: self.line_style,
                         start_connection: start_conn,
                         end_connection: current_conn,
+                        color: self.current_color,
                     })
                 }
                 Tool::Arrow => {
@@ -522,6 +526,7 @@ impl App {
                         style: self.line_style,
                         start_connection: start_conn,
                         end_connection: current_conn,
+                        color: self.current_color,
                     })
                 }
                 Tool::Rectangle => {
@@ -529,6 +534,7 @@ impl App {
                         start,
                         end,
                         label: None,
+                        color: self.current_color,
                     })
                 }
                 Tool::DoubleBox => {
@@ -536,6 +542,7 @@ impl App {
                         start,
                         end,
                         label: None,
+                        color: self.current_color,
                     })
                 }
                 Tool::Diamond => {
@@ -548,6 +555,7 @@ impl App {
                         half_width,
                         half_height,
                         label: None,
+                        color: self.current_color,
                     })
                 }
                 Tool::Ellipse => {
@@ -560,6 +568,7 @@ impl App {
                         radius_x,
                         radius_y,
                         label: None,
+                        color: self.current_color,
                     })
                 }
                 _ => return,
@@ -793,6 +802,12 @@ impl App {
     pub fn cycle_line_style(&mut self) {
         self.line_style = self.line_style.next();
         self.set_status(format!("Line style: {}", self.line_style.name()));
+    }
+
+    /// Cycle through colors
+    pub fn cycle_color(&mut self) {
+        self.current_color = self.current_color.next();
+        self.set_status(format!("Color: {}", self.current_color.name()));
     }
 
     /// Start label input for the selected shape

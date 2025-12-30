@@ -5,10 +5,123 @@
 
 use std::collections::HashMap;
 
+use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
 use crate::canvas::{LineStyle, Position};
 use crate::document::{Document, ShapeId};
+
+/// Color for shapes - 16-color terminal palette
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ShapeColor {
+    #[default]
+    White,
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    Gray,
+    DarkGray,
+    LightRed,
+    LightGreen,
+    LightYellow,
+    LightBlue,
+    LightMagenta,
+    LightCyan,
+}
+
+impl ShapeColor {
+    /// Convert to ratatui Color for terminal rendering
+    pub fn to_ratatui(self) -> Color {
+        match self {
+            ShapeColor::White => Color::White,
+            ShapeColor::Black => Color::Black,
+            ShapeColor::Red => Color::Red,
+            ShapeColor::Green => Color::Green,
+            ShapeColor::Yellow => Color::Yellow,
+            ShapeColor::Blue => Color::Blue,
+            ShapeColor::Magenta => Color::Magenta,
+            ShapeColor::Cyan => Color::Cyan,
+            ShapeColor::Gray => Color::Gray,
+            ShapeColor::DarkGray => Color::DarkGray,
+            ShapeColor::LightRed => Color::LightRed,
+            ShapeColor::LightGreen => Color::LightGreen,
+            ShapeColor::LightYellow => Color::LightYellow,
+            ShapeColor::LightBlue => Color::LightBlue,
+            ShapeColor::LightMagenta => Color::LightMagenta,
+            ShapeColor::LightCyan => Color::LightCyan,
+        }
+    }
+
+    /// Convert to CSS color string for SVG export
+    pub fn to_css(self) -> &'static str {
+        match self {
+            ShapeColor::White => "white",
+            ShapeColor::Black => "black",
+            ShapeColor::Red => "#cd0000",
+            ShapeColor::Green => "#00cd00",
+            ShapeColor::Yellow => "#cdcd00",
+            ShapeColor::Blue => "#0000cd",
+            ShapeColor::Magenta => "#cd00cd",
+            ShapeColor::Cyan => "#00cdcd",
+            ShapeColor::Gray => "#808080",
+            ShapeColor::DarkGray => "#555555",
+            ShapeColor::LightRed => "#ff0000",
+            ShapeColor::LightGreen => "#00ff00",
+            ShapeColor::LightYellow => "#ffff00",
+            ShapeColor::LightBlue => "#0000ff",
+            ShapeColor::LightMagenta => "#ff00ff",
+            ShapeColor::LightCyan => "#00ffff",
+        }
+    }
+
+    /// Get display name for status bar
+    pub fn name(self) -> &'static str {
+        match self {
+            ShapeColor::White => "White",
+            ShapeColor::Black => "Black",
+            ShapeColor::Red => "Red",
+            ShapeColor::Green => "Green",
+            ShapeColor::Yellow => "Yellow",
+            ShapeColor::Blue => "Blue",
+            ShapeColor::Magenta => "Magenta",
+            ShapeColor::Cyan => "Cyan",
+            ShapeColor::Gray => "Gray",
+            ShapeColor::DarkGray => "DarkGray",
+            ShapeColor::LightRed => "LightRed",
+            ShapeColor::LightGreen => "LightGreen",
+            ShapeColor::LightYellow => "LightYellow",
+            ShapeColor::LightBlue => "LightBlue",
+            ShapeColor::LightMagenta => "LightMagenta",
+            ShapeColor::LightCyan => "LightCyan",
+        }
+    }
+
+    /// Cycle to next color
+    pub fn next(self) -> Self {
+        match self {
+            ShapeColor::White => ShapeColor::Red,
+            ShapeColor::Red => ShapeColor::Green,
+            ShapeColor::Green => ShapeColor::Yellow,
+            ShapeColor::Yellow => ShapeColor::Blue,
+            ShapeColor::Blue => ShapeColor::Magenta,
+            ShapeColor::Magenta => ShapeColor::Cyan,
+            ShapeColor::Cyan => ShapeColor::LightRed,
+            ShapeColor::LightRed => ShapeColor::LightGreen,
+            ShapeColor::LightGreen => ShapeColor::LightYellow,
+            ShapeColor::LightYellow => ShapeColor::LightBlue,
+            ShapeColor::LightBlue => ShapeColor::LightMagenta,
+            ShapeColor::LightMagenta => ShapeColor::LightCyan,
+            ShapeColor::LightCyan => ShapeColor::Gray,
+            ShapeColor::Gray => ShapeColor::DarkGray,
+            ShapeColor::DarkGray => ShapeColor::Black,
+            ShapeColor::Black => ShapeColor::White,
+        }
+    }
+}
 
 /// Different types of shapes we can draw
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,6 +133,8 @@ pub enum ShapeKind {
         style: LineStyle,
         start_connection: Option<u64>,
         end_connection: Option<u64>,
+        #[serde(default)]
+        color: ShapeColor,
     },
     /// An arrow (line with arrowhead at end)
     Arrow {
@@ -28,18 +143,24 @@ pub enum ShapeKind {
         style: LineStyle,
         start_connection: Option<u64>,
         end_connection: Option<u64>,
+        #[serde(default)]
+        color: ShapeColor,
     },
     /// A rectangle defined by two corners
     Rectangle {
         start: Position,
         end: Position,
         label: Option<String>,
+        #[serde(default)]
+        color: ShapeColor,
     },
     /// A double-line rectangle
     DoubleBox {
         start: Position,
         end: Position,
         label: Option<String>,
+        #[serde(default)]
+        color: ShapeColor,
     },
     /// A diamond (rhombus) defined by center and half-dimensions
     Diamond {
@@ -47,6 +168,8 @@ pub enum ShapeKind {
         half_width: i32,
         half_height: i32,
         label: Option<String>,
+        #[serde(default)]
+        color: ShapeColor,
     },
     /// An ellipse defined by center and radii
     Ellipse {
@@ -54,60 +177,80 @@ pub enum ShapeKind {
         radius_x: i32,
         radius_y: i32,
         label: Option<String>,
+        #[serde(default)]
+        color: ShapeColor,
     },
     /// Freehand stroke - series of points
-    Freehand { points: Vec<Position>, char: char },
+    Freehand {
+        points: Vec<Position>,
+        char: char,
+        #[serde(default)]
+        color: ShapeColor,
+    },
     /// Text at a position
-    Text { pos: Position, content: String },
+    Text {
+        pos: Position,
+        content: String,
+        #[serde(default)]
+        color: ShapeColor,
+    },
 }
 
 impl ShapeKind {
     /// Create a translated copy of this shape
     pub fn translated(&self, dx: i32, dy: i32) -> Self {
         match self {
-            ShapeKind::Line { start, end, style, .. } => ShapeKind::Line {
+            ShapeKind::Line { start, end, style, color, .. } => ShapeKind::Line {
                 start: Position { x: start.x + dx, y: start.y + dy },
                 end: Position { x: end.x + dx, y: end.y + dy },
                 style: *style,
                 start_connection: None,
                 end_connection: None,
+                color: *color,
             },
-            ShapeKind::Arrow { start, end, style, .. } => ShapeKind::Arrow {
+            ShapeKind::Arrow { start, end, style, color, .. } => ShapeKind::Arrow {
                 start: Position { x: start.x + dx, y: start.y + dy },
                 end: Position { x: end.x + dx, y: end.y + dy },
                 style: *style,
                 start_connection: None,
                 end_connection: None,
+                color: *color,
             },
-            ShapeKind::Rectangle { start, end, label } => ShapeKind::Rectangle {
+            ShapeKind::Rectangle { start, end, label, color } => ShapeKind::Rectangle {
                 start: Position { x: start.x + dx, y: start.y + dy },
                 end: Position { x: end.x + dx, y: end.y + dy },
                 label: label.clone(),
+                color: *color,
             },
-            ShapeKind::DoubleBox { start, end, label } => ShapeKind::DoubleBox {
+            ShapeKind::DoubleBox { start, end, label, color } => ShapeKind::DoubleBox {
                 start: Position { x: start.x + dx, y: start.y + dy },
                 end: Position { x: end.x + dx, y: end.y + dy },
                 label: label.clone(),
+                color: *color,
             },
-            ShapeKind::Diamond { center, half_width, half_height, label } => ShapeKind::Diamond {
+            ShapeKind::Diamond { center, half_width, half_height, label, color } => ShapeKind::Diamond {
                 center: Position { x: center.x + dx, y: center.y + dy },
                 half_width: *half_width,
                 half_height: *half_height,
                 label: label.clone(),
+                color: *color,
             },
-            ShapeKind::Ellipse { center, radius_x, radius_y, label } => ShapeKind::Ellipse {
+            ShapeKind::Ellipse { center, radius_x, radius_y, label, color } => ShapeKind::Ellipse {
                 center: Position { x: center.x + dx, y: center.y + dy },
                 radius_x: *radius_x,
                 radius_y: *radius_y,
                 label: label.clone(),
+                color: *color,
             },
-            ShapeKind::Freehand { points, char } => ShapeKind::Freehand {
+            ShapeKind::Freehand { points, char, color } => ShapeKind::Freehand {
                 points: points.iter().map(|p| Position { x: p.x + dx, y: p.y + dy }).collect(),
                 char: *char,
+                color: *color,
             },
-            ShapeKind::Text { pos, content } => ShapeKind::Text {
+            ShapeKind::Text { pos, content, color } => ShapeKind::Text {
                 pos: Position { x: pos.x + dx, y: pos.y + dy },
                 content: content.clone(),
+                color: *color,
             },
         }
     }
@@ -126,15 +269,29 @@ impl ShapeKind {
     /// Set the label for this shape (if it supports labels)
     pub fn with_label(self, new_label: Option<String>) -> Self {
         match self {
-            ShapeKind::Rectangle { start, end, .. } => ShapeKind::Rectangle { start, end, label: new_label },
-            ShapeKind::DoubleBox { start, end, .. } => ShapeKind::DoubleBox { start, end, label: new_label },
-            ShapeKind::Diamond { center, half_width, half_height, .. } => {
-                ShapeKind::Diamond { center, half_width, half_height, label: new_label }
+            ShapeKind::Rectangle { start, end, color, .. } => ShapeKind::Rectangle { start, end, label: new_label, color },
+            ShapeKind::DoubleBox { start, end, color, .. } => ShapeKind::DoubleBox { start, end, label: new_label, color },
+            ShapeKind::Diamond { center, half_width, half_height, color, .. } => {
+                ShapeKind::Diamond { center, half_width, half_height, label: new_label, color }
             }
-            ShapeKind::Ellipse { center, radius_x, radius_y, .. } => {
-                ShapeKind::Ellipse { center, radius_x, radius_y, label: new_label }
+            ShapeKind::Ellipse { center, radius_x, radius_y, color, .. } => {
+                ShapeKind::Ellipse { center, radius_x, radius_y, label: new_label, color }
             }
             other => other,
+        }
+    }
+
+    /// Get the color of this shape
+    pub fn color(&self) -> ShapeColor {
+        match self {
+            ShapeKind::Line { color, .. }
+            | ShapeKind::Arrow { color, .. }
+            | ShapeKind::Rectangle { color, .. }
+            | ShapeKind::DoubleBox { color, .. }
+            | ShapeKind::Diamond { color, .. }
+            | ShapeKind::Ellipse { color, .. }
+            | ShapeKind::Freehand { color, .. }
+            | ShapeKind::Text { color, .. } => *color,
         }
     }
 
@@ -190,7 +347,7 @@ impl ShapeKind {
                     Position::new(center.x + *radius_x, center.y),
                 ]
             }
-            ShapeKind::Text { pos, content } => {
+            ShapeKind::Text { pos, content, .. } => {
                 let end_x = pos.x + content.len() as i32 - 1;
                 vec![*pos, Position::new(end_x, pos.y)]
             }
@@ -333,7 +490,7 @@ impl CachedShape {
                 }
                 (min_x, min_y, max_x, max_y)
             }
-            ShapeKind::Text { pos, content } => {
+            ShapeKind::Text { pos, content, .. } => {
                 (pos.x, pos.y, pos.x + content.len() as i32 - 1, pos.y)
             }
         }
@@ -379,7 +536,7 @@ impl CachedShape {
                     Position::new(center.x + *radius_x, center.y),
                 ]
             }
-            ShapeKind::Text { pos, content } => {
+            ShapeKind::Text { pos, content, .. } => {
                 let end_x = pos.x + content.len() as i32 - 1;
                 vec![*pos, Position::new(end_x, pos.y)]
             }
@@ -550,7 +707,7 @@ impl Default for ShapeView {
 /// Apply resize to a shape kind
 pub fn resize_shape(kind: &ShapeKind, handle: ResizeHandle, new_pos: Position) -> ShapeKind {
     match kind {
-        ShapeKind::Rectangle { start, end, label } | ShapeKind::DoubleBox { start, end, label } => {
+        ShapeKind::Rectangle { start, end, label, color } | ShapeKind::DoubleBox { start, end, label, color } => {
             let is_double = matches!(kind, ShapeKind::DoubleBox { .. });
             let is_start_left = start.x <= end.x;
             let is_start_top = start.y <= end.y;
@@ -604,12 +761,12 @@ pub fn resize_shape(kind: &ShapeKind, handle: ResizeHandle, new_pos: Position) -
             };
 
             if is_double {
-                ShapeKind::DoubleBox { start: new_start, end: new_end, label: label.clone() }
+                ShapeKind::DoubleBox { start: new_start, end: new_end, label: label.clone(), color: *color }
             } else {
-                ShapeKind::Rectangle { start: new_start, end: new_end, label: label.clone() }
+                ShapeKind::Rectangle { start: new_start, end: new_end, label: label.clone(), color: *color }
             }
         }
-        ShapeKind::Line { start, end, style, start_connection, end_connection } => {
+        ShapeKind::Line { start, end, style, start_connection, end_connection, color } => {
             match handle {
                 ResizeHandle::Start => ShapeKind::Line {
                     start: new_pos,
@@ -617,6 +774,7 @@ pub fn resize_shape(kind: &ShapeKind, handle: ResizeHandle, new_pos: Position) -
                     style: *style,
                     start_connection: *start_connection,
                     end_connection: *end_connection,
+                    color: *color,
                 },
                 ResizeHandle::End => ShapeKind::Line {
                     start: *start,
@@ -624,11 +782,12 @@ pub fn resize_shape(kind: &ShapeKind, handle: ResizeHandle, new_pos: Position) -
                     style: *style,
                     start_connection: *start_connection,
                     end_connection: *end_connection,
+                    color: *color,
                 },
                 _ => kind.clone(),
             }
         }
-        ShapeKind::Arrow { start, end, style, start_connection, end_connection } => {
+        ShapeKind::Arrow { start, end, style, start_connection, end_connection, color } => {
             match handle {
                 ResizeHandle::Start => ShapeKind::Arrow {
                     start: new_pos,
@@ -636,6 +795,7 @@ pub fn resize_shape(kind: &ShapeKind, handle: ResizeHandle, new_pos: Position) -
                     style: *style,
                     start_connection: *start_connection,
                     end_connection: *end_connection,
+                    color: *color,
                 },
                 ResizeHandle::End => ShapeKind::Arrow {
                     start: *start,
@@ -643,40 +803,45 @@ pub fn resize_shape(kind: &ShapeKind, handle: ResizeHandle, new_pos: Position) -
                     style: *style,
                     start_connection: *start_connection,
                     end_connection: *end_connection,
+                    color: *color,
                 },
                 _ => kind.clone(),
             }
         }
-        ShapeKind::Diamond { center, half_width, half_height, label } => {
+        ShapeKind::Diamond { center, half_width, half_height, label, color } => {
             match handle {
                 ResizeHandle::TopLeft => ShapeKind::Diamond {
                     center: *center,
                     half_width: *half_width,
                     half_height: (center.y - new_pos.y).abs().max(1),
                     label: label.clone(),
+                    color: *color,
                 },
                 ResizeHandle::TopRight => ShapeKind::Diamond {
                     center: *center,
                     half_width: (new_pos.x - center.x).abs().max(1),
                     half_height: *half_height,
                     label: label.clone(),
+                    color: *color,
                 },
                 ResizeHandle::BottomLeft => ShapeKind::Diamond {
                     center: *center,
                     half_width: (center.x - new_pos.x).abs().max(1),
                     half_height: *half_height,
                     label: label.clone(),
+                    color: *color,
                 },
                 ResizeHandle::BottomRight => ShapeKind::Diamond {
                     center: *center,
                     half_width: *half_width,
                     half_height: (new_pos.y - center.y).abs().max(1),
                     label: label.clone(),
+                    color: *color,
                 },
                 _ => kind.clone(),
             }
         }
-        ShapeKind::Ellipse { center, label, .. } => {
+        ShapeKind::Ellipse { center, label, color, .. } => {
             match handle {
                 ResizeHandle::TopLeft | ResizeHandle::TopRight |
                 ResizeHandle::BottomLeft | ResizeHandle::BottomRight => {
@@ -685,6 +850,7 @@ pub fn resize_shape(kind: &ShapeKind, handle: ResizeHandle, new_pos: Position) -
                         radius_x: (new_pos.x - center.x).abs().max(1),
                         radius_y: (new_pos.y - center.y).abs().max(1),
                         label: label.clone(),
+                        color: *color,
                     }
                 }
                 _ => kind.clone(),
