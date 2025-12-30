@@ -171,14 +171,20 @@ impl Widget for CanvasWidget<'_> {
             };
 
             match &shape.kind {
-                ShapeKind::Line { start, end, style: line_style, .. } => {
+                ShapeKind::Line { start, end, style: line_style, label, .. } => {
                     for (pos, ch) in line_points_styled(*start, *end, *line_style) {
                         self.render_char(buf, area, pos, ch, style);
                     }
+                    if let Some(text) = label {
+                        self.render_label(buf, area, shape.bounds(), text, style);
+                    }
                 }
-                ShapeKind::Arrow { start, end, style: line_style, .. } => {
+                ShapeKind::Arrow { start, end, style: line_style, label, .. } => {
                     for (pos, ch) in arrow_points_styled(*start, *end, *line_style) {
                         self.render_char(buf, area, pos, ch, style);
+                    }
+                    if let Some(text) = label {
+                        self.render_label(buf, area, shape.bounds(), text, style);
                     }
                 }
                 ShapeKind::Rectangle { start, end, label, .. } => {
@@ -213,9 +219,12 @@ impl Widget for CanvasWidget<'_> {
                         self.render_label(buf, area, shape.bounds(), text, style);
                     }
                 }
-                ShapeKind::Freehand { points, char, .. } => {
+                ShapeKind::Freehand { points, char, label, .. } => {
                     for &pos in points {
                         self.render_char(buf, area, pos, *char, style);
+                    }
+                    if let Some(text) = label {
+                        self.render_label(buf, area, shape.bounds(), text, style);
                     }
                 }
                 ShapeKind::Text { pos, content, .. } => {

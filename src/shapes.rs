@@ -134,6 +134,8 @@ pub enum ShapeKind {
         start_connection: Option<u64>,
         end_connection: Option<u64>,
         #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
         color: ShapeColor,
     },
     /// An arrow (line with arrowhead at end)
@@ -143,6 +145,8 @@ pub enum ShapeKind {
         style: LineStyle,
         start_connection: Option<u64>,
         end_connection: Option<u64>,
+        #[serde(default)]
+        label: Option<String>,
         #[serde(default)]
         color: ShapeColor,
     },
@@ -185,6 +189,8 @@ pub enum ShapeKind {
         points: Vec<Position>,
         char: char,
         #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
         color: ShapeColor,
     },
     /// Text at a position
@@ -200,20 +206,22 @@ impl ShapeKind {
     /// Create a translated copy of this shape
     pub fn translated(&self, dx: i32, dy: i32) -> Self {
         match self {
-            ShapeKind::Line { start, end, style, color, .. } => ShapeKind::Line {
+            ShapeKind::Line { start, end, style, label, color, .. } => ShapeKind::Line {
                 start: Position { x: start.x + dx, y: start.y + dy },
                 end: Position { x: end.x + dx, y: end.y + dy },
                 style: *style,
                 start_connection: None,
                 end_connection: None,
+                label: label.clone(),
                 color: *color,
             },
-            ShapeKind::Arrow { start, end, style, color, .. } => ShapeKind::Arrow {
+            ShapeKind::Arrow { start, end, style, label, color, .. } => ShapeKind::Arrow {
                 start: Position { x: start.x + dx, y: start.y + dy },
                 end: Position { x: end.x + dx, y: end.y + dy },
                 style: *style,
                 start_connection: None,
                 end_connection: None,
+                label: label.clone(),
                 color: *color,
             },
             ShapeKind::Rectangle { start, end, label, color } => ShapeKind::Rectangle {
@@ -242,9 +250,10 @@ impl ShapeKind {
                 label: label.clone(),
                 color: *color,
             },
-            ShapeKind::Freehand { points, char, color } => ShapeKind::Freehand {
+            ShapeKind::Freehand { points, char, label, color } => ShapeKind::Freehand {
                 points: points.iter().map(|p| Position { x: p.x + dx, y: p.y + dy }).collect(),
                 char: *char,
+                label: label.clone(),
                 color: *color,
             },
             ShapeKind::Text { pos, content, color } => ShapeKind::Text {
@@ -258,17 +267,26 @@ impl ShapeKind {
     /// Get the label for this shape (if it supports labels)
     pub fn label(&self) -> Option<&str> {
         match self {
-            ShapeKind::Rectangle { label, .. }
+            ShapeKind::Line { label, .. }
+            | ShapeKind::Arrow { label, .. }
+            | ShapeKind::Rectangle { label, .. }
             | ShapeKind::DoubleBox { label, .. }
             | ShapeKind::Diamond { label, .. }
-            | ShapeKind::Ellipse { label, .. } => label.as_deref(),
-            _ => None,
+            | ShapeKind::Ellipse { label, .. }
+            | ShapeKind::Freehand { label, .. } => label.as_deref(),
+            ShapeKind::Text { .. } => None, // Text content is the label
         }
     }
 
     /// Set the label for this shape (if it supports labels)
     pub fn with_label(self, new_label: Option<String>) -> Self {
         match self {
+            ShapeKind::Line { start, end, style, start_connection, end_connection, color, .. } => {
+                ShapeKind::Line { start, end, style, start_connection, end_connection, label: new_label, color }
+            }
+            ShapeKind::Arrow { start, end, style, start_connection, end_connection, color, .. } => {
+                ShapeKind::Arrow { start, end, style, start_connection, end_connection, label: new_label, color }
+            }
             ShapeKind::Rectangle { start, end, color, .. } => ShapeKind::Rectangle { start, end, label: new_label, color },
             ShapeKind::DoubleBox { start, end, color, .. } => ShapeKind::DoubleBox { start, end, label: new_label, color },
             ShapeKind::Diamond { center, half_width, half_height, color, .. } => {
@@ -277,6 +295,10 @@ impl ShapeKind {
             ShapeKind::Ellipse { center, radius_x, radius_y, color, .. } => {
                 ShapeKind::Ellipse { center, radius_x, radius_y, label: new_label, color }
             }
+            ShapeKind::Freehand { points, char, color, .. } => {
+                ShapeKind::Freehand { points, char, label: new_label, color }
+            }
+            // Text doesn't have a separate label - its content IS the label
             other => other,
         }
     }
@@ -299,10 +321,13 @@ impl ShapeKind {
     pub fn supports_label(&self) -> bool {
         matches!(
             self,
-            ShapeKind::Rectangle { .. }
+            ShapeKind::Line { .. }
+                | ShapeKind::Arrow { .. }
+                | ShapeKind::Rectangle { .. }
                 | ShapeKind::DoubleBox { .. }
                 | ShapeKind::Diamond { .. }
                 | ShapeKind::Ellipse { .. }
+                | ShapeKind::Freehand { .. }
         )
     }
 
@@ -766,7 +791,7 @@ pub fn resize_shape(kind: &ShapeKind, handle: ResizeHandle, new_pos: Position) -
                 ShapeKind::Rectangle { start: new_start, end: new_end, label: label.clone(), color: *color }
             }
         }
-        ShapeKind::Line { start, end, style, start_connection, end_connection, color } => {
+        ShapeKind::Line { start, end, style, start_connection, end_connection, label, color } => {
             match handle {
                 ResizeHandle::Start => ShapeKind::Line {
                     start: new_pos,
@@ -774,6 +799,7 @@ pub fn resize_shape(kind: &ShapeKind, handle: ResizeHandle, new_pos: Position) -
                     style: *style,
                     start_connection: *start_connection,
                     end_connection: *end_connection,
+                    label: label.clone(),
                     color: *color,
                 },
                 ResizeHandle::End => ShapeKind::Line {
@@ -782,12 +808,13 @@ pub fn resize_shape(kind: &ShapeKind, handle: ResizeHandle, new_pos: Position) -
                     style: *style,
                     start_connection: *start_connection,
                     end_connection: *end_connection,
+                    label: label.clone(),
                     color: *color,
                 },
                 _ => kind.clone(),
             }
         }
-        ShapeKind::Arrow { start, end, style, start_connection, end_connection, color } => {
+        ShapeKind::Arrow { start, end, style, start_connection, end_connection, label, color } => {
             match handle {
                 ResizeHandle::Start => ShapeKind::Arrow {
                     start: new_pos,
@@ -795,6 +822,7 @@ pub fn resize_shape(kind: &ShapeKind, handle: ResizeHandle, new_pos: Position) -
                     style: *style,
                     start_connection: *start_connection,
                     end_connection: *end_connection,
+                    label: label.clone(),
                     color: *color,
                 },
                 ResizeHandle::End => ShapeKind::Arrow {
@@ -803,6 +831,7 @@ pub fn resize_shape(kind: &ShapeKind, handle: ResizeHandle, new_pos: Position) -
                     style: *style,
                     start_connection: *start_connection,
                     end_connection: *end_connection,
+                    label: label.clone(),
                     color: *color,
                 },
                 _ => kind.clone(),

@@ -480,6 +480,7 @@ impl App {
                 if self.doc.add_shape(ShapeKind::Freehand {
                     points: state.points,
                     char: self.brush_char,
+                    label: None,
                     color: self.current_color,
                 }).is_ok() {
                     self.rebuild_view();
@@ -571,6 +572,7 @@ impl App {
                         style: self.line_style,
                         start_connection: start_conn,
                         end_connection: current_conn,
+                        label: None,
                         color: self.current_color,
                     })
                 }
@@ -581,6 +583,7 @@ impl App {
                         style: self.line_style,
                         start_connection: start_conn,
                         end_connection: current_conn,
+                        label: None,
                         color: self.current_color,
                     })
                 }
