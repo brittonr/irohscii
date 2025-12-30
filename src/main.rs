@@ -331,6 +331,14 @@ fn run_app(
                             Tool::DoubleBox => tools::handle_doublebox_event(app, mouse),
                             Tool::Diamond => tools::handle_diamond_event(app, mouse),
                             Tool::Ellipse => tools::handle_ellipse_event(app, mouse),
+                            Tool::Triangle => tools::handle_triangle_event(app, mouse),
+                            Tool::Parallelogram => tools::handle_parallelogram_event(app, mouse),
+                            Tool::Hexagon => tools::handle_hexagon_event(app, mouse),
+                            Tool::Trapezoid => tools::handle_trapezoid_event(app, mouse),
+                            Tool::RoundedRect => tools::handle_roundedrect_event(app, mouse),
+                            Tool::Cylinder => tools::handle_cylinder_event(app, mouse),
+                            Tool::Cloud => tools::handle_cloud_event(app, mouse),
+                            Tool::Star => tools::handle_star_event(app, mouse),
                         }
 
                         // After mouse events, sync if enabled and dirty, then autosave

@@ -37,6 +37,14 @@ pub const TOOLS: &[Tool] = &[
     Tool::DoubleBox,
     Tool::Diamond,
     Tool::Ellipse,
+    Tool::Triangle,
+    Tool::Parallelogram,
+    Tool::Hexagon,
+    Tool::Trapezoid,
+    Tool::RoundedRect,
+    Tool::Cylinder,
+    Tool::Cloud,
+    Tool::Star,
 ];
 
 /// All available colors in order
@@ -71,6 +79,14 @@ pub enum Tool {
     DoubleBox,
     Diamond,
     Ellipse,
+    Triangle,
+    Parallelogram,
+    Hexagon,
+    Trapezoid,
+    RoundedRect,
+    Cylinder,
+    Cloud,
+    Star,
 }
 
 impl Tool {
@@ -85,6 +101,14 @@ impl Tool {
             Tool::DoubleBox => "DoubleBox",
             Tool::Diamond => "Diamond",
             Tool::Ellipse => "Ellipse",
+            Tool::Triangle => "Triangle",
+            Tool::Parallelogram => "Parallelogram",
+            Tool::Hexagon => "Hexagon",
+            Tool::Trapezoid => "Trapezoid",
+            Tool::RoundedRect => "RoundedRect",
+            Tool::Cylinder => "Cylinder",
+            Tool::Cloud => "Cloud",
+            Tool::Star => "Star",
         }
     }
 }
@@ -277,6 +301,14 @@ impl App {
             Tool::DoubleBox => ToolKind::DoubleBox,
             Tool::Diamond => ToolKind::Diamond,
             Tool::Ellipse => ToolKind::Ellipse,
+            Tool::Triangle => ToolKind::Triangle,
+            Tool::Parallelogram => ToolKind::Parallelogram,
+            Tool::Hexagon => ToolKind::Hexagon,
+            Tool::Trapezoid => ToolKind::Trapezoid,
+            Tool::RoundedRect => ToolKind::RoundedRect,
+            Tool::Cylinder => ToolKind::Cylinder,
+            Tool::Cloud => ToolKind::Cloud,
+            Tool::Star => ToolKind::Star,
         }
     }
 
@@ -656,6 +688,83 @@ impl App {
                         center,
                         radius_x,
                         radius_y,
+                        label: None,
+                        color: self.current_color,
+                    })
+                }
+                Tool::Triangle => {
+                    // Triangle from start to end, with third point below center
+                    let mid_x = (start.x + end.x) / 2;
+                    let height = (end.y - start.y).abs().max(1);
+                    let p3 = Position::new(mid_x, start.y + height);
+                    self.doc.add_shape(ShapeKind::Triangle {
+                        p1: start,
+                        p2: end,
+                        p3,
+                        label: None,
+                        color: self.current_color,
+                    })
+                }
+                Tool::Parallelogram => {
+                    self.doc.add_shape(ShapeKind::Parallelogram {
+                        start,
+                        end,
+                        label: None,
+                        color: self.current_color,
+                    })
+                }
+                Tool::Hexagon => {
+                    let center = start;
+                    let radius_x = (end.x - start.x).abs().max(2);
+                    let radius_y = (end.y - start.y).abs().max(1);
+                    self.doc.add_shape(ShapeKind::Hexagon {
+                        center,
+                        radius_x,
+                        radius_y,
+                        label: None,
+                        color: self.current_color,
+                    })
+                }
+                Tool::Trapezoid => {
+                    self.doc.add_shape(ShapeKind::Trapezoid {
+                        start,
+                        end,
+                        label: None,
+                        color: self.current_color,
+                    })
+                }
+                Tool::RoundedRect => {
+                    self.doc.add_shape(ShapeKind::RoundedRect {
+                        start,
+                        end,
+                        label: None,
+                        color: self.current_color,
+                    })
+                }
+                Tool::Cylinder => {
+                    self.doc.add_shape(ShapeKind::Cylinder {
+                        start,
+                        end,
+                        label: None,
+                        color: self.current_color,
+                    })
+                }
+                Tool::Cloud => {
+                    self.doc.add_shape(ShapeKind::Cloud {
+                        start,
+                        end,
+                        label: None,
+                        color: self.current_color,
+                    })
+                }
+                Tool::Star => {
+                    let center = start;
+                    let outer_radius = (end.x - start.x).abs().max((end.y - start.y).abs()).max(2);
+                    let inner_radius = outer_radius / 2;
+                    self.doc.add_shape(ShapeKind::Star {
+                        center,
+                        outer_radius,
+                        inner_radius,
                         label: None,
                         color: self.current_color,
                     })

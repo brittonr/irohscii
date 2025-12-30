@@ -8,7 +8,11 @@ use ratatui::{
 };
 
 use crate::app::{App, Mode, PopupKind, Tool, BRUSHES, COLORS, GRID_SIZE, TOOLS};
-use crate::canvas::{arrow_points_styled, diamond_points, double_rect_points, ellipse_points, line_points_styled, rect_points, Position};
+use crate::canvas::{
+    arrow_points_styled, cloud_points, cylinder_points, diamond_points, double_rect_points,
+    ellipse_points, hexagon_points, line_points_styled, parallelogram_points, rect_points,
+    rounded_rect_points, star_points, trapezoid_points, triangle_points, Position,
+};
 use crate::document::ShapeId;
 use crate::presence::{peer_color, CursorActivity, PeerPresence, ToolKind};
 use crate::shapes::ShapeKind;
@@ -233,6 +237,70 @@ impl Widget for CanvasWidget<'_> {
                         self.render_char(buf, area, char_pos, ch, style);
                     }
                 }
+                ShapeKind::Triangle { p1, p2, p3, label, .. } => {
+                    for (pos, ch) in triangle_points(*p1, *p2, *p3) {
+                        self.render_char(buf, area, pos, ch, style);
+                    }
+                    if let Some(text) = label {
+                        self.render_label(buf, area, shape.bounds(), text, style);
+                    }
+                }
+                ShapeKind::Parallelogram { start, end, label, .. } => {
+                    for (pos, ch) in parallelogram_points(*start, *end) {
+                        self.render_char(buf, area, pos, ch, style);
+                    }
+                    if let Some(text) = label {
+                        self.render_label(buf, area, shape.bounds(), text, style);
+                    }
+                }
+                ShapeKind::Hexagon { center, radius_x, radius_y, label, .. } => {
+                    for (pos, ch) in hexagon_points(*center, *radius_x, *radius_y) {
+                        self.render_char(buf, area, pos, ch, style);
+                    }
+                    if let Some(text) = label {
+                        self.render_label(buf, area, shape.bounds(), text, style);
+                    }
+                }
+                ShapeKind::Trapezoid { start, end, label, .. } => {
+                    for (pos, ch) in trapezoid_points(*start, *end) {
+                        self.render_char(buf, area, pos, ch, style);
+                    }
+                    if let Some(text) = label {
+                        self.render_label(buf, area, shape.bounds(), text, style);
+                    }
+                }
+                ShapeKind::RoundedRect { start, end, label, .. } => {
+                    for (pos, ch) in rounded_rect_points(*start, *end) {
+                        self.render_char(buf, area, pos, ch, style);
+                    }
+                    if let Some(text) = label {
+                        self.render_label(buf, area, shape.bounds(), text, style);
+                    }
+                }
+                ShapeKind::Cylinder { start, end, label, .. } => {
+                    for (pos, ch) in cylinder_points(*start, *end) {
+                        self.render_char(buf, area, pos, ch, style);
+                    }
+                    if let Some(text) = label {
+                        self.render_label(buf, area, shape.bounds(), text, style);
+                    }
+                }
+                ShapeKind::Cloud { start, end, label, .. } => {
+                    for (pos, ch) in cloud_points(*start, *end) {
+                        self.render_char(buf, area, pos, ch, style);
+                    }
+                    if let Some(text) = label {
+                        self.render_label(buf, area, shape.bounds(), text, style);
+                    }
+                }
+                ShapeKind::Star { center, outer_radius, inner_radius, label, .. } => {
+                    for (pos, ch) in star_points(*center, *outer_radius, *inner_radius) {
+                        self.render_char(buf, area, pos, ch, style);
+                    }
+                    if let Some(text) = label {
+                        self.render_label(buf, area, shape.bounds(), text, style);
+                    }
+                }
             }
         }
 
@@ -292,6 +360,53 @@ impl Widget for CanvasWidget<'_> {
                     let radius_x = (end.x - start.x).abs().max(1);
                     let radius_y = (end.y - start.y).abs().max(1);
                     for (pos, ch) in ellipse_points(start, radius_x, radius_y) {
+                        self.render_char(buf, area, pos, ch, preview_style);
+                    }
+                }
+                Tool::Triangle => {
+                    let mid_x = (start.x + end.x) / 2;
+                    let height = (end.y - start.y).abs().max(1);
+                    let p3 = Position::new(mid_x, start.y + height);
+                    for (pos, ch) in triangle_points(start, end, p3) {
+                        self.render_char(buf, area, pos, ch, preview_style);
+                    }
+                }
+                Tool::Parallelogram => {
+                    for (pos, ch) in parallelogram_points(start, end) {
+                        self.render_char(buf, area, pos, ch, preview_style);
+                    }
+                }
+                Tool::Hexagon => {
+                    let radius_x = (end.x - start.x).abs().max(2);
+                    let radius_y = (end.y - start.y).abs().max(1);
+                    for (pos, ch) in hexagon_points(start, radius_x, radius_y) {
+                        self.render_char(buf, area, pos, ch, preview_style);
+                    }
+                }
+                Tool::Trapezoid => {
+                    for (pos, ch) in trapezoid_points(start, end) {
+                        self.render_char(buf, area, pos, ch, preview_style);
+                    }
+                }
+                Tool::RoundedRect => {
+                    for (pos, ch) in rounded_rect_points(start, end) {
+                        self.render_char(buf, area, pos, ch, preview_style);
+                    }
+                }
+                Tool::Cylinder => {
+                    for (pos, ch) in cylinder_points(start, end) {
+                        self.render_char(buf, area, pos, ch, preview_style);
+                    }
+                }
+                Tool::Cloud => {
+                    for (pos, ch) in cloud_points(start, end) {
+                        self.render_char(buf, area, pos, ch, preview_style);
+                    }
+                }
+                Tool::Star => {
+                    let outer_radius = (end.x - start.x).abs().max((end.y - start.y).abs()).max(2);
+                    let inner_radius = outer_radius / 2;
+                    for (pos, ch) in star_points(start, outer_radius, inner_radius) {
                         self.render_char(buf, area, pos, ch, preview_style);
                     }
                 }
@@ -472,6 +587,53 @@ impl CanvasWidget<'_> {
                     self.render_char(buf, area, pos, ch, style);
                 }
             }
+            ToolKind::Triangle => {
+                let mid_x = (start.x + current.x) / 2;
+                let height = (current.y - start.y).abs().max(1);
+                let p3 = Position::new(mid_x, start.y + height);
+                for (pos, ch) in triangle_points(start, current, p3) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            ToolKind::Parallelogram => {
+                for (pos, ch) in parallelogram_points(start, current) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            ToolKind::Hexagon => {
+                let radius_x = (current.x - start.x).abs().max(2);
+                let radius_y = (current.y - start.y).abs().max(1);
+                for (pos, ch) in hexagon_points(start, radius_x, radius_y) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            ToolKind::Trapezoid => {
+                for (pos, ch) in trapezoid_points(start, current) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            ToolKind::RoundedRect => {
+                for (pos, ch) in rounded_rect_points(start, current) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            ToolKind::Cylinder => {
+                for (pos, ch) in cylinder_points(start, current) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            ToolKind::Cloud => {
+                for (pos, ch) in cloud_points(start, current) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            ToolKind::Star => {
+                let outer_radius = (current.x - start.x).abs().max((current.y - start.y).abs()).max(2);
+                let inner_radius = outer_radius / 2;
+                for (pos, ch) in star_points(start, outer_radius, inner_radius) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
             _ => {}
         }
     }
@@ -551,7 +713,9 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let char_info = match app.current_tool {
         Tool::Freehand => format!(" brush:'{}' {}", app.brush_char, app.current_color.name()),
         Tool::Line | Tool::Arrow => format!(" {} {}", app.line_style.name(), app.current_color.name()),
-        Tool::Rectangle | Tool::DoubleBox | Tool::Diamond | Tool::Ellipse | Tool::Text => {
+        Tool::Rectangle | Tool::DoubleBox | Tool::Diamond | Tool::Ellipse | Tool::Text |
+        Tool::Triangle | Tool::Parallelogram | Tool::Hexagon | Tool::Trapezoid |
+        Tool::RoundedRect | Tool::Cylinder | Tool::Cloud | Tool::Star => {
             format!(" {}", app.current_color.name())
         }
         _ => String::new(),

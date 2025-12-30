@@ -127,6 +127,30 @@ fn render_shape(output: &mut String, shape: &CachedShape, offset_x: i32, offset_
         ShapeKind::Text { pos, content, .. } => {
             render_text(output, *pos, content, color, offset_x, offset_y);
         }
+        ShapeKind::Triangle { p1, p2, p3, label, .. } => {
+            render_triangle(output, *p1, *p2, *p3, label.as_deref(), color, offset_x, offset_y);
+        }
+        ShapeKind::Parallelogram { start, end, label, .. } => {
+            render_parallelogram(output, *start, *end, label.as_deref(), color, offset_x, offset_y);
+        }
+        ShapeKind::Hexagon { center, radius_x, radius_y, label, .. } => {
+            render_hexagon(output, *center, *radius_x, *radius_y, label.as_deref(), color, offset_x, offset_y);
+        }
+        ShapeKind::Trapezoid { start, end, label, .. } => {
+            render_trapezoid(output, *start, *end, label.as_deref(), color, offset_x, offset_y);
+        }
+        ShapeKind::RoundedRect { start, end, label, .. } => {
+            render_rounded_rect(output, *start, *end, label.as_deref(), color, offset_x, offset_y);
+        }
+        ShapeKind::Cylinder { start, end, label, .. } => {
+            render_cylinder(output, *start, *end, label.as_deref(), color, offset_x, offset_y);
+        }
+        ShapeKind::Cloud { start, end, label, .. } => {
+            render_cloud(output, *start, *end, label.as_deref(), color, offset_x, offset_y);
+        }
+        ShapeKind::Star { center, outer_radius, inner_radius, label, .. } => {
+            render_star(output, *center, *outer_radius, *inner_radius, label.as_deref(), color, offset_x, offset_y);
+        }
     }
 }
 
@@ -347,4 +371,383 @@ fn escape_xml(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+/// Render a triangle
+fn render_triangle(
+    output: &mut String,
+    p1: Position,
+    p2: Position,
+    p3: Position,
+    label: Option<&str>,
+    color: &str,
+    offset_x: i32,
+    offset_y: i32,
+) {
+    let p1 = Position::new(p1.x + offset_x, p1.y + offset_y);
+    let p2 = Position::new(p2.x + offset_x, p2.y + offset_y);
+    let p3 = Position::new(p3.x + offset_x, p3.y + offset_y);
+    let (x1, y1) = to_svg_coords(p1);
+    let (x2, y2) = to_svg_coords(p2);
+    let (x3, y3) = to_svg_coords(p3);
+
+    let points = format!("{},{} {},{} {},{}", x1, y1, x2, y2, x3, y3);
+    writeln!(
+        output,
+        r#"  <polygon points="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
+        points, color
+    )
+    .unwrap();
+
+    if let Some(text) = label {
+        let cx = (x1 + x2 + x3) / 3;
+        let cy = (y1 + y2 + y3) / 3;
+        writeln!(
+            output,
+            r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
+            cx, cy, color, escape_xml(text)
+        )
+        .unwrap();
+    }
+}
+
+/// Render a parallelogram
+fn render_parallelogram(
+    output: &mut String,
+    start: Position,
+    end: Position,
+    label: Option<&str>,
+    color: &str,
+    offset_x: i32,
+    offset_y: i32,
+) {
+    let start = Position::new(start.x + offset_x, start.y + offset_y);
+    let end = Position::new(end.x + offset_x, end.y + offset_y);
+    let min_x = start.x.min(end.x);
+    let max_x = start.x.max(end.x);
+    let min_y = start.y.min(end.y);
+    let max_y = start.y.max(end.y);
+    let slant = (max_x - min_x) / 4;
+
+    let (x1, y1) = to_svg_coords(Position::new(min_x + slant, min_y));
+    let (x2, y2) = to_svg_coords(Position::new(max_x + slant, min_y));
+    let (x3, y3) = to_svg_coords(Position::new(max_x, max_y));
+    let (x4, y4) = to_svg_coords(Position::new(min_x, max_y));
+
+    let points = format!("{},{} {},{} {},{} {},{}", x1, y1, x2, y2, x3, y3, x4, y4);
+    writeln!(
+        output,
+        r#"  <polygon points="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
+        points, color
+    )
+    .unwrap();
+
+    if let Some(text) = label {
+        let cx = (x1 + x2 + x3 + x4) / 4;
+        let cy = (y1 + y2 + y3 + y4) / 4;
+        writeln!(
+            output,
+            r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
+            cx, cy, color, escape_xml(text)
+        )
+        .unwrap();
+    }
+}
+
+/// Render a hexagon
+fn render_hexagon(
+    output: &mut String,
+    center: Position,
+    radius_x: i32,
+    radius_y: i32,
+    label: Option<&str>,
+    color: &str,
+    offset_x: i32,
+    offset_y: i32,
+) {
+    let center = Position::new(center.x + offset_x, center.y + offset_y);
+    let (cx, cy) = to_svg_coords(center);
+    let rx = radius_x * CHAR_WIDTH;
+    let ry = radius_y * CHAR_HEIGHT;
+    let edge_width = rx * 2 / 3;
+
+    let points = format!(
+        "{},{} {},{} {},{} {},{} {},{} {},{}",
+        cx - edge_width, cy - ry,  // top left
+        cx + edge_width, cy - ry,  // top right
+        cx + rx, cy,               // right
+        cx + edge_width, cy + ry,  // bottom right
+        cx - edge_width, cy + ry,  // bottom left
+        cx - rx, cy                // left
+    );
+
+    writeln!(
+        output,
+        r#"  <polygon points="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
+        points, color
+    )
+    .unwrap();
+
+    if let Some(text) = label {
+        writeln!(
+            output,
+            r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
+            cx, cy, color, escape_xml(text)
+        )
+        .unwrap();
+    }
+}
+
+/// Render a trapezoid
+fn render_trapezoid(
+    output: &mut String,
+    start: Position,
+    end: Position,
+    label: Option<&str>,
+    color: &str,
+    offset_x: i32,
+    offset_y: i32,
+) {
+    let start = Position::new(start.x + offset_x, start.y + offset_y);
+    let end = Position::new(end.x + offset_x, end.y + offset_y);
+    let min_x = start.x.min(end.x);
+    let max_x = start.x.max(end.x);
+    let min_y = start.y.min(end.y);
+    let max_y = start.y.max(end.y);
+    let inset = (max_x - min_x) / 4;
+
+    let (x1, y1) = to_svg_coords(Position::new(min_x + inset, min_y));
+    let (x2, y2) = to_svg_coords(Position::new(max_x - inset, min_y));
+    let (x3, y3) = to_svg_coords(Position::new(max_x, max_y));
+    let (x4, y4) = to_svg_coords(Position::new(min_x, max_y));
+
+    let points = format!("{},{} {},{} {},{} {},{}", x1, y1, x2, y2, x3, y3, x4, y4);
+    writeln!(
+        output,
+        r#"  <polygon points="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
+        points, color
+    )
+    .unwrap();
+
+    if let Some(text) = label {
+        let cx = (x1 + x2 + x3 + x4) / 4;
+        let cy = (y1 + y2 + y3 + y4) / 4;
+        writeln!(
+            output,
+            r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
+            cx, cy, color, escape_xml(text)
+        )
+        .unwrap();
+    }
+}
+
+/// Render a rounded rectangle
+fn render_rounded_rect(
+    output: &mut String,
+    start: Position,
+    end: Position,
+    label: Option<&str>,
+    color: &str,
+    offset_x: i32,
+    offset_y: i32,
+) {
+    let start = Position::new(start.x + offset_x, start.y + offset_y);
+    let end = Position::new(end.x + offset_x, end.y + offset_y);
+    let (x1, y1) = to_svg_coords(start);
+    let (x2, y2) = to_svg_coords(end);
+    let x = x1.min(x2);
+    let y = y1.min(y2);
+    let width = (x2 - x1).abs();
+    let height = (y2 - y1).abs();
+    let radius = CHAR_WIDTH.min(CHAR_HEIGHT) / 2;
+
+    writeln!(
+        output,
+        r#"  <rect x="{}" y="{}" width="{}" height="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
+        x, y, width, height, radius, radius, color
+    )
+    .unwrap();
+
+    if let Some(text) = label {
+        let cx = x + width / 2;
+        let cy = y + height / 2;
+        writeln!(
+            output,
+            r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
+            cx, cy, color, escape_xml(text)
+        )
+        .unwrap();
+    }
+}
+
+/// Render a cylinder (database symbol)
+fn render_cylinder(
+    output: &mut String,
+    start: Position,
+    end: Position,
+    label: Option<&str>,
+    color: &str,
+    offset_x: i32,
+    offset_y: i32,
+) {
+    let start = Position::new(start.x + offset_x, start.y + offset_y);
+    let end = Position::new(end.x + offset_x, end.y + offset_y);
+    let (x1, y1) = to_svg_coords(start);
+    let (x2, y2) = to_svg_coords(end);
+    let x = x1.min(x2);
+    let y = y1.min(y2);
+    let width = (x2 - x1).abs();
+    let height = (y2 - y1).abs();
+    let ellipse_height = CHAR_HEIGHT;
+
+    // Top ellipse
+    writeln!(
+        output,
+        r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
+        x + width / 2, y + ellipse_height / 2, width / 2, ellipse_height / 2, color
+    )
+    .unwrap();
+
+    // Body
+    writeln!(
+        output,
+        r#"  <rect x="{}" y="{}" width="{}" height="{}" stroke="none" fill="white"/>"#,
+        x, y + ellipse_height / 2, width, height - ellipse_height
+    )
+    .unwrap();
+
+    // Left side
+    writeln!(
+        output,
+        r#"  <line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="1"/>"#,
+        x, y + ellipse_height / 2, x, y + height - ellipse_height / 2, color
+    )
+    .unwrap();
+
+    // Right side
+    writeln!(
+        output,
+        r#"  <line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="1"/>"#,
+        x + width, y + ellipse_height / 2, x + width, y + height - ellipse_height / 2, color
+    )
+    .unwrap();
+
+    // Bottom ellipse
+    writeln!(
+        output,
+        r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
+        x + width / 2, y + height - ellipse_height / 2, width / 2, ellipse_height / 2, color
+    )
+    .unwrap();
+
+    if let Some(text) = label {
+        writeln!(
+            output,
+            r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
+            x + width / 2, y + height / 2, color, escape_xml(text)
+        )
+        .unwrap();
+    }
+}
+
+/// Render a cloud shape
+fn render_cloud(
+    output: &mut String,
+    start: Position,
+    end: Position,
+    label: Option<&str>,
+    color: &str,
+    offset_x: i32,
+    offset_y: i32,
+) {
+    let start = Position::new(start.x + offset_x, start.y + offset_y);
+    let end = Position::new(end.x + offset_x, end.y + offset_y);
+    let (x1, y1) = to_svg_coords(start);
+    let (x2, y2) = to_svg_coords(end);
+    let x = x1.min(x2);
+    let y = y1.min(y2);
+    let width = (x2 - x1).abs();
+    let height = (y2 - y1).abs();
+
+    // Approximate cloud with overlapping ellipses
+    let r = height / 3;
+    writeln!(
+        output,
+        r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
+        x + r, y + height / 2, r, r, color
+    )
+    .unwrap();
+    writeln!(
+        output,
+        r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
+        x + width / 2, y + r, r * 3 / 2, r, color
+    )
+    .unwrap();
+    writeln!(
+        output,
+        r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
+        x + width - r, y + height / 2, r, r, color
+    )
+    .unwrap();
+    writeln!(
+        output,
+        r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
+        x + width / 2, y + height - r, r * 3 / 2, r, color
+    )
+    .unwrap();
+
+    if let Some(text) = label {
+        writeln!(
+            output,
+            r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
+            x + width / 2, y + height / 2, color, escape_xml(text)
+        )
+        .unwrap();
+    }
+}
+
+/// Render a star shape
+fn render_star(
+    output: &mut String,
+    center: Position,
+    outer_radius: i32,
+    _inner_radius: i32,
+    label: Option<&str>,
+    color: &str,
+    offset_x: i32,
+    offset_y: i32,
+) {
+    let center = Position::new(center.x + offset_x, center.y + offset_y);
+    let (cx, cy) = to_svg_coords(center);
+    let r_out = outer_radius * CHAR_WIDTH;
+    let r_in = r_out / 2;
+
+    // 5-pointed star
+    let mut points = String::new();
+    for i in 0..10 {
+        let angle = std::f64::consts::PI / 2.0 + (i as f64) * std::f64::consts::PI / 5.0;
+        let r = if i % 2 == 0 { r_out } else { r_in };
+        let x = cx + (angle.cos() * r as f64) as i32;
+        let y = cy - (angle.sin() * r as f64) as i32;
+        if !points.is_empty() {
+            points.push(' ');
+        }
+        points.push_str(&format!("{},{}", x, y));
+    }
+
+    writeln!(
+        output,
+        r#"  <polygon points="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
+        points, color
+    )
+    .unwrap();
+
+    if let Some(text) = label {
+        writeln!(
+            output,
+            r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
+            cx, cy, color, escape_xml(text)
+        )
+        .unwrap();
+    }
 }

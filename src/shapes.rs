@@ -200,6 +200,73 @@ pub enum ShapeKind {
         #[serde(default)]
         color: ShapeColor,
     },
+    /// A triangle defined by three points
+    Triangle {
+        p1: Position,
+        p2: Position,
+        p3: Position,
+        label: Option<String>,
+        #[serde(default)]
+        color: ShapeColor,
+    },
+    /// A parallelogram defined by start and end (slanted rectangle)
+    Parallelogram {
+        start: Position,
+        end: Position,
+        label: Option<String>,
+        #[serde(default)]
+        color: ShapeColor,
+    },
+    /// A hexagon defined by center and radii
+    Hexagon {
+        center: Position,
+        radius_x: i32,
+        radius_y: i32,
+        label: Option<String>,
+        #[serde(default)]
+        color: ShapeColor,
+    },
+    /// A trapezoid defined by start and end
+    Trapezoid {
+        start: Position,
+        end: Position,
+        label: Option<String>,
+        #[serde(default)]
+        color: ShapeColor,
+    },
+    /// A rounded rectangle
+    RoundedRect {
+        start: Position,
+        end: Position,
+        label: Option<String>,
+        #[serde(default)]
+        color: ShapeColor,
+    },
+    /// A cylinder (database symbol)
+    Cylinder {
+        start: Position,
+        end: Position,
+        label: Option<String>,
+        #[serde(default)]
+        color: ShapeColor,
+    },
+    /// A cloud shape
+    Cloud {
+        start: Position,
+        end: Position,
+        label: Option<String>,
+        #[serde(default)]
+        color: ShapeColor,
+    },
+    /// A star shape
+    Star {
+        center: Position,
+        outer_radius: i32,
+        inner_radius: i32,
+        label: Option<String>,
+        #[serde(default)]
+        color: ShapeColor,
+    },
 }
 
 impl ShapeKind {
@@ -261,6 +328,57 @@ impl ShapeKind {
                 content: content.clone(),
                 color: *color,
             },
+            ShapeKind::Triangle { p1, p2, p3, label, color } => ShapeKind::Triangle {
+                p1: Position { x: p1.x + dx, y: p1.y + dy },
+                p2: Position { x: p2.x + dx, y: p2.y + dy },
+                p3: Position { x: p3.x + dx, y: p3.y + dy },
+                label: label.clone(),
+                color: *color,
+            },
+            ShapeKind::Parallelogram { start, end, label, color } => ShapeKind::Parallelogram {
+                start: Position { x: start.x + dx, y: start.y + dy },
+                end: Position { x: end.x + dx, y: end.y + dy },
+                label: label.clone(),
+                color: *color,
+            },
+            ShapeKind::Hexagon { center, radius_x, radius_y, label, color } => ShapeKind::Hexagon {
+                center: Position { x: center.x + dx, y: center.y + dy },
+                radius_x: *radius_x,
+                radius_y: *radius_y,
+                label: label.clone(),
+                color: *color,
+            },
+            ShapeKind::Trapezoid { start, end, label, color } => ShapeKind::Trapezoid {
+                start: Position { x: start.x + dx, y: start.y + dy },
+                end: Position { x: end.x + dx, y: end.y + dy },
+                label: label.clone(),
+                color: *color,
+            },
+            ShapeKind::RoundedRect { start, end, label, color } => ShapeKind::RoundedRect {
+                start: Position { x: start.x + dx, y: start.y + dy },
+                end: Position { x: end.x + dx, y: end.y + dy },
+                label: label.clone(),
+                color: *color,
+            },
+            ShapeKind::Cylinder { start, end, label, color } => ShapeKind::Cylinder {
+                start: Position { x: start.x + dx, y: start.y + dy },
+                end: Position { x: end.x + dx, y: end.y + dy },
+                label: label.clone(),
+                color: *color,
+            },
+            ShapeKind::Cloud { start, end, label, color } => ShapeKind::Cloud {
+                start: Position { x: start.x + dx, y: start.y + dy },
+                end: Position { x: end.x + dx, y: end.y + dy },
+                label: label.clone(),
+                color: *color,
+            },
+            ShapeKind::Star { center, outer_radius, inner_radius, label, color } => ShapeKind::Star {
+                center: Position { x: center.x + dx, y: center.y + dy },
+                outer_radius: *outer_radius,
+                inner_radius: *inner_radius,
+                label: label.clone(),
+                color: *color,
+            },
         }
     }
 
@@ -273,7 +391,15 @@ impl ShapeKind {
             | ShapeKind::DoubleBox { label, .. }
             | ShapeKind::Diamond { label, .. }
             | ShapeKind::Ellipse { label, .. }
-            | ShapeKind::Freehand { label, .. } => label.as_deref(),
+            | ShapeKind::Freehand { label, .. }
+            | ShapeKind::Triangle { label, .. }
+            | ShapeKind::Parallelogram { label, .. }
+            | ShapeKind::Hexagon { label, .. }
+            | ShapeKind::Trapezoid { label, .. }
+            | ShapeKind::RoundedRect { label, .. }
+            | ShapeKind::Cylinder { label, .. }
+            | ShapeKind::Cloud { label, .. }
+            | ShapeKind::Star { label, .. } => label.as_deref(),
             ShapeKind::Text { .. } => None, // Text content is the label
         }
     }
@@ -298,6 +424,30 @@ impl ShapeKind {
             ShapeKind::Freehand { points, char, color, .. } => {
                 ShapeKind::Freehand { points, char, label: new_label, color }
             }
+            ShapeKind::Triangle { p1, p2, p3, color, .. } => {
+                ShapeKind::Triangle { p1, p2, p3, label: new_label, color }
+            }
+            ShapeKind::Parallelogram { start, end, color, .. } => {
+                ShapeKind::Parallelogram { start, end, label: new_label, color }
+            }
+            ShapeKind::Hexagon { center, radius_x, radius_y, color, .. } => {
+                ShapeKind::Hexagon { center, radius_x, radius_y, label: new_label, color }
+            }
+            ShapeKind::Trapezoid { start, end, color, .. } => {
+                ShapeKind::Trapezoid { start, end, label: new_label, color }
+            }
+            ShapeKind::RoundedRect { start, end, color, .. } => {
+                ShapeKind::RoundedRect { start, end, label: new_label, color }
+            }
+            ShapeKind::Cylinder { start, end, color, .. } => {
+                ShapeKind::Cylinder { start, end, label: new_label, color }
+            }
+            ShapeKind::Cloud { start, end, color, .. } => {
+                ShapeKind::Cloud { start, end, label: new_label, color }
+            }
+            ShapeKind::Star { center, outer_radius, inner_radius, color, .. } => {
+                ShapeKind::Star { center, outer_radius, inner_radius, label: new_label, color }
+            }
             // Text doesn't have a separate label - its content IS the label
             other => other,
         }
@@ -313,7 +463,15 @@ impl ShapeKind {
             | ShapeKind::Diamond { color, .. }
             | ShapeKind::Ellipse { color, .. }
             | ShapeKind::Freehand { color, .. }
-            | ShapeKind::Text { color, .. } => *color,
+            | ShapeKind::Text { color, .. }
+            | ShapeKind::Triangle { color, .. }
+            | ShapeKind::Parallelogram { color, .. }
+            | ShapeKind::Hexagon { color, .. }
+            | ShapeKind::Trapezoid { color, .. }
+            | ShapeKind::RoundedRect { color, .. }
+            | ShapeKind::Cylinder { color, .. }
+            | ShapeKind::Cloud { color, .. }
+            | ShapeKind::Star { color, .. } => *color,
         }
     }
 
@@ -328,6 +486,14 @@ impl ShapeKind {
                 | ShapeKind::Diamond { .. }
                 | ShapeKind::Ellipse { .. }
                 | ShapeKind::Freehand { .. }
+                | ShapeKind::Triangle { .. }
+                | ShapeKind::Parallelogram { .. }
+                | ShapeKind::Hexagon { .. }
+                | ShapeKind::Trapezoid { .. }
+                | ShapeKind::RoundedRect { .. }
+                | ShapeKind::Cylinder { .. }
+                | ShapeKind::Cloud { .. }
+                | ShapeKind::Star { .. }
         )
     }
 
@@ -387,6 +553,46 @@ impl ShapeKind {
                     }
                 }
                 snaps
+            }
+            ShapeKind::Triangle { p1, p2, p3, .. } => {
+                vec![*p1, *p2, *p3]
+            }
+            ShapeKind::Parallelogram { start, end, .. } | ShapeKind::Trapezoid { start, end, .. } |
+            ShapeKind::RoundedRect { start, end, .. } | ShapeKind::Cylinder { start, end, .. } |
+            ShapeKind::Cloud { start, end, .. } => {
+                let min_x = start.x.min(end.x);
+                let max_x = start.x.max(end.x);
+                let min_y = start.y.min(end.y);
+                let max_y = start.y.max(end.y);
+                let mid_x = (min_x + max_x) / 2;
+                let mid_y = (min_y + max_y) / 2;
+
+                vec![
+                    Position::new(min_x, min_y),
+                    Position::new(max_x, min_y),
+                    Position::new(min_x, max_y),
+                    Position::new(max_x, max_y),
+                    Position::new(mid_x, min_y),
+                    Position::new(mid_x, max_y),
+                    Position::new(min_x, mid_y),
+                    Position::new(max_x, mid_y),
+                ]
+            }
+            ShapeKind::Hexagon { center, radius_x, radius_y, .. } => {
+                vec![
+                    Position::new(center.x, center.y - *radius_y),
+                    Position::new(center.x, center.y + *radius_y),
+                    Position::new(center.x - *radius_x, center.y),
+                    Position::new(center.x + *radius_x, center.y),
+                ]
+            }
+            ShapeKind::Star { center, outer_radius, .. } => {
+                vec![
+                    Position::new(center.x, center.y - *outer_radius),
+                    Position::new(center.x, center.y + *outer_radius),
+                    Position::new(center.x - *outer_radius, center.y),
+                    Position::new(center.x + *outer_radius, center.y),
+                ]
             }
         }
     }
@@ -518,6 +724,38 @@ impl CachedShape {
             ShapeKind::Text { pos, content, .. } => {
                 (pos.x, pos.y, pos.x + content.len() as i32 - 1, pos.y)
             }
+            ShapeKind::Triangle { p1, p2, p3, .. } => {
+                let min_x = p1.x.min(p2.x).min(p3.x);
+                let max_x = p1.x.max(p2.x).max(p3.x);
+                let min_y = p1.y.min(p2.y).min(p3.y);
+                let max_y = p1.y.max(p2.y).max(p3.y);
+                (min_x, min_y, max_x, max_y)
+            }
+            ShapeKind::Parallelogram { start, end, .. } | ShapeKind::Trapezoid { start, end, .. } |
+            ShapeKind::RoundedRect { start, end, .. } | ShapeKind::Cylinder { start, end, .. } |
+            ShapeKind::Cloud { start, end, .. } => {
+                let min_x = start.x.min(end.x);
+                let max_x = start.x.max(end.x);
+                let min_y = start.y.min(end.y);
+                let max_y = start.y.max(end.y);
+                (min_x, min_y, max_x, max_y)
+            }
+            ShapeKind::Hexagon { center, radius_x, radius_y, .. } => {
+                (
+                    center.x - *radius_x,
+                    center.y - *radius_y,
+                    center.x + *radius_x,
+                    center.y + *radius_y,
+                )
+            }
+            ShapeKind::Star { center, outer_radius, .. } => {
+                (
+                    center.x - *outer_radius,
+                    center.y - *outer_radius,
+                    center.x + *outer_radius,
+                    center.y + *outer_radius,
+                )
+            }
         }
     }
 
@@ -577,6 +815,46 @@ impl CachedShape {
                 }
                 snaps
             }
+            ShapeKind::Triangle { p1, p2, p3, .. } => {
+                vec![*p1, *p2, *p3]
+            }
+            ShapeKind::Parallelogram { start, end, .. } | ShapeKind::Trapezoid { start, end, .. } |
+            ShapeKind::RoundedRect { start, end, .. } | ShapeKind::Cylinder { start, end, .. } |
+            ShapeKind::Cloud { start, end, .. } => {
+                let min_x = start.x.min(end.x);
+                let max_x = start.x.max(end.x);
+                let min_y = start.y.min(end.y);
+                let max_y = start.y.max(end.y);
+                let mid_x = (min_x + max_x) / 2;
+                let mid_y = (min_y + max_y) / 2;
+
+                vec![
+                    Position::new(min_x, min_y),
+                    Position::new(max_x, min_y),
+                    Position::new(min_x, max_y),
+                    Position::new(max_x, max_y),
+                    Position::new(mid_x, min_y),
+                    Position::new(mid_x, max_y),
+                    Position::new(min_x, mid_y),
+                    Position::new(max_x, mid_y),
+                ]
+            }
+            ShapeKind::Hexagon { center, radius_x, radius_y, .. } => {
+                vec![
+                    Position::new(center.x, center.y - *radius_y),
+                    Position::new(center.x, center.y + *radius_y),
+                    Position::new(center.x - *radius_x, center.y),
+                    Position::new(center.x + *radius_x, center.y),
+                ]
+            }
+            ShapeKind::Star { center, outer_radius, .. } => {
+                vec![
+                    Position::new(center.x, center.y - *outer_radius),
+                    Position::new(center.x, center.y + *outer_radius),
+                    Position::new(center.x - *outer_radius, center.y),
+                    Position::new(center.x + *outer_radius, center.y),
+                ]
+            }
         }
     }
 
@@ -615,6 +893,44 @@ impl CachedShape {
                     ResizeHandleInfo { handle: ResizeHandle::TopRight, pos: Position::new(center.x + *radius_x, center.y - *radius_y) },
                     ResizeHandleInfo { handle: ResizeHandle::BottomLeft, pos: Position::new(center.x - *radius_x, center.y + *radius_y) },
                     ResizeHandleInfo { handle: ResizeHandle::BottomRight, pos: Position::new(center.x + *radius_x, center.y + *radius_y) },
+                ]
+            }
+            ShapeKind::Triangle { p1, p2, p3, .. } => {
+                vec![
+                    ResizeHandleInfo { handle: ResizeHandle::TopLeft, pos: *p1 },
+                    ResizeHandleInfo { handle: ResizeHandle::TopRight, pos: *p2 },
+                    ResizeHandleInfo { handle: ResizeHandle::BottomRight, pos: *p3 },
+                ]
+            }
+            ShapeKind::Parallelogram { start, end, .. } | ShapeKind::Trapezoid { start, end, .. } |
+            ShapeKind::RoundedRect { start, end, .. } | ShapeKind::Cylinder { start, end, .. } |
+            ShapeKind::Cloud { start, end, .. } => {
+                let min_x = start.x.min(end.x);
+                let max_x = start.x.max(end.x);
+                let min_y = start.y.min(end.y);
+                let max_y = start.y.max(end.y);
+
+                vec![
+                    ResizeHandleInfo { handle: ResizeHandle::TopLeft, pos: Position::new(min_x, min_y) },
+                    ResizeHandleInfo { handle: ResizeHandle::TopRight, pos: Position::new(max_x, min_y) },
+                    ResizeHandleInfo { handle: ResizeHandle::BottomLeft, pos: Position::new(min_x, max_y) },
+                    ResizeHandleInfo { handle: ResizeHandle::BottomRight, pos: Position::new(max_x, max_y) },
+                ]
+            }
+            ShapeKind::Hexagon { center, radius_x, radius_y, .. } => {
+                vec![
+                    ResizeHandleInfo { handle: ResizeHandle::TopLeft, pos: Position::new(center.x - *radius_x, center.y - *radius_y) },
+                    ResizeHandleInfo { handle: ResizeHandle::TopRight, pos: Position::new(center.x + *radius_x, center.y - *radius_y) },
+                    ResizeHandleInfo { handle: ResizeHandle::BottomLeft, pos: Position::new(center.x - *radius_x, center.y + *radius_y) },
+                    ResizeHandleInfo { handle: ResizeHandle::BottomRight, pos: Position::new(center.x + *radius_x, center.y + *radius_y) },
+                ]
+            }
+            ShapeKind::Star { center, outer_radius, .. } => {
+                vec![
+                    ResizeHandleInfo { handle: ResizeHandle::TopLeft, pos: Position::new(center.x - *outer_radius, center.y - *outer_radius) },
+                    ResizeHandleInfo { handle: ResizeHandle::TopRight, pos: Position::new(center.x + *outer_radius, center.y - *outer_radius) },
+                    ResizeHandleInfo { handle: ResizeHandle::BottomLeft, pos: Position::new(center.x - *outer_radius, center.y + *outer_radius) },
+                    ResizeHandleInfo { handle: ResizeHandle::BottomRight, pos: Position::new(center.x + *outer_radius, center.y + *outer_radius) },
                 ]
             }
             _ => vec![],
@@ -885,6 +1201,147 @@ pub fn resize_shape(kind: &ShapeKind, handle: ResizeHandle, new_pos: Position) -
                 _ => kind.clone(),
             }
         }
+        ShapeKind::Triangle { p1, p2, p3, label, color } => {
+            match handle {
+                ResizeHandle::TopLeft => ShapeKind::Triangle {
+                    p1: new_pos,
+                    p2: *p2,
+                    p3: *p3,
+                    label: label.clone(),
+                    color: *color,
+                },
+                ResizeHandle::TopRight => ShapeKind::Triangle {
+                    p1: *p1,
+                    p2: new_pos,
+                    p3: *p3,
+                    label: label.clone(),
+                    color: *color,
+                },
+                ResizeHandle::BottomRight => ShapeKind::Triangle {
+                    p1: *p1,
+                    p2: *p2,
+                    p3: new_pos,
+                    label: label.clone(),
+                    color: *color,
+                },
+                _ => kind.clone(),
+            }
+        }
+        ShapeKind::Parallelogram { start, end, label, color } => {
+            resize_rect_like(start, end, handle, new_pos, |s, e| {
+                ShapeKind::Parallelogram { start: s, end: e, label: label.clone(), color: *color }
+            })
+        }
+        ShapeKind::Trapezoid { start, end, label, color } => {
+            resize_rect_like(start, end, handle, new_pos, |s, e| {
+                ShapeKind::Trapezoid { start: s, end: e, label: label.clone(), color: *color }
+            })
+        }
+        ShapeKind::RoundedRect { start, end, label, color } => {
+            resize_rect_like(start, end, handle, new_pos, |s, e| {
+                ShapeKind::RoundedRect { start: s, end: e, label: label.clone(), color: *color }
+            })
+        }
+        ShapeKind::Cylinder { start, end, label, color } => {
+            resize_rect_like(start, end, handle, new_pos, |s, e| {
+                ShapeKind::Cylinder { start: s, end: e, label: label.clone(), color: *color }
+            })
+        }
+        ShapeKind::Cloud { start, end, label, color } => {
+            resize_rect_like(start, end, handle, new_pos, |s, e| {
+                ShapeKind::Cloud { start: s, end: e, label: label.clone(), color: *color }
+            })
+        }
+        ShapeKind::Hexagon { center, label, color, .. } => {
+            match handle {
+                ResizeHandle::TopLeft | ResizeHandle::TopRight |
+                ResizeHandle::BottomLeft | ResizeHandle::BottomRight => {
+                    ShapeKind::Hexagon {
+                        center: *center,
+                        radius_x: (new_pos.x - center.x).abs().max(1),
+                        radius_y: (new_pos.y - center.y).abs().max(1),
+                        label: label.clone(),
+                        color: *color,
+                    }
+                }
+                _ => kind.clone(),
+            }
+        }
+        ShapeKind::Star { center, inner_radius, label, color, .. } => {
+            match handle {
+                ResizeHandle::TopLeft | ResizeHandle::TopRight |
+                ResizeHandle::BottomLeft | ResizeHandle::BottomRight => {
+                    let outer = ((new_pos.x - center.x).abs().max((new_pos.y - center.y).abs())).max(2);
+                    ShapeKind::Star {
+                        center: *center,
+                        outer_radius: outer,
+                        inner_radius: (*inner_radius).min(outer - 1).max(1),
+                        label: label.clone(),
+                        color: *color,
+                    }
+                }
+                _ => kind.clone(),
+            }
+        }
         _ => kind.clone(),
     }
+}
+
+/// Helper for resizing rectangle-like shapes
+fn resize_rect_like<F>(start: &Position, end: &Position, handle: ResizeHandle, new_pos: Position, make_shape: F) -> ShapeKind
+where
+    F: FnOnce(Position, Position) -> ShapeKind,
+{
+    let is_start_left = start.x <= end.x;
+    let is_start_top = start.y <= end.y;
+
+    let (new_start, new_end) = match handle {
+        ResizeHandle::TopLeft => {
+            if is_start_left && is_start_top {
+                (new_pos, *end)
+            } else if !is_start_left && is_start_top {
+                (Position::new(start.x, new_pos.y), Position::new(new_pos.x, end.y))
+            } else if is_start_left && !is_start_top {
+                (Position::new(new_pos.x, start.y), Position::new(end.x, new_pos.y))
+            } else {
+                (*start, new_pos)
+            }
+        }
+        ResizeHandle::TopRight => {
+            if is_start_left && is_start_top {
+                (Position::new(start.x, new_pos.y), Position::new(new_pos.x, end.y))
+            } else if !is_start_left && is_start_top {
+                (new_pos, *end)
+            } else if is_start_left && !is_start_top {
+                (*start, new_pos)
+            } else {
+                (Position::new(new_pos.x, start.y), Position::new(end.x, new_pos.y))
+            }
+        }
+        ResizeHandle::BottomLeft => {
+            if is_start_left && is_start_top {
+                (Position::new(new_pos.x, start.y), Position::new(end.x, new_pos.y))
+            } else if !is_start_left && is_start_top {
+                (*start, new_pos)
+            } else if is_start_left && !is_start_top {
+                (new_pos, *end)
+            } else {
+                (Position::new(start.x, new_pos.y), Position::new(new_pos.x, end.y))
+            }
+        }
+        ResizeHandle::BottomRight => {
+            if is_start_left && is_start_top {
+                (*start, new_pos)
+            } else if !is_start_left && is_start_top {
+                (Position::new(new_pos.x, start.y), Position::new(end.x, new_pos.y))
+            } else if is_start_left && !is_start_top {
+                (Position::new(start.x, new_pos.y), Position::new(new_pos.x, end.y))
+            } else {
+                (new_pos, *end)
+            }
+        }
+        _ => (*start, *end),
+    };
+
+    make_shape(new_start, new_end)
 }

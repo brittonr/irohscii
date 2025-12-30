@@ -837,6 +837,96 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
             tx.put(obj, "content", content.as_str())?;
             tx.put(obj, "color", shape_color_to_str(*color))?;
         }
+        ShapeKind::Triangle { p1, p2, p3, label, color } => {
+            tx.put(obj, "kind", "Triangle")?;
+            tx.put(obj, "p1_x", p1.x as i64)?;
+            tx.put(obj, "p1_y", p1.y as i64)?;
+            tx.put(obj, "p2_x", p2.x as i64)?;
+            tx.put(obj, "p2_y", p2.y as i64)?;
+            tx.put(obj, "p3_x", p3.x as i64)?;
+            tx.put(obj, "p3_y", p3.y as i64)?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
+            if let Some(l) = label {
+                tx.put(obj, "label", l.as_str())?;
+            }
+        }
+        ShapeKind::Parallelogram { start, end, label, color } => {
+            tx.put(obj, "kind", "Parallelogram")?;
+            tx.put(obj, "start_x", start.x as i64)?;
+            tx.put(obj, "start_y", start.y as i64)?;
+            tx.put(obj, "end_x", end.x as i64)?;
+            tx.put(obj, "end_y", end.y as i64)?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
+            if let Some(l) = label {
+                tx.put(obj, "label", l.as_str())?;
+            }
+        }
+        ShapeKind::Hexagon { center, radius_x, radius_y, label, color } => {
+            tx.put(obj, "kind", "Hexagon")?;
+            tx.put(obj, "center_x", center.x as i64)?;
+            tx.put(obj, "center_y", center.y as i64)?;
+            tx.put(obj, "radius_x", *radius_x as i64)?;
+            tx.put(obj, "radius_y", *radius_y as i64)?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
+            if let Some(l) = label {
+                tx.put(obj, "label", l.as_str())?;
+            }
+        }
+        ShapeKind::Trapezoid { start, end, label, color } => {
+            tx.put(obj, "kind", "Trapezoid")?;
+            tx.put(obj, "start_x", start.x as i64)?;
+            tx.put(obj, "start_y", start.y as i64)?;
+            tx.put(obj, "end_x", end.x as i64)?;
+            tx.put(obj, "end_y", end.y as i64)?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
+            if let Some(l) = label {
+                tx.put(obj, "label", l.as_str())?;
+            }
+        }
+        ShapeKind::RoundedRect { start, end, label, color } => {
+            tx.put(obj, "kind", "RoundedRect")?;
+            tx.put(obj, "start_x", start.x as i64)?;
+            tx.put(obj, "start_y", start.y as i64)?;
+            tx.put(obj, "end_x", end.x as i64)?;
+            tx.put(obj, "end_y", end.y as i64)?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
+            if let Some(l) = label {
+                tx.put(obj, "label", l.as_str())?;
+            }
+        }
+        ShapeKind::Cylinder { start, end, label, color } => {
+            tx.put(obj, "kind", "Cylinder")?;
+            tx.put(obj, "start_x", start.x as i64)?;
+            tx.put(obj, "start_y", start.y as i64)?;
+            tx.put(obj, "end_x", end.x as i64)?;
+            tx.put(obj, "end_y", end.y as i64)?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
+            if let Some(l) = label {
+                tx.put(obj, "label", l.as_str())?;
+            }
+        }
+        ShapeKind::Cloud { start, end, label, color } => {
+            tx.put(obj, "kind", "Cloud")?;
+            tx.put(obj, "start_x", start.x as i64)?;
+            tx.put(obj, "start_y", start.y as i64)?;
+            tx.put(obj, "end_x", end.x as i64)?;
+            tx.put(obj, "end_y", end.y as i64)?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
+            if let Some(l) = label {
+                tx.put(obj, "label", l.as_str())?;
+            }
+        }
+        ShapeKind::Star { center, outer_radius, inner_radius, label, color } => {
+            tx.put(obj, "kind", "Star")?;
+            tx.put(obj, "center_x", center.x as i64)?;
+            tx.put(obj, "center_y", center.y as i64)?;
+            tx.put(obj, "outer_radius", *outer_radius as i64)?;
+            tx.put(obj, "inner_radius", *inner_radius as i64)?;
+            tx.put(obj, "color", shape_color_to_str(*color))?;
+            if let Some(l) = label {
+                tx.put(obj, "label", l.as_str())?;
+            }
+        }
     }
     Ok(())
 }
@@ -923,6 +1013,57 @@ fn read_shape_kind(doc: &Automerge, obj: &ObjId) -> Result<Option<ShapeKind>> {
         "Text" => ShapeKind::Text {
             pos: Position::new(get_i32(doc, obj, "pos_x")?, get_i32(doc, obj, "pos_y")?),
             content: get_string(doc, obj, "content")?,
+            color: get_shape_color(doc, obj)?,
+        },
+        "Triangle" => ShapeKind::Triangle {
+            p1: Position::new(get_i32(doc, obj, "p1_x")?, get_i32(doc, obj, "p1_y")?),
+            p2: Position::new(get_i32(doc, obj, "p2_x")?, get_i32(doc, obj, "p2_y")?),
+            p3: Position::new(get_i32(doc, obj, "p3_x")?, get_i32(doc, obj, "p3_y")?),
+            label: get_opt_string(doc, obj, "label")?,
+            color: get_shape_color(doc, obj)?,
+        },
+        "Parallelogram" => ShapeKind::Parallelogram {
+            start: Position::new(get_i32(doc, obj, "start_x")?, get_i32(doc, obj, "start_y")?),
+            end: Position::new(get_i32(doc, obj, "end_x")?, get_i32(doc, obj, "end_y")?),
+            label: get_opt_string(doc, obj, "label")?,
+            color: get_shape_color(doc, obj)?,
+        },
+        "Hexagon" => ShapeKind::Hexagon {
+            center: Position::new(get_i32(doc, obj, "center_x")?, get_i32(doc, obj, "center_y")?),
+            radius_x: get_i32(doc, obj, "radius_x")?,
+            radius_y: get_i32(doc, obj, "radius_y")?,
+            label: get_opt_string(doc, obj, "label")?,
+            color: get_shape_color(doc, obj)?,
+        },
+        "Trapezoid" => ShapeKind::Trapezoid {
+            start: Position::new(get_i32(doc, obj, "start_x")?, get_i32(doc, obj, "start_y")?),
+            end: Position::new(get_i32(doc, obj, "end_x")?, get_i32(doc, obj, "end_y")?),
+            label: get_opt_string(doc, obj, "label")?,
+            color: get_shape_color(doc, obj)?,
+        },
+        "RoundedRect" => ShapeKind::RoundedRect {
+            start: Position::new(get_i32(doc, obj, "start_x")?, get_i32(doc, obj, "start_y")?),
+            end: Position::new(get_i32(doc, obj, "end_x")?, get_i32(doc, obj, "end_y")?),
+            label: get_opt_string(doc, obj, "label")?,
+            color: get_shape_color(doc, obj)?,
+        },
+        "Cylinder" => ShapeKind::Cylinder {
+            start: Position::new(get_i32(doc, obj, "start_x")?, get_i32(doc, obj, "start_y")?),
+            end: Position::new(get_i32(doc, obj, "end_x")?, get_i32(doc, obj, "end_y")?),
+            label: get_opt_string(doc, obj, "label")?,
+            color: get_shape_color(doc, obj)?,
+        },
+        "Cloud" => ShapeKind::Cloud {
+            start: Position::new(get_i32(doc, obj, "start_x")?, get_i32(doc, obj, "start_y")?),
+            end: Position::new(get_i32(doc, obj, "end_x")?, get_i32(doc, obj, "end_y")?),
+            label: get_opt_string(doc, obj, "label")?,
+            color: get_shape_color(doc, obj)?,
+        },
+        "Star" => ShapeKind::Star {
+            center: Position::new(get_i32(doc, obj, "center_x")?, get_i32(doc, obj, "center_y")?),
+            outer_radius: get_i32(doc, obj, "outer_radius")?,
+            inner_radius: get_i32(doc, obj, "inner_radius")?,
+            label: get_opt_string(doc, obj, "label")?,
             color: get_shape_color(doc, obj)?,
         },
         _ => return Ok(None),

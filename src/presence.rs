@@ -55,6 +55,14 @@ pub enum ToolKind {
     DoubleBox,
     Diamond,
     Ellipse,
+    Triangle,
+    Parallelogram,
+    Hexagon,
+    Trapezoid,
+    RoundedRect,
+    Cylinder,
+    Cloud,
+    Star,
 }
 
 /// Cursor activity state

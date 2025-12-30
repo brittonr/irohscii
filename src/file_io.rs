@@ -4,7 +4,11 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::canvas::{arrow_points_styled, diamond_points, double_rect_points, ellipse_points, line_points_styled, rect_points, Position};
+use crate::canvas::{
+    arrow_points_styled, cloud_points, cylinder_points, diamond_points, double_rect_points,
+    ellipse_points, hexagon_points, line_points_styled, parallelogram_points, rect_points,
+    rounded_rect_points, star_points, trapezoid_points, triangle_points, Position,
+};
 use crate::shapes::{ShapeColor, ShapeKind, ShapeView};
 
 /// Render a label centered inside a shape's bounds
@@ -88,6 +92,70 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
             ShapeKind::Text { pos, content, .. } => {
                 for (i, ch) in content.chars().enumerate() {
                     grid.insert(Position::new(pos.x + i as i32, pos.y), ch);
+                }
+            }
+            ShapeKind::Triangle { p1, p2, p3, label, .. } => {
+                for (pos, ch) in triangle_points(*p1, *p2, *p3) {
+                    grid.insert(pos, ch);
+                }
+                if let Some(text) = label {
+                    render_label_to_grid(&mut grid, shape.bounds(), text);
+                }
+            }
+            ShapeKind::Parallelogram { start, end, label, .. } => {
+                for (pos, ch) in parallelogram_points(*start, *end) {
+                    grid.insert(pos, ch);
+                }
+                if let Some(text) = label {
+                    render_label_to_grid(&mut grid, shape.bounds(), text);
+                }
+            }
+            ShapeKind::Hexagon { center, radius_x, radius_y, label, .. } => {
+                for (pos, ch) in hexagon_points(*center, *radius_x, *radius_y) {
+                    grid.insert(pos, ch);
+                }
+                if let Some(text) = label {
+                    render_label_to_grid(&mut grid, shape.bounds(), text);
+                }
+            }
+            ShapeKind::Trapezoid { start, end, label, .. } => {
+                for (pos, ch) in trapezoid_points(*start, *end) {
+                    grid.insert(pos, ch);
+                }
+                if let Some(text) = label {
+                    render_label_to_grid(&mut grid, shape.bounds(), text);
+                }
+            }
+            ShapeKind::RoundedRect { start, end, label, .. } => {
+                for (pos, ch) in rounded_rect_points(*start, *end) {
+                    grid.insert(pos, ch);
+                }
+                if let Some(text) = label {
+                    render_label_to_grid(&mut grid, shape.bounds(), text);
+                }
+            }
+            ShapeKind::Cylinder { start, end, label, .. } => {
+                for (pos, ch) in cylinder_points(*start, *end) {
+                    grid.insert(pos, ch);
+                }
+                if let Some(text) = label {
+                    render_label_to_grid(&mut grid, shape.bounds(), text);
+                }
+            }
+            ShapeKind::Cloud { start, end, label, .. } => {
+                for (pos, ch) in cloud_points(*start, *end) {
+                    grid.insert(pos, ch);
+                }
+                if let Some(text) = label {
+                    render_label_to_grid(&mut grid, shape.bounds(), text);
+                }
+            }
+            ShapeKind::Star { center, outer_radius, inner_radius, label, .. } => {
+                for (pos, ch) in star_points(*center, *outer_radius, *inner_radius) {
+                    grid.insert(pos, ch);
+                }
+                if let Some(text) = label {
+                    render_label_to_grid(&mut grid, shape.bounds(), text);
                 }
             }
         }
