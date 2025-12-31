@@ -82,8 +82,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Mode::TextInput { start_pos, text } => {
             render_text_cursor(frame, app, start_pos, text, canvas_area);
         }
-        Mode::LabelInput { shape_id, text } => {
-            render_label_input(frame, app, *shape_id, text, canvas_area);
+        Mode::LabelInput { shape_id, text, cursor } => {
+            render_label_input(frame, app, *shape_id, text, *cursor, canvas_area);
         }
         Mode::FileSave { path } => {
             render_file_input(frame, "Export ASCII to:", path, canvas_area);
@@ -869,18 +869,18 @@ fn render_layer_panel(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::White)
             };
 
-            // Visibility indicator
+            // Visibility indicator - [H] for hidden is more accessible
             let visible_indicator = if layer.visible {
-                Span::styled("◆", Style::default().fg(Color::Cyan))
+                Span::styled(" ", Style::default())
             } else {
-                Span::styled("◇", Style::default().fg(Color::DarkGray))
+                Span::styled("[H]", Style::default().fg(Color::DarkGray))
             };
 
-            // Lock indicator
+            // Lock indicator - [L] for locked is more accessible
             let lock_indicator = if layer.locked {
-                Span::styled("◾", Style::default().fg(Color::Yellow))
+                Span::styled("[L]", Style::default().fg(Color::Yellow))
             } else {
-                Span::raw(" ")
+                Span::raw("   ")
             };
 
             (
@@ -949,15 +949,16 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         _ => String::new(),
     };
 
-    let peer_info = if let Some(ref presence) = app.presence {
+    // Sync status indicator - show when in sync mode
+    let (peer_info, peer_style) = if let Some(ref presence) = app.presence {
         let count = presence.peer_count();
         if count > 0 {
-            format!(" {}p", count)
+            (format!(" [SYNC {}]", count), Style::default().fg(Color::Green))
         } else {
-            String::new()
+            (String::from(" [SYNC]"), Style::default().fg(Color::Yellow))
         }
     } else {
-        String::new()
+        (String::new(), Style::default())
     };
 
     // Format status message with appropriate styling
@@ -975,13 +976,24 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         String::new()
     };
 
+    // Shape properties info (only show when single shape selected and no status message)
+    let shape_info = if app.status_message.is_none() && app.current_tool == Tool::Select {
+        app.get_selected_shape_info()
+            .map(|info| format!(" | {}", info))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
     let spans = vec![
         Span::styled(format!(" {} ", mode_name), mode_style),
         Span::styled(tool_info, tool_style),
         Span::raw(format!(
-            " {}{}{}{}",
-            file_name, dirty_marker, char_info, peer_info
+            " {}{}{}",
+            file_name, dirty_marker, char_info
         )),
+        Span::styled(peer_info, peer_style),
+        Span::styled(shape_info, Style::default().fg(Color::Cyan)),
         Span::styled(status_text, Style::default().fg(status_color)),
     ];
 
@@ -1094,8 +1106,8 @@ fn render_text_cursor(frame: &mut Frame, app: &App, start_pos: &Position, text: 
     }
 }
 
-/// Render label input inside a shape
-fn render_label_input(frame: &mut Frame, app: &App, shape_id: ShapeId, text: &str, area: Rect) {
+/// Render label input inside a shape with cursor at specified position
+fn render_label_input(frame: &mut Frame, app: &App, shape_id: ShapeId, text: &str, cursor: usize, area: Rect) {
     if let Some(shape) = app.shape_view.get(shape_id) {
         let (min_x, min_y, max_x, max_y) = shape.bounds();
         let center_y = (min_y + max_y) / 2;
@@ -1122,24 +1134,35 @@ fn render_label_input(frame: &mut Frame, app: &App, shape_id: ShapeId, text: &st
                 let x = area.x + screen_x + i as u16;
                 let canvas_x = start_x + i as i32;
                 if x < area.x + area.width && canvas_x < max_x {
+                    // Highlight character at cursor position with underline
+                    let style = if i == cursor {
+                        label_style.add_modifier(Modifier::UNDERLINED)
+                    } else {
+                        label_style
+                    };
                     frame.buffer_mut()[(x, area.y + screen_y)]
                         .set_char(ch)
-                        .set_style(label_style);
+                        .set_style(style);
                 }
             }
 
-            // Show blinking cursor
-            let cursor_x = screen_x + text_len as u16;
+            // Show blinking cursor at cursor position (not end of text)
+            let cursor_x = screen_x + cursor as u16;
             let cursor_screen_x = area.x + cursor_x;
             let cursor_screen_y = area.y + screen_y;
-            if cursor_screen_x < area.x + area.width && (start_x + text_len as i32) < max_x {
-                frame.buffer_mut()[(cursor_screen_x, cursor_screen_y)]
-                    .set_char('▏')
-                    .set_style(
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::SLOW_BLINK),
-                    );
+            if cursor_screen_x < area.x + area.width && (start_x + cursor as i32) < max_x {
+                // If cursor is within text, show cursor character; otherwise show bar
+                if cursor >= text_len {
+                    // Cursor at end - show bar cursor
+                    frame.buffer_mut()[(cursor_screen_x, cursor_screen_y)]
+                        .set_char('▏')
+                        .set_style(
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::SLOW_BLINK),
+                        );
+                }
+                // If cursor is within text, the underline on the character shows position
             }
         }
     }

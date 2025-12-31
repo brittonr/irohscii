@@ -576,6 +576,21 @@ fn handle_label_input_mode(app: &mut App, key: event::KeyEvent) {
         KeyCode::Backspace => {
             app.backspace_label();
         }
+        KeyCode::Delete => {
+            app.delete_label_char();
+        }
+        KeyCode::Left => {
+            app.move_label_cursor_left();
+        }
+        KeyCode::Right => {
+            app.move_label_cursor_right();
+        }
+        KeyCode::Home => {
+            app.move_label_cursor_home();
+        }
+        KeyCode::End => {
+            app.move_label_cursor_end();
+        }
         KeyCode::Char(c) => {
             app.add_label_char(c);
         }

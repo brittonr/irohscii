@@ -121,7 +121,7 @@ impl Tool {
 pub enum Mode {
     Normal,
     TextInput { start_pos: Position, text: String },
-    LabelInput { shape_id: ShapeId, text: String },
+    LabelInput { shape_id: ShapeId, text: String, cursor: usize },
     LayerRename { layer_id: LayerId, text: String },
     FileSave { path: String },
     FileOpen { path: String },
@@ -1919,9 +1919,11 @@ impl App {
             if let Some(shape) = self.shape_view.get(id) {
                 if shape.supports_label() {
                     let existing_label = shape.label().unwrap_or("").to_string();
+                    let cursor = existing_label.chars().count();
                     self.mode = Mode::LabelInput {
                         shape_id: id,
                         text: existing_label,
+                        cursor,
                     };
                     return true;
                 }
@@ -1930,24 +1932,80 @@ impl App {
         false
     }
 
-    /// Add a character to current label input
+    /// Add a character to current label input at cursor position
     pub fn add_label_char(&mut self, ch: char) {
-        if let Mode::LabelInput { text, .. } = &mut self.mode {
-            text.push(ch);
+        if let Mode::LabelInput { text, cursor, .. } = &mut self.mode {
+            // Convert to Vec<char> for proper Unicode handling
+            let mut chars: Vec<char> = text.chars().collect();
+            if *cursor <= chars.len() {
+                chars.insert(*cursor, ch);
+                *text = chars.into_iter().collect();
+                *cursor += 1;
+            }
         }
     }
 
-    /// Remove last character from label input
+    /// Remove character before cursor in label input
     pub fn backspace_label(&mut self) {
-        if let Mode::LabelInput { text, .. } = &mut self.mode {
-            text.pop();
+        if let Mode::LabelInput { text, cursor, .. } = &mut self.mode {
+            if *cursor > 0 {
+                let mut chars: Vec<char> = text.chars().collect();
+                chars.remove(*cursor - 1);
+                *text = chars.into_iter().collect();
+                *cursor -= 1;
+            }
+        }
+    }
+
+    /// Move label cursor left
+    pub fn move_label_cursor_left(&mut self) {
+        if let Mode::LabelInput { cursor, .. } = &mut self.mode {
+            if *cursor > 0 {
+                *cursor -= 1;
+            }
+        }
+    }
+
+    /// Move label cursor right
+    pub fn move_label_cursor_right(&mut self) {
+        if let Mode::LabelInput { text, cursor, .. } = &mut self.mode {
+            let len = text.chars().count();
+            if *cursor < len {
+                *cursor += 1;
+            }
+        }
+    }
+
+    /// Move label cursor to start
+    pub fn move_label_cursor_home(&mut self) {
+        if let Mode::LabelInput { cursor, .. } = &mut self.mode {
+            *cursor = 0;
+        }
+    }
+
+    /// Move label cursor to end
+    pub fn move_label_cursor_end(&mut self) {
+        if let Mode::LabelInput { text, cursor, .. } = &mut self.mode {
+            *cursor = text.chars().count();
+        }
+    }
+
+    /// Delete character at cursor position (forward delete)
+    pub fn delete_label_char(&mut self) {
+        if let Mode::LabelInput { text, cursor, .. } = &mut self.mode {
+            let chars: Vec<char> = text.chars().collect();
+            if *cursor < chars.len() {
+                let mut chars = chars;
+                chars.remove(*cursor);
+                *text = chars.into_iter().collect();
+            }
         }
     }
 
     /// Commit the label to the shape
     pub fn commit_label(&mut self) {
         // Extract values before borrowing self mutably
-        let label_data = if let Mode::LabelInput { shape_id, text } = &self.mode {
+        let label_data = if let Mode::LabelInput { shape_id, text, .. } = &self.mode {
             let label = if text.is_empty() {
                 None
             } else {
@@ -2065,7 +2123,17 @@ impl App {
                 PopupKind::Color => {
                     if let Some(&color) = COLORS.get(selected) {
                         self.current_color = color;
-                        self.set_status(format!("Color: {}", color.name()));
+                        // Also apply color to selected shapes
+                        if !self.selected.is_empty() {
+                            let count = self.apply_color_to_selected(color);
+                            if count > 0 {
+                                self.set_status(format!("Changed color of {} shape(s) to {}", count, color.name()));
+                            } else {
+                                self.set_status(format!("Color: {}", color.name()));
+                            }
+                        } else {
+                            self.set_status(format!("Color: {}", color.name()));
+                        }
                     }
                 }
                 PopupKind::Brush => {
@@ -2100,6 +2168,74 @@ impl App {
             let new_selected = new_row * cols + new_col;
             *selected = new_selected.min(total - 1);
         }
+    }
+
+    /// Apply a color to all selected shapes
+    pub fn apply_color_to_selected(&mut self, color: ShapeColor) -> usize {
+        if self.selected.is_empty() {
+            return 0;
+        }
+
+        self.save_undo_state();
+        let mut count = 0;
+
+        // Collect shape IDs to avoid borrow issues
+        let selected_ids: Vec<ShapeId> = self.selected.iter().copied().collect();
+
+        for id in selected_ids {
+            if let Some(shape) = self.shape_view.get(id) {
+                let new_kind = shape.kind.clone().with_color(color);
+                if self.doc.update_shape(id, new_kind).is_ok() {
+                    count += 1;
+                }
+            }
+        }
+
+        if count > 0 {
+            self.rebuild_view();
+            self.doc.mark_dirty();
+        }
+
+        count
+    }
+
+    /// Get a description of the selected shape for the status bar
+    /// Returns None if no single shape is selected
+    pub fn get_selected_shape_info(&self) -> Option<String> {
+        if self.selected.len() != 1 {
+            return None;
+        }
+
+        let id = *self.selected.iter().next()?;
+        let shape = self.shape_view.get(id)?;
+
+        let shape_type = shape.kind.type_name();
+        let color = shape.kind.color().name();
+
+        // Get layer name
+        let layer_info = if let Some(layer_id) = shape.layer_id {
+            self.doc.read_layer(layer_id)
+                .ok()
+                .flatten()
+                .map(|l| l.name.clone())
+                .unwrap_or_else(|| "Unknown".to_string())
+        } else {
+            "Default".to_string()
+        };
+
+        // Check if shape is grouped
+        let group_info = self.doc.get_shape_group(id)
+            .ok()
+            .flatten()
+            .map(|_| " | Grouped".to_string());
+
+        Some(format!(
+            "{} | {} | Layer: {}{}",
+            shape_type,
+            color,
+            layer_info,
+            group_info.unwrap_or_default()
+        ))
     }
 
     // ========== Confirmation Dialog Methods ==========

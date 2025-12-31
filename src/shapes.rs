@@ -271,6 +271,28 @@ pub enum ShapeKind {
 }
 
 impl ShapeKind {
+    /// Get the human-readable name of this shape type
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            ShapeKind::Line { .. } => "Line",
+            ShapeKind::Arrow { .. } => "Arrow",
+            ShapeKind::Rectangle { .. } => "Rectangle",
+            ShapeKind::DoubleBox { .. } => "DoubleBox",
+            ShapeKind::Diamond { .. } => "Diamond",
+            ShapeKind::Ellipse { .. } => "Ellipse",
+            ShapeKind::Freehand { .. } => "Freehand",
+            ShapeKind::Text { .. } => "Text",
+            ShapeKind::Triangle { .. } => "Triangle",
+            ShapeKind::Parallelogram { .. } => "Parallelogram",
+            ShapeKind::Hexagon { .. } => "Hexagon",
+            ShapeKind::Trapezoid { .. } => "Trapezoid",
+            ShapeKind::RoundedRect { .. } => "RoundedRect",
+            ShapeKind::Cylinder { .. } => "Cylinder",
+            ShapeKind::Cloud { .. } => "Cloud",
+            ShapeKind::Star { .. } => "Star",
+        }
+    }
+
     /// Create a translated copy of this shape
     pub fn translated(&self, dx: i32, dy: i32) -> Self {
         match self {
@@ -473,6 +495,60 @@ impl ShapeKind {
             | ShapeKind::Cylinder { color, .. }
             | ShapeKind::Cloud { color, .. }
             | ShapeKind::Star { color, .. } => *color,
+        }
+    }
+
+    /// Set the color for this shape
+    pub fn with_color(self, new_color: ShapeColor) -> Self {
+        match self {
+            ShapeKind::Line { start, end, style, start_connection, end_connection, label, .. } => {
+                ShapeKind::Line { start, end, style, start_connection, end_connection, label, color: new_color }
+            }
+            ShapeKind::Arrow { start, end, style, start_connection, end_connection, label, .. } => {
+                ShapeKind::Arrow { start, end, style, start_connection, end_connection, label, color: new_color }
+            }
+            ShapeKind::Rectangle { start, end, label, .. } => {
+                ShapeKind::Rectangle { start, end, label, color: new_color }
+            }
+            ShapeKind::DoubleBox { start, end, label, .. } => {
+                ShapeKind::DoubleBox { start, end, label, color: new_color }
+            }
+            ShapeKind::Diamond { center, half_width, half_height, label, .. } => {
+                ShapeKind::Diamond { center, half_width, half_height, label, color: new_color }
+            }
+            ShapeKind::Ellipse { center, radius_x, radius_y, label, .. } => {
+                ShapeKind::Ellipse { center, radius_x, radius_y, label, color: new_color }
+            }
+            ShapeKind::Freehand { points, char, label, .. } => {
+                ShapeKind::Freehand { points, char, label, color: new_color }
+            }
+            ShapeKind::Text { pos, content, .. } => {
+                ShapeKind::Text { pos, content, color: new_color }
+            }
+            ShapeKind::Triangle { p1, p2, p3, label, .. } => {
+                ShapeKind::Triangle { p1, p2, p3, label, color: new_color }
+            }
+            ShapeKind::Parallelogram { start, end, label, .. } => {
+                ShapeKind::Parallelogram { start, end, label, color: new_color }
+            }
+            ShapeKind::Hexagon { center, radius_x, radius_y, label, .. } => {
+                ShapeKind::Hexagon { center, radius_x, radius_y, label, color: new_color }
+            }
+            ShapeKind::Trapezoid { start, end, label, .. } => {
+                ShapeKind::Trapezoid { start, end, label, color: new_color }
+            }
+            ShapeKind::RoundedRect { start, end, label, .. } => {
+                ShapeKind::RoundedRect { start, end, label, color: new_color }
+            }
+            ShapeKind::Cylinder { start, end, label, .. } => {
+                ShapeKind::Cylinder { start, end, label, color: new_color }
+            }
+            ShapeKind::Cloud { start, end, label, .. } => {
+                ShapeKind::Cloud { start, end, label, color: new_color }
+            }
+            ShapeKind::Star { center, outer_radius, inner_radius, label, .. } => {
+                ShapeKind::Star { center, outer_radius, inner_radius, label, color: new_color }
+            }
         }
     }
 
