@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use ratatui::layout::Rect;
+
 use crate::canvas::{LineStyle, Position, Viewport};
 use crate::document::{default_storage_path, Document, Group, GroupId, ShapeId};
 use crate::layers::{Layer, LayerId};
@@ -226,6 +228,8 @@ pub struct App {
     pub active_layer: Option<LayerId>,
     /// Whether to show the layer panel
     pub show_layers: bool,
+    /// Layer panel area (for mouse click detection)
+    pub layer_panel_area: Option<Rect>,
 }
 
 impl App {
@@ -261,6 +265,7 @@ impl App {
             recent_files: RecentFiles::load(),
             active_layer: None,
             show_layers: false,
+            layer_panel_area: None,
         }
     }
 
@@ -467,6 +472,15 @@ impl App {
         ));
     }
 
+    /// Add a shape and assign it to the active layer
+    fn add_shape_to_active_layer(&mut self, kind: ShapeKind) -> anyhow::Result<ShapeId> {
+        let id = self.doc.add_shape(kind)?;
+        if let Some(layer_id) = self.active_layer {
+            let _ = self.doc.set_shape_layer(id, layer_id);
+        }
+        Ok(id)
+    }
+
     /// Paste shapes from clipboard
     pub fn paste(&mut self) {
         if self.clipboard.is_empty() {
@@ -476,7 +490,7 @@ impl App {
         self.selected.clear();
         for kind in self.clipboard.clone() {
             let new_kind = kind.translated(2, 1);
-            if let Ok(id) = self.doc.add_shape(new_kind) {
+            if let Ok(id) = self.add_shape_to_active_layer(new_kind) {
                 self.selected.insert(id);
             }
         }
@@ -521,7 +535,7 @@ impl App {
 
         if let Some((pos, content)) = text_data {
             self.save_undo_state();
-            if self.doc.add_shape(ShapeKind::Text { pos, content, color: self.current_color }).is_ok() {
+            if self.add_shape_to_active_layer(ShapeKind::Text { pos, content, color: self.current_color }).is_ok() {
                 self.rebuild_view();
                 self.doc.mark_dirty();
             }
@@ -554,7 +568,7 @@ impl App {
         if let Some(state) = self.freehand_state.take() {
             if !state.points.is_empty() {
                 self.save_undo_state();
-                if self.doc.add_shape(ShapeKind::Freehand {
+                if self.add_shape_to_active_layer(ShapeKind::Freehand {
                     points: state.points,
                     char: self.brush_char,
                     label: None,
@@ -643,7 +657,7 @@ impl App {
             self.save_undo_state();
             let result = match self.current_tool {
                 Tool::Line => {
-                    self.doc.add_shape(ShapeKind::Line {
+                    self.add_shape_to_active_layer(ShapeKind::Line {
                         start,
                         end,
                         style: self.line_style,
@@ -654,7 +668,7 @@ impl App {
                     })
                 }
                 Tool::Arrow => {
-                    self.doc.add_shape(ShapeKind::Arrow {
+                    self.add_shape_to_active_layer(ShapeKind::Arrow {
                         start,
                         end,
                         style: self.line_style,
@@ -665,7 +679,7 @@ impl App {
                     })
                 }
                 Tool::Rectangle => {
-                    self.doc.add_shape(ShapeKind::Rectangle {
+                    self.add_shape_to_active_layer(ShapeKind::Rectangle {
                         start,
                         end,
                         label: None,
@@ -673,7 +687,7 @@ impl App {
                     })
                 }
                 Tool::DoubleBox => {
-                    self.doc.add_shape(ShapeKind::DoubleBox {
+                    self.add_shape_to_active_layer(ShapeKind::DoubleBox {
                         start,
                         end,
                         label: None,
@@ -685,7 +699,7 @@ impl App {
                     let center = start;
                     let half_width = (end.x - start.x).abs().max(1);
                     let half_height = (end.y - start.y).abs().max(1);
-                    self.doc.add_shape(ShapeKind::Diamond {
+                    self.add_shape_to_active_layer(ShapeKind::Diamond {
                         center,
                         half_width,
                         half_height,
@@ -698,7 +712,7 @@ impl App {
                     let center = start;
                     let radius_x = (end.x - start.x).abs().max(1);
                     let radius_y = (end.y - start.y).abs().max(1);
-                    self.doc.add_shape(ShapeKind::Ellipse {
+                    self.add_shape_to_active_layer(ShapeKind::Ellipse {
                         center,
                         radius_x,
                         radius_y,
@@ -711,7 +725,7 @@ impl App {
                     let mid_x = (start.x + end.x) / 2;
                     let height = (end.y - start.y).abs().max(1);
                     let p3 = Position::new(mid_x, start.y + height);
-                    self.doc.add_shape(ShapeKind::Triangle {
+                    self.add_shape_to_active_layer(ShapeKind::Triangle {
                         p1: start,
                         p2: end,
                         p3,
@@ -720,7 +734,7 @@ impl App {
                     })
                 }
                 Tool::Parallelogram => {
-                    self.doc.add_shape(ShapeKind::Parallelogram {
+                    self.add_shape_to_active_layer(ShapeKind::Parallelogram {
                         start,
                         end,
                         label: None,
@@ -731,7 +745,7 @@ impl App {
                     let center = start;
                     let radius_x = (end.x - start.x).abs().max(2);
                     let radius_y = (end.y - start.y).abs().max(1);
-                    self.doc.add_shape(ShapeKind::Hexagon {
+                    self.add_shape_to_active_layer(ShapeKind::Hexagon {
                         center,
                         radius_x,
                         radius_y,
@@ -740,7 +754,7 @@ impl App {
                     })
                 }
                 Tool::Trapezoid => {
-                    self.doc.add_shape(ShapeKind::Trapezoid {
+                    self.add_shape_to_active_layer(ShapeKind::Trapezoid {
                         start,
                         end,
                         label: None,
@@ -748,7 +762,7 @@ impl App {
                     })
                 }
                 Tool::RoundedRect => {
-                    self.doc.add_shape(ShapeKind::RoundedRect {
+                    self.add_shape_to_active_layer(ShapeKind::RoundedRect {
                         start,
                         end,
                         label: None,
@@ -756,7 +770,7 @@ impl App {
                     })
                 }
                 Tool::Cylinder => {
-                    self.doc.add_shape(ShapeKind::Cylinder {
+                    self.add_shape_to_active_layer(ShapeKind::Cylinder {
                         start,
                         end,
                         label: None,
@@ -764,7 +778,7 @@ impl App {
                     })
                 }
                 Tool::Cloud => {
-                    self.doc.add_shape(ShapeKind::Cloud {
+                    self.add_shape_to_active_layer(ShapeKind::Cloud {
                         start,
                         end,
                         label: None,
@@ -775,7 +789,7 @@ impl App {
                     let center = start;
                     let outer_radius = (end.x - start.x).abs().max((end.y - start.y).abs()).max(2);
                     let inner_radius = outer_radius / 2;
-                    self.doc.add_shape(ShapeKind::Star {
+                    self.add_shape_to_active_layer(ShapeKind::Star {
                         center,
                         outer_radius,
                         inner_radius,

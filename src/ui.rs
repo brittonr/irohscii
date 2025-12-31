@@ -18,7 +18,7 @@ use crate::presence::{peer_color, CursorActivity, PeerPresence, ToolKind};
 use crate::shapes::ShapeKind;
 
 /// Render the entire UI
-pub fn render(frame: &mut Frame, app: &App) {
+pub fn render(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -28,19 +28,47 @@ pub fn render(frame: &mut Frame, app: &App) {
         ])
         .split(frame.area());
 
-    // Split top area horizontally if participants panel is shown
-    let canvas_area = if app.show_participants && app.presence.is_some() {
+    // Determine which panels to show
+    let show_participants = app.show_participants && app.presence.is_some();
+    let show_layers = app.show_layers;
+
+    // Split top area horizontally if any panel is shown
+    let canvas_area = if show_layers || show_participants {
+        // Calculate panel widths
+        let mut constraints = vec![Constraint::Min(20)]; // Canvas (at least 20 chars)
+
+        if show_layers {
+            constraints.push(Constraint::Length(18)); // Layer panel
+        }
+        if show_participants {
+            constraints.push(Constraint::Length(24)); // Participant panel
+        }
+
         let horizontal = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Min(20),      // Canvas (at least 20 chars)
-                Constraint::Length(24),   // Participant panel (fixed width)
-            ])
+            .constraints(constraints)
             .split(chunks[0]);
 
-        render_participants_panel(frame, app, horizontal[1]);
+        let mut panel_idx = 1;
+
+        // Render layer panel (first panel if shown)
+        if show_layers {
+            let layer_area = horizontal[panel_idx];
+            app.layer_panel_area = Some(layer_area);
+            render_layer_panel(frame, app, layer_area);
+            panel_idx += 1;
+        } else {
+            app.layer_panel_area = None;
+        }
+
+        // Render participants panel (second panel if shown)
+        if show_participants {
+            render_participants_panel(frame, app, horizontal[panel_idx]);
+        }
+
         horizontal[0]
     } else {
+        app.layer_panel_area = None;
         chunks[0]
     };
 
@@ -165,7 +193,7 @@ impl Widget for CanvasWidget<'_> {
         self.render_grid(buf, area);
 
         // Render all shapes
-        for shape in self.app.shape_view.iter() {
+        for shape in self.app.shape_view.iter_visible() {
             let is_selected = self.app.selected.contains(&shape.id);
             // Use shape's color, but override with cyan when selected
             let style = if is_selected {
@@ -675,6 +703,67 @@ fn render_participants_panel(frame: &mut Frame, app: &App, area: Rect) {
     let paragraph = Paragraph::new(items)
         .block(block)
         .wrap(ratatui::widgets::Wrap { trim: true });
+
+    frame.render_widget(paragraph, area);
+}
+
+/// Render the layer panel
+fn render_layer_panel(frame: &mut Frame, app: &App, area: Rect) {
+    let layers = app.get_layers();
+    let title = format!(" Layers ({}) ", layers.len());
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray));
+
+    // Build list items
+    let mut items: Vec<Line> = Vec::new();
+
+    for layer in &layers {
+        let is_active = app.active_layer == Some(layer.id);
+
+        // Active indicator
+        let active_indicator = if is_active {
+            Span::styled("● ", Style::default().fg(Color::Cyan))
+        } else {
+            Span::raw("  ")
+        };
+
+        // Layer name (truncate if needed)
+        let max_name_len = 10;
+        let name: String = layer.name.chars().take(max_name_len).collect();
+        let name_style = if is_active {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        // Visibility indicator
+        let visible_indicator = if layer.visible {
+            Span::styled("◆", Style::default().fg(Color::Cyan))
+        } else {
+            Span::styled("◇", Style::default().fg(Color::DarkGray))
+        };
+
+        // Lock indicator
+        let lock_indicator = if layer.locked {
+            Span::styled("◾", Style::default().fg(Color::Yellow))
+        } else {
+            Span::raw(" ")
+        };
+
+        items.push(Line::from(vec![
+            active_indicator,
+            Span::styled(format!("{:<width$}", name, width = max_name_len), name_style),
+            Span::raw(" "),
+            visible_indicator,
+            lock_indicator,
+        ]));
+    }
+
+    let paragraph = Paragraph::new(items)
+        .block(block);
 
     frame.render_widget(paragraph, area);
 }

@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -121,6 +121,9 @@ fn main() -> Result<()> {
         app.doc.set_storage_path(storage_path);
     }
 
+    // Initialize active layer from document
+    app.init_active_layer();
+
     // Start sync if enabled
     let sync_handle = if !matches!(sync_config.mode, SyncMode::Disabled) {
         match sync::start_sync_thread(sync_config) {
@@ -183,7 +186,7 @@ fn run_app(
     let mut popup_trigger_key: Option<KeyCode> = None;
 
     while app.running {
-        terminal.draw(|frame| ui::render(frame, app))?;
+        terminal.draw(|frame| ui::render(frame, &mut *app))?;
 
         // Prune stale peers every second
         if last_stale_prune.elapsed() >= Duration::from_secs(1) {
@@ -321,7 +324,38 @@ fn run_app(
                     let cursor_pos = app.viewport.screen_to_canvas(mouse.column, mouse.row);
                     app.last_cursor_pos = cursor_pos;
 
-                    if matches!(app.mode, Mode::Normal) {
+                    // Check if click is in layer panel
+                    let in_layer_panel = app.layer_panel_area.map_or(false, |area| {
+                        mouse.column >= area.x
+                            && mouse.column < area.x + area.width
+                            && mouse.row >= area.y
+                            && mouse.row < area.y + area.height
+                    });
+
+                    if in_layer_panel {
+                        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                            if let Some(area) = app.layer_panel_area {
+                                // Calculate which layer was clicked (accounting for border)
+                                let row_in_panel = mouse.row.saturating_sub(area.y + 1); // +1 for top border
+                                let layers = app.get_layers();
+                                if (row_in_panel as usize) < layers.len() {
+                                    let clicked_layer = &layers[row_in_panel as usize];
+
+                                    if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                                        // Shift+click: toggle visibility
+                                        app.toggle_layer_visibility(clicked_layer.id);
+                                    } else if mouse.modifiers.contains(KeyModifiers::CONTROL) {
+                                        // Ctrl+click: toggle locked
+                                        app.toggle_layer_locked(clicked_layer.id);
+                                    } else {
+                                        // Normal click: select layer
+                                        app.active_layer = Some(clicked_layer.id);
+                                        app.set_status(format!("Active layer: {}", clicked_layer.name));
+                                    }
+                                }
+                            }
+                        }
+                    } else if matches!(app.mode, Mode::Normal) {
                         match app.current_tool {
                             Tool::Select => tools::handle_select_event(app, mouse),
                             Tool::Freehand => tools::handle_freehand_event(app, mouse),
@@ -423,6 +457,7 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
         // Layer shortcuts
         KeyCode::Char('L') => app.toggle_layer_panel(),
         KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => app.create_layer(),
+        KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::CONTROL) => app.delete_active_layer(),
         KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(1),
         KeyCode::Char('2') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(2),
         KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(3),
