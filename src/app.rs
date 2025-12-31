@@ -162,6 +162,22 @@ pub struct ResizeState {
     pub handle: ResizeHandle,
 }
 
+/// Orientation of a snap guide line
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapOrientation {
+    Vertical,   // Vertical line (shapes aligned on same x)
+    Horizontal, // Horizontal line (shapes aligned on same y)
+}
+
+/// Visual snap guide line shown during drag
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapGuide {
+    pub orientation: SnapOrientation,
+    pub position: i32,  // x for vertical, y for horizontal
+    pub start: i32,     // start of line extent
+    pub end: i32,       // end of line extent
+}
+
 /// Mouse button state
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct MouseState {
@@ -230,6 +246,8 @@ pub struct App {
     pub show_layers: bool,
     /// Layer panel area (for mouse click detection)
     pub layer_panel_area: Option<Rect>,
+    /// Snap guide lines shown during drag
+    pub shape_snap_guides: Vec<SnapGuide>,
 }
 
 impl App {
@@ -266,6 +284,7 @@ impl App {
             active_layer: None,
             show_layers: false,
             layer_panel_area: None,
+            shape_snap_guides: Vec::new(),
         }
     }
 
@@ -1237,18 +1256,152 @@ impl App {
         }
     }
 
+    /// Find shape-to-shape snap adjustments during drag
+    /// Returns adjusted (dx, dy) and populates shape_snap_guides
+    fn find_shape_snap(&mut self, raw_dx: i32, raw_dy: i32) -> (i32, i32) {
+        self.shape_snap_guides.clear();
+
+        if self.selected.is_empty() {
+            return (raw_dx, raw_dy);
+        }
+
+        // Get combined bounds of all selected shapes
+        let mut sel_min_x = i32::MAX;
+        let mut sel_min_y = i32::MAX;
+        let mut sel_max_x = i32::MIN;
+        let mut sel_max_y = i32::MIN;
+
+        for &id in &self.selected {
+            if let Some(shape) = self.shape_view.get(id) {
+                let (min_x, min_y, max_x, max_y) = shape.bounds();
+                sel_min_x = sel_min_x.min(min_x);
+                sel_min_y = sel_min_y.min(min_y);
+                sel_max_x = sel_max_x.max(max_x);
+                sel_max_y = sel_max_y.max(max_y);
+            }
+        }
+
+        if sel_min_x == i32::MAX {
+            return (raw_dx, raw_dy);
+        }
+
+        // Proposed new bounds after drag
+        let new_min_x = sel_min_x + raw_dx;
+        let new_max_x = sel_max_x + raw_dx;
+        let new_min_y = sel_min_y + raw_dy;
+        let new_max_y = sel_max_y + raw_dy;
+        let new_center_x = (new_min_x + new_max_x) / 2;
+        let new_center_y = (new_min_y + new_max_y) / 2;
+
+        let mut snap_dx: Option<i32> = None;
+        let mut snap_dy: Option<i32> = None;
+        let mut best_dist_x = SNAP_THRESHOLD + 1;
+        let mut best_dist_y = SNAP_THRESHOLD + 1;
+
+        // Check against all non-selected shapes
+        for shape in self.shape_view.iter() {
+            if self.selected.contains(&shape.id) {
+                continue;
+            }
+
+            let (other_min_x, other_min_y, other_max_x, other_max_y) = shape.bounds();
+            let other_center_x = (other_min_x + other_max_x) / 2;
+            let other_center_y = (other_min_y + other_max_y) / 2;
+
+            // Check horizontal alignments (x-axis snapping)
+            let x_checks = [
+                (new_min_x, other_min_x, "left-left"),
+                (new_min_x, other_max_x, "left-right"),
+                (new_max_x, other_min_x, "right-left"),
+                (new_max_x, other_max_x, "right-right"),
+                (new_center_x, other_center_x, "center-center"),
+            ];
+
+            for (new_x, other_x, _label) in x_checks {
+                let dist = (new_x - other_x).abs();
+                if dist <= SNAP_THRESHOLD && dist < best_dist_x {
+                    best_dist_x = dist;
+                    snap_dx = Some(other_x - new_x + raw_dx);
+                }
+            }
+
+            // Check vertical alignments (y-axis snapping)
+            let y_checks = [
+                (new_min_y, other_min_y, "top-top"),
+                (new_min_y, other_max_y, "top-bottom"),
+                (new_max_y, other_min_y, "bottom-top"),
+                (new_max_y, other_max_y, "bottom-bottom"),
+                (new_center_y, other_center_y, "center-center"),
+            ];
+
+            for (new_y, other_y, _label) in y_checks {
+                let dist = (new_y - other_y).abs();
+                if dist <= SNAP_THRESHOLD && dist < best_dist_y {
+                    best_dist_y = dist;
+                    snap_dy = Some(other_y - new_y + raw_dy);
+                }
+            }
+        }
+
+        let final_dx = snap_dx.unwrap_or(raw_dx);
+        let final_dy = snap_dy.unwrap_or(raw_dy);
+
+        // Generate snap guides for visual feedback
+        if snap_dx.is_some() {
+            let snapped_x = sel_min_x + final_dx;
+            // Find the vertical line position (could be left, right, or center)
+            let guide_x = if (snapped_x - sel_min_x - raw_dx).abs() <= SNAP_THRESHOLD {
+                snapped_x // left edge snapped
+            } else if ((sel_max_x + final_dx) - sel_max_x - raw_dx).abs() <= SNAP_THRESHOLD {
+                sel_max_x + final_dx // right edge snapped
+            } else {
+                (sel_min_x + sel_max_x) / 2 + final_dx // center snapped
+            };
+
+            self.shape_snap_guides.push(SnapGuide {
+                orientation: SnapOrientation::Vertical,
+                position: guide_x,
+                start: sel_min_y + final_dy - 2,
+                end: sel_max_y + final_dy + 2,
+            });
+        }
+
+        if snap_dy.is_some() {
+            let snapped_y = sel_min_y + final_dy;
+            let guide_y = if (snapped_y - sel_min_y - raw_dy).abs() <= SNAP_THRESHOLD {
+                snapped_y
+            } else if ((sel_max_y + final_dy) - sel_max_y - raw_dy).abs() <= SNAP_THRESHOLD {
+                sel_max_y + final_dy
+            } else {
+                (sel_min_y + sel_max_y) / 2 + final_dy
+            };
+
+            self.shape_snap_guides.push(SnapGuide {
+                orientation: SnapOrientation::Horizontal,
+                position: guide_y,
+                start: sel_min_x + final_dx - 2,
+                end: sel_max_x + final_dx + 2,
+            });
+        }
+
+        (final_dx, final_dy)
+    }
+
     /// Continue dragging all selected shapes
     pub fn continue_drag(&mut self, pos: Position) {
         let Some(drag) = self.drag_state.as_ref() else {
             return;
         };
 
-        let dx = pos.x - drag.last_mouse.x;
-        let dy = pos.y - drag.last_mouse.y;
+        let raw_dx = pos.x - drag.last_mouse.x;
+        let raw_dy = pos.y - drag.last_mouse.y;
 
-        if dx == 0 && dy == 0 {
+        if raw_dx == 0 && raw_dy == 0 {
             return;
         }
+
+        // Apply shape-to-shape snapping
+        let (dx, dy) = self.find_shape_snap(raw_dx, raw_dy);
 
         // Move all selected shapes
         let selected_ids: Vec<_> = self.selected.iter().copied().collect();
@@ -1267,6 +1420,7 @@ impl App {
     /// Finish dragging
     pub fn finish_drag(&mut self) {
         self.drag_state = None;
+        self.shape_snap_guides.clear();
     }
 
     // ========== Resize Methods ==========

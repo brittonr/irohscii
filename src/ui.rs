@@ -7,7 +7,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, Mode, PopupKind, Tool, BRUSHES, COLORS, GRID_SIZE, TOOLS};
+use crate::app::{App, Mode, PopupKind, SnapOrientation, Tool, BRUSHES, COLORS, GRID_SIZE, TOOLS};
 use crate::canvas::{
     arrow_points_styled, cloud_points, cylinder_points, diamond_points, double_rect_points,
     ellipse_points, hexagon_points, line_points_styled, parallelogram_points, rect_points,
@@ -149,6 +149,47 @@ impl CanvasWidget<'_> {
         }
     }
 
+    fn render_snap_guides(&self, buf: &mut Buffer, area: Rect) {
+        let guide_style = Style::default().fg(Color::Magenta);
+
+        for guide in &self.app.shape_snap_guides {
+            match guide.orientation {
+                SnapOrientation::Vertical => {
+                    // Draw vertical line at x = guide.position
+                    let screen_x = guide.position - self.app.viewport.offset_x;
+                    if screen_x < 0 || screen_x >= area.width as i32 {
+                        continue;
+                    }
+                    let x = area.x + screen_x as u16;
+
+                    for canvas_y in guide.start..=guide.end {
+                        let screen_y = canvas_y - self.app.viewport.offset_y;
+                        if screen_y >= 0 && screen_y < area.height as i32 {
+                            let y = area.y + screen_y as u16;
+                            buf[(x, y)].set_char('│').set_style(guide_style);
+                        }
+                    }
+                }
+                SnapOrientation::Horizontal => {
+                    // Draw horizontal line at y = guide.position
+                    let screen_y = guide.position - self.app.viewport.offset_y;
+                    if screen_y < 0 || screen_y >= area.height as i32 {
+                        continue;
+                    }
+                    let y = area.y + screen_y as u16;
+
+                    for canvas_x in guide.start..=guide.end {
+                        let screen_x = canvas_x - self.app.viewport.offset_x;
+                        if screen_x >= 0 && screen_x < area.width as i32 {
+                            let x = area.x + screen_x as u16;
+                            buf[(x, y)].set_char('─').set_style(guide_style);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn render_label(&self, buf: &mut Buffer, area: Rect, bounds: (i32, i32, i32, i32), text: &str, style: Style) {
         let (min_x, min_y, max_x, max_y) = bounds;
         // Center the text horizontally and vertically within the shape
@@ -191,6 +232,9 @@ impl Widget for CanvasWidget<'_> {
 
         // Render grid dots (background layer)
         self.render_grid(buf, area);
+
+        // Render snap guide lines
+        self.render_snap_guides(buf, area);
 
         // Render all shapes
         for shape in self.app.shape_view.iter_visible() {
