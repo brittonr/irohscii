@@ -1617,10 +1617,16 @@ impl App {
         }
 
         // Track cumulative delta, modified shapes, and update mouse position
+        // IMPORTANT: Only update last_mouse by the amount actually moved (dx, dy)
+        // not by the raw mouse delta. This prevents getting "stuck" on snap points
+        // when the snap adjustment reduces movement to 0.
         if let Some(ref mut drag) = self.drag_state {
             drag.total_dx += dx;
             drag.total_dy += dy;
-            drag.last_mouse = pos;
+            // Only advance last_mouse by the actual movement, not raw mouse position
+            // This allows accumulated mouse movement to eventually escape snap zones
+            drag.last_mouse.x += dx;
+            drag.last_mouse.y += dy;
             // Track all modified shapes (dedupe happens at finish)
             drag.modified_shapes.extend(modified_ids);
         }
