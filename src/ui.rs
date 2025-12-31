@@ -100,6 +100,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             render_selection_popup(frame, *kind, *selected, canvas_area);
         }
         Mode::Normal => {}
+        Mode::LayerRename { .. } => {} // Handled in layer panel
     }
 }
 
@@ -761,11 +762,19 @@ fn render_layer_panel(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 
+    // Check if we're renaming a layer
+    let renaming = if let Mode::LayerRename { layer_id, text } = &app.mode {
+        Some((*layer_id, text.as_str()))
+    } else {
+        None
+    };
+
     // Build list items
     let mut items: Vec<Line> = Vec::new();
 
     for layer in &layers {
         let is_active = app.active_layer == Some(layer.id);
+        let is_renaming = renaming.map_or(false, |(id, _)| id == layer.id);
 
         // Active indicator
         let active_indicator = if is_active {
@@ -774,35 +783,52 @@ fn render_layer_panel(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw("  ")
         };
 
-        // Layer name (truncate if needed)
+        // Layer name (truncate if needed) or rename input
         let max_name_len = 10;
-        let name: String = layer.name.chars().take(max_name_len).collect();
-        let name_style = if is_active {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
+        let (name_span, vis_span, lock_span) = if is_renaming {
+            let text = renaming.unwrap().1;
+            let display: String = text.chars().take(max_name_len).collect();
+            let input_style = Style::default().fg(Color::Black).bg(Color::Yellow);
+            (
+                Span::styled(format!("{:<width$}_", display, width = max_name_len.saturating_sub(1)), input_style),
+                Span::raw(" "),
+                Span::raw(" "),
+            )
         } else {
-            Style::default().fg(Color::White)
-        };
+            let name: String = layer.name.chars().take(max_name_len).collect();
+            let name_style = if is_active {
+                Style::default().fg(Color::Black).bg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::White)
+            };
 
-        // Visibility indicator
-        let visible_indicator = if layer.visible {
-            Span::styled("◆", Style::default().fg(Color::Cyan))
-        } else {
-            Span::styled("◇", Style::default().fg(Color::DarkGray))
-        };
+            // Visibility indicator
+            let visible_indicator = if layer.visible {
+                Span::styled("◆", Style::default().fg(Color::Cyan))
+            } else {
+                Span::styled("◇", Style::default().fg(Color::DarkGray))
+            };
 
-        // Lock indicator
-        let lock_indicator = if layer.locked {
-            Span::styled("◾", Style::default().fg(Color::Yellow))
-        } else {
-            Span::raw(" ")
+            // Lock indicator
+            let lock_indicator = if layer.locked {
+                Span::styled("◾", Style::default().fg(Color::Yellow))
+            } else {
+                Span::raw(" ")
+            };
+
+            (
+                Span::styled(format!("{:<width$}", name, width = max_name_len), name_style),
+                visible_indicator,
+                lock_indicator,
+            )
         };
 
         items.push(Line::from(vec![
             active_indicator,
-            Span::styled(format!("{:<width$}", name, width = max_name_len), name_style),
+            name_span,
             Span::raw(" "),
-            visible_indicator,
-            lock_indicator,
+            vis_span,
+            lock_span,
         ]));
     }
 
@@ -821,7 +847,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             Tool::Text => ("TXT", Color::Green),
             _ => ("DRAW", Color::Yellow),
         },
-        Mode::TextInput { .. } | Mode::LabelInput { .. } => ("INS", Color::Green),
+        Mode::TextInput { .. } | Mode::LabelInput { .. } | Mode::LayerRename { .. } => ("INS", Color::Green),
         Mode::FileSave { .. } | Mode::FileOpen { .. } | Mode::SvgExport { .. } => ("CMD", Color::Magenta),
         Mode::RecentFiles { .. } | Mode::SelectionPopup { .. } => ("MENU", Color::Cyan),
     };
@@ -912,6 +938,9 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
         }
         Mode::TextInput { .. } | Mode::LabelInput { .. } => {
             "type text | [Enter] confirm [Esc] cancel [Backspace] delete"
+        }
+        Mode::LayerRename { .. } => {
+            "type layer name | [Enter] confirm [Esc] cancel"
         }
         Mode::FileSave { .. } | Mode::FileOpen { .. } | Mode::SvgExport { .. } => {
             "type path | [Enter] confirm [Esc] cancel"

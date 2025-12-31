@@ -122,6 +122,7 @@ pub enum Mode {
     Normal,
     TextInput { start_pos: Position, text: String },
     LabelInput { shape_id: ShapeId, text: String },
+    LayerRename { layer_id: LayerId, text: String },
     FileSave { path: String },
     FileOpen { path: String },
     SvgExport { path: String },
@@ -1205,6 +1206,60 @@ impl App {
             "Layer panel hidden"
         };
         self.set_status(status);
+    }
+
+    /// Start renaming the active layer
+    pub fn start_layer_rename(&mut self) {
+        if let Some(layer_id) = self.active_layer {
+            if let Ok(Some(layer)) = self.doc.read_layer(layer_id) {
+                self.mode = Mode::LayerRename {
+                    layer_id,
+                    text: layer.name.clone(),
+                };
+            }
+        }
+    }
+
+    /// Add a character to layer rename input
+    pub fn add_layer_rename_char(&mut self, ch: char) {
+        if let Mode::LayerRename { text, .. } = &mut self.mode {
+            text.push(ch);
+        }
+    }
+
+    /// Remove last character from layer rename input
+    pub fn backspace_layer_rename(&mut self) {
+        if let Mode::LayerRename { text, .. } = &mut self.mode {
+            text.pop();
+        }
+    }
+
+    /// Commit layer rename
+    pub fn commit_layer_rename(&mut self) {
+        let rename_data = if let Mode::LayerRename { layer_id, text } = &self.mode {
+            if !text.is_empty() {
+                Some((*layer_id, text.clone()))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        self.mode = Mode::Normal;
+
+        if let Some((layer_id, new_name)) = rename_data {
+            if let Err(e) = self.doc.rename_layer(layer_id, &new_name) {
+                self.set_status(format!("Error: {}", e));
+            } else {
+                self.set_status(format!("Renamed layer to '{}'", new_name));
+            }
+        }
+    }
+
+    /// Cancel layer rename
+    pub fn cancel_layer_rename(&mut self) {
+        self.mode = Mode::Normal;
     }
 
     // ========== Marquee Selection Methods ==========

@@ -281,6 +281,7 @@ fn run_app(
                                         Mode::Normal => handle_normal_mode(app, key),
                                         Mode::TextInput { .. } => handle_text_input_mode(app, key),
                                         Mode::LabelInput { .. } => handle_label_input_mode(app, key),
+                                        Mode::LayerRename { .. } => handle_layer_rename_mode(app, key),
                                         Mode::FileSave { .. } => handle_file_save_mode(app, key),
                                         Mode::FileOpen { .. } => handle_file_open_mode(app, key),
                                         Mode::SvgExport { .. } => handle_svg_export_mode(app, key),
@@ -458,6 +459,8 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
         KeyCode::Char('L') => app.toggle_layer_panel(),
         KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => app.create_layer(),
         KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::CONTROL) => app.delete_active_layer(),
+        KeyCode::F(2) if app.show_layers => app.start_layer_rename(),
+        KeyCode::Char('r') if app.show_layers && app.active_layer.is_some() => app.start_layer_rename(),
         KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(1),
         KeyCode::Char('2') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(2),
         KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(3),
@@ -559,6 +562,24 @@ fn handle_label_input_mode(app: &mut App, key: event::KeyEvent) {
         }
         KeyCode::Char(c) => {
             app.add_label_char(c);
+        }
+        _ => {}
+    }
+}
+
+fn handle_layer_rename_mode(app: &mut App, key: event::KeyEvent) {
+    match key.code {
+        KeyCode::Enter => {
+            app.commit_layer_rename();
+        }
+        KeyCode::Esc => {
+            app.cancel_layer_rename();
+        }
+        KeyCode::Backspace => {
+            app.backspace_layer_rename();
+        }
+        KeyCode::Char(c) => {
+            app.add_layer_rename_char(c);
         }
         _ => {}
     }
