@@ -197,10 +197,13 @@ pub struct ShapeState {
 }
 
 /// State for dragging/moving a shape
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DragState {
     pub shape_id: ShapeId,
     pub last_mouse: Position,
+    pub total_dx: i32,
+    pub total_dy: i32,
+    pub modified_shapes: Vec<ShapeId>,
 }
 
 /// State for resizing a shape
@@ -1437,6 +1440,9 @@ impl App {
         self.drag_state = Some(DragState {
             shape_id: ShapeId::default(), // Not used for multi-select
             last_mouse: pos,
+            total_dx: 0,
+            total_dy: 0,
+            modified_shapes: Vec::new(),
         });
     }
 
@@ -1587,23 +1593,55 @@ impl App {
         // Apply shape-to-shape snapping
         let (dx, dy) = self.find_shape_snap(raw_dx, raw_dy);
 
-        // Move all selected shapes
+        // Collect all updates from cache (no document reads)
         let selected_ids: Vec<_> = self.selected.iter().copied().collect();
-        for id in selected_ids {
-            if self.doc.translate_shape(id, dx, dy).is_ok() {
-                let _ = self.doc.update_connections_for_shape(id, dx, dy);
+
+        // Get translated shapes and connected shape updates from cache
+        let mut all_updates: Vec<(ShapeId, ShapeKind)> = Vec::new();
+        for &id in &selected_ids {
+            // Get translated version of selected shape from cache
+            if let Some(shape) = self.shape_view.get(id) {
+                let new_kind = shape.kind.translated(dx, dy);
+                all_updates.push((id, new_kind));
             }
+            // Get connected shape updates
+            all_updates.extend(self.shape_view.find_connected_updates(id, dx, dy));
         }
-        self.rebuild_view();
+
+        // Collect modified shape IDs for later document update
+        let modified_ids: Vec<ShapeId> = all_updates.iter().map(|(id, _)| *id).collect();
+
+        // Update ONLY the cache during drag (no document writes - they're slow!)
+        for (id, new_kind) in all_updates {
+            self.shape_view.update_shape_kind(id, new_kind);
+        }
+
+        // Track cumulative delta, modified shapes, and update mouse position
         if let Some(ref mut drag) = self.drag_state {
+            drag.total_dx += dx;
+            drag.total_dy += dy;
             drag.last_mouse = pos;
+            // Track all modified shapes (dedupe happens at finish)
+            drag.modified_shapes.extend(modified_ids);
         }
-        self.doc.mark_dirty();
     }
 
-    /// Finish dragging
+    /// Finish dragging - write final positions to document
     pub fn finish_drag(&mut self) {
-        self.drag_state = None;
+        if let Some(drag) = self.drag_state.take() {
+            if drag.total_dx != 0 || drag.total_dy != 0 {
+                // Dedupe modified shapes and write final positions to document
+                let mut written = std::collections::HashSet::new();
+                for id in drag.modified_shapes {
+                    if written.insert(id) {
+                        if let Some(shape) = self.shape_view.get(id) {
+                            let _ = self.doc.update_shape(id, shape.kind.clone());
+                        }
+                    }
+                }
+                self.doc.mark_dirty();
+            }
+        }
         self.shape_snap_guides.clear();
     }
 
@@ -1641,8 +1679,12 @@ impl App {
                 let shape_id = resize.shape_id;
                 if self.doc.update_shape(shape_id, new_kind.clone()).is_ok() {
                     // Update connected lines to follow the resized shape's snap points
-                    let _ = self.doc.update_connections_for_resize(shape_id, &old_kind, &new_kind);
-                    self.rebuild_view();
+                    let mut updated = vec![shape_id];
+                    if let Ok(connected) = self.doc.update_connections_for_resize(shape_id, &old_kind, &new_kind) {
+                        updated.extend(connected);
+                    }
+                    // Only update modified shapes, not the entire view
+                    self.shape_view.update_shapes(&self.doc, &updated);
                     self.doc.mark_dirty();
                 }
             }

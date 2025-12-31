@@ -574,6 +574,80 @@ impl ShapeKind {
         )
     }
 
+    /// Get connection IDs for this shape (start_connection, end_connection)
+    pub fn connections(&self) -> (Option<u64>, Option<u64>) {
+        match self {
+            ShapeKind::Line { start_connection, end_connection, .. } |
+            ShapeKind::Arrow { start_connection, end_connection, .. } => {
+                (*start_connection, *end_connection)
+            }
+            _ => (None, None),
+        }
+    }
+
+    /// Translate line/arrow endpoints by dx, dy for connected ends
+    pub fn translate_connected_endpoints(&self, target_id: u64, dx: i32, dy: i32) -> Option<ShapeKind> {
+        match self {
+            ShapeKind::Line { start, end, style, start_connection, end_connection, label, color } => {
+                let mut new_start = *start;
+                let mut new_end = *end;
+                let mut changed = false;
+
+                if *start_connection == Some(target_id) {
+                    new_start = Position::new(start.x + dx, start.y + dy);
+                    changed = true;
+                }
+                if *end_connection == Some(target_id) {
+                    new_end = Position::new(end.x + dx, end.y + dy);
+                    changed = true;
+                }
+
+                if changed {
+                    Some(ShapeKind::Line {
+                        start: new_start,
+                        end: new_end,
+                        style: *style,
+                        start_connection: *start_connection,
+                        end_connection: *end_connection,
+                        label: label.clone(),
+                        color: *color,
+                    })
+                } else {
+                    None
+                }
+            }
+            ShapeKind::Arrow { start, end, style, start_connection, end_connection, label, color } => {
+                let mut new_start = *start;
+                let mut new_end = *end;
+                let mut changed = false;
+
+                if *start_connection == Some(target_id) {
+                    new_start = Position::new(start.x + dx, start.y + dy);
+                    changed = true;
+                }
+                if *end_connection == Some(target_id) {
+                    new_end = Position::new(end.x + dx, end.y + dy);
+                    changed = true;
+                }
+
+                if changed {
+                    Some(ShapeKind::Arrow {
+                        start: new_start,
+                        end: new_end,
+                        style: *style,
+                        start_connection: *start_connection,
+                        end_connection: *end_connection,
+                        label: label.clone(),
+                        color: *color,
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Get snap points for this shape (used for connection updates during resize)
     pub fn snap_points(&self) -> Vec<Position> {
         match self {
@@ -765,6 +839,14 @@ impl CachedShape {
 
     pub fn supports_label(&self) -> bool {
         self.kind.supports_label()
+    }
+
+    /// Update the cached shape with new kind data and recompute derived fields
+    pub fn update(&mut self, kind: ShapeKind) {
+        self.bounds = Self::compute_bounds(&kind);
+        self.snap_points = Self::compute_snap_points(&kind);
+        self.resize_handles = Self::compute_resize_handles(&kind);
+        self.kind = kind;
     }
 
     fn compute_bounds(kind: &ShapeKind) -> (i32, i32, i32, i32) {
@@ -1199,6 +1281,39 @@ impl ShapeView {
     /// Get shape count
     pub fn len(&self) -> usize {
         self.shapes.len()
+    }
+
+    /// Update only specific shapes in the cache (for incremental updates during drag)
+    pub fn update_shapes(&mut self, doc: &Document, ids: &[ShapeId]) {
+        for &id in ids {
+            if let Some(&idx) = self.by_id.get(&id) {
+                if let Ok(Some(kind)) = doc.read_shape(id) {
+                    self.shapes[idx].update(kind);
+                }
+            }
+        }
+    }
+
+    /// Find all shapes connected to the given shape ID and return updated versions
+    /// Returns Vec of (ShapeId, new ShapeKind) for shapes that need updating
+    pub fn find_connected_updates(&self, target_id: ShapeId, dx: i32, dy: i32) -> Vec<(ShapeId, ShapeKind)> {
+        let target_conn_id = target_id.0.as_u128() as u64;
+        let mut updates = Vec::new();
+
+        for shape in &self.shapes {
+            if let Some(new_kind) = shape.kind.translate_connected_endpoints(target_conn_id, dx, dy) {
+                updates.push((shape.id, new_kind));
+            }
+        }
+
+        updates
+    }
+
+    /// Update a shape's cache entry directly with a new kind (without reading from document)
+    pub fn update_shape_kind(&mut self, id: ShapeId, kind: ShapeKind) {
+        if let Some(&idx) = self.by_id.get(&id) {
+            self.shapes[idx].update(kind);
+        }
     }
 }
 

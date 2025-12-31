@@ -1046,8 +1046,10 @@ impl Document {
     }
 
     /// Update connected lines when a shape moves
-    pub fn update_connections_for_shape(&mut self, moved_id: ShapeId, dx: i32, dy: i32) -> Result<()> {
+    /// Returns the IDs of shapes that were modified
+    pub fn update_connections_for_shape(&mut self, moved_id: ShapeId, dx: i32, dy: i32) -> Result<Vec<ShapeId>> {
         let all_shapes = self.read_all_shapes()?;
+        let mut updated = Vec::new();
 
         for (id, kind) in all_shapes {
             match kind {
@@ -1075,6 +1077,7 @@ impl Document {
                             label,
                             color,
                         })?;
+                        updated.push(id);
                     }
                 }
                 ShapeKind::Arrow { start, end, style, start_connection, end_connection, label, color } => {
@@ -1101,27 +1104,30 @@ impl Document {
                             label,
                             color,
                         })?;
+                        updated.push(id);
                     }
                 }
                 _ => {}
             }
         }
-        Ok(())
+        Ok(updated)
     }
 
     /// Update connected lines when a shape is resized
     /// This handles the case where different snap points move by different amounts
-    pub fn update_connections_for_resize(&mut self, resized_id: ShapeId, old_kind: &ShapeKind, new_kind: &ShapeKind) -> Result<()> {
+    /// Returns the IDs of shapes that were modified
+    pub fn update_connections_for_resize(&mut self, resized_id: ShapeId, old_kind: &ShapeKind, new_kind: &ShapeKind) -> Result<Vec<ShapeId>> {
         let old_snaps = old_kind.snap_points();
         let new_snaps = new_kind.snap_points();
 
         // If snap point counts don't match, we can't reliably update connections
         if old_snaps.len() != new_snaps.len() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         let all_shapes = self.read_all_shapes()?;
         let resized_conn_id = resized_id.0.as_u128() as u64;
+        let mut updated = Vec::new();
 
         for (id, kind) in all_shapes {
             match kind {
@@ -1156,6 +1162,7 @@ impl Document {
                             label,
                             color,
                         })?;
+                        updated.push(id);
                     }
                 }
                 ShapeKind::Arrow { start, end, style, start_connection, end_connection, label, color } => {
@@ -1187,12 +1194,13 @@ impl Document {
                             label,
                             color,
                         })?;
+                        updated.push(id);
                     }
                 }
                 _ => {}
             }
         }
-        Ok(())
+        Ok(updated)
     }
 
     // --- Global Undo/Redo (synced via CRDT) ---
