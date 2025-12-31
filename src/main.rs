@@ -284,9 +284,13 @@ fn run_app(
                                         Mode::LayerRename { .. } => handle_layer_rename_mode(app, key),
                                         Mode::FileSave { .. } => handle_file_save_mode(app, key),
                                         Mode::FileOpen { .. } => handle_file_open_mode(app, key),
+                                        Mode::DocSave { .. } => handle_doc_save_mode(app, key),
+                                        Mode::DocOpen { .. } => handle_doc_open_mode(app, key),
                                         Mode::SvgExport { .. } => handle_svg_export_mode(app, key),
                                         Mode::RecentFiles { .. } => handle_recent_files_mode(app, key),
                                         Mode::SelectionPopup { .. } => {} // Handled above
+                                        Mode::ConfirmDialog { .. } => handle_confirm_dialog_mode(app, key),
+                                        Mode::HelpScreen { .. } => handle_help_screen_mode(app, key),
                                     }
                                 }
                             }
@@ -458,7 +462,7 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
         // Layer shortcuts
         KeyCode::Char('L') => app.toggle_layer_panel(),
         KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => app.create_layer(),
-        KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::CONTROL) => app.delete_active_layer(),
+        KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::CONTROL) => app.request_delete_layer(),
         KeyCode::F(2) if app.show_layers => app.start_layer_rename(),
         KeyCode::Char('r') if app.show_layers && app.active_layer.is_some() => app.start_layer_rename(),
         KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(1),
@@ -489,11 +493,20 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
             }
         }
 
-        // File operations
-        KeyCode::Char('S') | KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        // File operations (ASCII export/import)
+        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::SHIFT) => {
             app.start_save()
         }
-        KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => app.start_open(),
+        KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::SHIFT) => {
+            app.start_open()
+        }
+        // Document save/open (with Shift)
+        KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.start_doc_save()
+        }
+        KeyCode::Char('O') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.start_doc_open()
+        }
 
         // Copy sync ticket to clipboard (capital T)
         KeyCode::Char('T') => app.copy_ticket_to_clipboard(),
@@ -515,8 +528,8 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
         // Toggle grid (g key)
         KeyCode::Char('g') => app.toggle_grid(),
 
-        // New document (capital N)
-        KeyCode::Char('N') => app.new_document(),
+        // New document (capital N) - shows confirmation if dirty
+        KeyCode::Char('N') => app.request_new_document(),
 
         // Recent files (capital R)
         KeyCode::Char('R') => {
@@ -532,6 +545,9 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
         KeyCode::Down => app.viewport.pan(0, 1),
         KeyCode::Left => app.viewport.pan(-1, 0),
         KeyCode::Right => app.viewport.pan(1, 0),
+
+        // Help screen
+        KeyCode::Char('?') | KeyCode::F(1) => app.open_help(),
 
         _ => {}
     }
@@ -597,14 +613,17 @@ fn handle_file_save_mode(app: &mut App, key: event::KeyEvent) {
                     Ok(()) => {
                         app.recent_files.add(path.clone());
                         app.file_path = Some(path);
-                        app.set_status("Saved!");
+                        app.set_status("Exported!");
                     }
                     Err(e) => {
-                        app.set_status(format!("Error: {}", e));
+                        app.set_error(format!("Export error: {}", e));
                     }
                 }
             }
             app.mode = Mode::Normal;
+        }
+        KeyCode::Tab => {
+            app.complete_path();
         }
         KeyCode::Backspace => {
             app.backspace_path();
@@ -633,19 +652,22 @@ fn handle_file_open_mode(app: &mut App, key: event::KeyEvent) {
                         }
                         // Rebuild view
                         if let Err(e) = app.shape_view.rebuild(&app.doc) {
-                            app.set_status(format!("Error rebuilding view: {}", e));
+                            app.set_error(format!("Error rebuilding view: {}", e));
                         } else {
                             app.recent_files.add(path.clone());
                             app.file_path = Some(path);
-                            app.set_status("Loaded!");
+                            app.set_status("Imported!");
                         }
                     }
                     Err(e) => {
-                        app.set_status(format!("Error: {}", e));
+                        app.set_error(format!("Import error: {}", e));
                     }
                 }
             }
             app.mode = Mode::Normal;
+        }
+        KeyCode::Tab => {
+            app.complete_path();
         }
         KeyCode::Backspace => {
             app.backspace_path();
@@ -670,11 +692,86 @@ fn handle_svg_export_mode(app: &mut App, key: event::KeyEvent) {
                         app.set_status(format!("Exported to {}", path.display()));
                     }
                     Err(e) => {
-                        app.set_status(format!("Error: {}", e));
+                        app.set_error(format!("SVG export error: {}", e));
                     }
                 }
             }
             app.mode = Mode::Normal;
+        }
+        KeyCode::Tab => {
+            app.complete_path();
+        }
+        KeyCode::Backspace => {
+            app.backspace_path();
+        }
+        KeyCode::Char(c) => {
+            app.add_path_char(c);
+        }
+        _ => {}
+    }
+}
+
+fn handle_doc_save_mode(app: &mut App, key: event::KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.mode = Mode::Normal;
+        }
+        KeyCode::Enter => {
+            if let Mode::DocSave { path } = &app.mode {
+                let path = PathBuf::from(path.clone());
+                match app.doc.save_to(&path) {
+                    Ok(()) => {
+                        app.set_status(format!("Document saved to {}", path.display()));
+                    }
+                    Err(e) => {
+                        app.set_error(format!("Failed to save: {}", e));
+                    }
+                }
+            }
+            app.mode = Mode::Normal;
+        }
+        KeyCode::Tab => {
+            app.complete_path();
+        }
+        KeyCode::Backspace => {
+            app.backspace_path();
+        }
+        KeyCode::Char(c) => {
+            app.add_path_char(c);
+        }
+        _ => {}
+    }
+}
+
+fn handle_doc_open_mode(app: &mut App, key: event::KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.mode = Mode::Normal;
+        }
+        KeyCode::Enter => {
+            if let Mode::DocOpen { path } = &app.mode {
+                let path = PathBuf::from(path.clone());
+                match document::Document::load(&path) {
+                    Ok(doc) => {
+                        app.doc = doc;
+                        // Rebuild view
+                        if let Err(e) = app.shape_view.rebuild(&app.doc) {
+                            app.set_error(format!("Error rebuilding view: {}", e));
+                        } else {
+                            app.init_active_layer();
+                            app.selected.clear();
+                            app.set_status(format!("Document loaded from {}", path.display()));
+                        }
+                    }
+                    Err(e) => {
+                        app.set_error(format!("Failed to load: {}", e));
+                    }
+                }
+            }
+            app.mode = Mode::Normal;
+        }
+        KeyCode::Tab => {
+            app.complete_path();
         }
         KeyCode::Backspace => {
             app.backspace_path();
@@ -739,6 +836,46 @@ fn handle_selection_popup_mode(app: &mut App, key: event::KeyEvent) {
         KeyCode::Enter => app.confirm_popup_selection(),
         // Escape to cancel
         KeyCode::Esc => app.cancel_popup(),
+        _ => {}
+    }
+}
+
+fn handle_confirm_dialog_mode(app: &mut App, key: event::KeyEvent) {
+    match key.code {
+        // Yes - confirm the action
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            app.confirm_pending_action();
+        }
+        // No - cancel the action
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            app.cancel_pending_action();
+        }
+        _ => {}
+    }
+}
+
+fn handle_help_screen_mode(app: &mut App, key: event::KeyEvent) {
+    match key.code {
+        // Close help
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') | KeyCode::F(1) => {
+            app.close_help();
+        }
+        // Scroll down
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.scroll_help(1);
+        }
+        // Scroll up
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.scroll_help(-1);
+        }
+        // Page down
+        KeyCode::PageDown | KeyCode::Char(' ') => {
+            app.scroll_help(10);
+        }
+        // Page up
+        KeyCode::PageUp => {
+            app.scroll_help(-10);
+        }
         _ => {}
     }
 }

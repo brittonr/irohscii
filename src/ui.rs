@@ -7,7 +7,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, Mode, PopupKind, SnapOrientation, Tool, BRUSHES, COLORS, GRID_SIZE, TOOLS};
+use crate::app::{App, MessageSeverity, Mode, PendingAction, PopupKind, SnapOrientation, Tool, BRUSHES, COLORS, GRID_SIZE, TOOLS};
 use crate::canvas::{
     arrow_points_styled, cloud_points, cylinder_points, diamond_points, double_rect_points,
     ellipse_points, hexagon_points, line_points_styled, parallelogram_points, rect_points,
@@ -73,6 +73,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     };
 
     render_canvas(frame, app, canvas_area);
+    render_active_layer_indicator(frame, app, canvas_area);
     render_status_bar(frame, app, chunks[1]);
     render_help_bar(frame, app, chunks[2]);
 
@@ -85,10 +86,16 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             render_label_input(frame, app, *shape_id, text, canvas_area);
         }
         Mode::FileSave { path } => {
-            render_file_input(frame, "Save as:", path, canvas_area);
+            render_file_input(frame, "Export ASCII to:", path, canvas_area);
         }
         Mode::FileOpen { path } => {
-            render_file_input(frame, "Open file:", path, canvas_area);
+            render_file_input(frame, "Import ASCII from:", path, canvas_area);
+        }
+        Mode::DocSave { path } => {
+            render_file_input(frame, "Save document to:", path, canvas_area);
+        }
+        Mode::DocOpen { path } => {
+            render_file_input(frame, "Open document:", path, canvas_area);
         }
         Mode::SvgExport { path } => {
             render_file_input(frame, "Export SVG:", path, canvas_area);
@@ -99,6 +106,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Mode::SelectionPopup { kind, selected } => {
             render_selection_popup(frame, *kind, *selected, canvas_area);
         }
+        Mode::ConfirmDialog { action } => {
+            render_confirm_dialog(frame, action, canvas_area);
+        }
+        Mode::HelpScreen { scroll } => {
+            render_help_screen(frame, *scroll, frame.area());
+        }
         Mode::Normal => {}
         Mode::LayerRename { .. } => {} // Handled in layer panel
     }
@@ -108,6 +121,60 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 fn render_canvas(frame: &mut Frame, app: &App, area: Rect) {
     let canvas_widget = CanvasWidget { app };
     frame.render_widget(canvas_widget, area);
+}
+
+/// Render active layer indicator in the top-right of the canvas
+fn render_active_layer_indicator(frame: &mut Frame, app: &App, area: Rect) {
+    // Only show when not in layer panel view (would be redundant)
+    if app.show_layers {
+        return;
+    }
+
+    if let Some(layer_id) = app.active_layer {
+        if let Ok(Some(layer)) = app.doc.read_layer(layer_id) {
+            // Build indicator text
+            let mut text = layer.name.clone();
+            if text.len() > 12 {
+                text = text.chars().take(10).collect::<String>() + "..";
+            }
+
+            // Add status icons
+            let mut icons = String::new();
+            if !layer.visible {
+                icons.push_str(" [H]");
+            }
+            if layer.locked {
+                icons.push_str(" [L]");
+            }
+
+            let full_text = format!(" {} {}", text, icons);
+            let text_len = full_text.len() as u16;
+
+            // Position in top-right corner
+            if area.width > text_len + 2 && area.height > 0 {
+                let x = area.x + area.width - text_len - 1;
+                let y = area.y;
+
+                // Choose color based on layer state
+                let (fg, bg) = if layer.locked {
+                    (Color::Black, Color::Yellow)
+                } else if !layer.visible {
+                    (Color::White, Color::DarkGray)
+                } else {
+                    (Color::Black, Color::Cyan)
+                };
+
+                let style = Style::default().fg(fg).bg(bg);
+
+                for (i, ch) in full_text.chars().enumerate() {
+                    let px = x + i as u16;
+                    if px < area.x + area.width {
+                        frame.buffer_mut()[(px, y)].set_char(ch).set_style(style);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Custom widget for rendering the canvas
@@ -848,8 +915,10 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             _ => ("DRAW", Color::Yellow),
         },
         Mode::TextInput { .. } | Mode::LabelInput { .. } | Mode::LayerRename { .. } => ("INS", Color::Green),
-        Mode::FileSave { .. } | Mode::FileOpen { .. } | Mode::SvgExport { .. } => ("CMD", Color::Magenta),
+        Mode::FileSave { .. } | Mode::FileOpen { .. } | Mode::DocSave { .. } | Mode::DocOpen { .. } | Mode::SvgExport { .. } => ("CMD", Color::Magenta),
         Mode::RecentFiles { .. } | Mode::SelectionPopup { .. } => ("MENU", Color::Cyan),
+        Mode::ConfirmDialog { .. } => ("CONF", Color::Yellow),
+        Mode::HelpScreen { .. } => ("HELP", Color::Cyan),
     };
 
     let mode_style = Style::default()
@@ -891,11 +960,13 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         String::new()
     };
 
-    let status_text = app
-        .status_message
-        .as_ref()
-        .map(|m| format!(" {}", m))
-        .unwrap_or_default();
+    // Format status message with appropriate styling
+    let (status_text, status_color) = match &app.status_message {
+        Some((msg, MessageSeverity::Info)) => (format!(" {}", msg), Color::White),
+        Some((msg, MessageSeverity::Warning)) => (format!(" ⚠ {}", msg), Color::Yellow),
+        Some((msg, MessageSeverity::Error)) => (format!(" ✗ {}", msg), Color::Red),
+        None => (String::new(), Color::White),
+    };
 
     // Tool info (only show if not in Select mode)
     let tool_info = if app.current_tool != Tool::Select {
@@ -908,9 +979,10 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(format!(" {} ", mode_name), mode_style),
         Span::styled(tool_info, tool_style),
         Span::raw(format!(
-            " {}{}{}{}{}",
-            file_name, dirty_marker, char_info, peer_info, status_text
+            " {}{}{}{}",
+            file_name, dirty_marker, char_info, peer_info
         )),
+        Span::styled(status_text, Style::default().fg(status_color)),
     ];
 
     let paragraph = Paragraph::new(Line::from(spans))
@@ -922,18 +994,44 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 /// Render the help bar
 fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
     let help_text = match &app.mode {
-        Mode::Normal => match app.current_tool {
-            Tool::Select => {
-                "[Space] tools [c] brush [C] color | [d]el [y]ank [p]aste [u]ndo U:redo | [q]uit"
-            }
-            Tool::Freehand => {
-                "[Space] tools [c] brush [C] color | drag to draw | [s] select [Esc] cancel"
-            }
-            Tool::Text => {
-                "[Space] tools [C] color | click to place text | [s] select [Esc] cancel"
-            }
-            _ => {
-                "[Space] tools [v] style [C] color | drag to draw | [s] select [Esc] cancel"
+        Mode::Normal => {
+            // Build context-sensitive help
+            let base_help = match app.current_tool {
+                Tool::Select => {
+                    if app.selected.len() >= 2 {
+                        // Multi-select: show group shortcuts
+                        "[Shift+G] group [y]ank [Del] delete | [?] help"
+                    } else if app.selected.len() == 1 {
+                        // Single select: show shape operations
+                        "[Enter] edit label [y]ank [Del] delete | []/{}:z-order [?] help"
+                    } else {
+                        // No selection
+                        "[Space] tools [C] color | click to select | [?] help"
+                    }
+                }
+                Tool::Freehand => {
+                    "[Space] tools [c] brush [C] color | drag to draw | [?] help"
+                }
+                Tool::Text => {
+                    "[Space] tools [C] color | click to place text | [?] help"
+                }
+                Tool::Line | Tool::Arrow => {
+                    "[Space] tools [v] line style [C] color | drag to draw | [?] help"
+                }
+                _ => {
+                    "[Space] tools [C] color | drag to draw | [?] help"
+                }
+            };
+
+            // Add layer hint if panel is visible
+            if app.show_layers {
+                if app.active_layer.is_some() {
+                    "[F2] rename layer [Ctrl+D] delete | [Alt+1-9] switch layer"
+                } else {
+                    base_help
+                }
+            } else {
+                base_help
             }
         }
         Mode::TextInput { .. } | Mode::LabelInput { .. } => {
@@ -942,14 +1040,20 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
         Mode::LayerRename { .. } => {
             "type layer name | [Enter] confirm [Esc] cancel"
         }
-        Mode::FileSave { .. } | Mode::FileOpen { .. } | Mode::SvgExport { .. } => {
-            "type path | [Enter] confirm [Esc] cancel"
+        Mode::FileSave { .. } | Mode::FileOpen { .. } | Mode::DocSave { .. } | Mode::DocOpen { .. } | Mode::SvgExport { .. } => {
+            "type path | [Tab] complete [Enter] confirm [Esc] cancel"
         }
         Mode::RecentFiles { .. } => {
             "[j/k] navigate [Enter] open [Esc] cancel"
         }
         Mode::SelectionPopup { .. } => {
             "[hjkl] navigate | release key or [Enter] to select | [Esc] cancel"
+        }
+        Mode::ConfirmDialog { .. } => {
+            "[y] Yes [n] No | [Enter] confirm [Esc] cancel"
+        }
+        Mode::HelpScreen { .. } => {
+            "[j/k] scroll [Space] page down [Esc/q/?] close"
         }
     };
 
@@ -1115,20 +1219,20 @@ fn render_recent_files_menu(frame: &mut Frame, app: &App, selected: usize, area:
 
 /// Render selection popup for tools, colors, or brushes
 fn render_selection_popup(frame: &mut Frame, kind: PopupKind, selected: usize, area: Rect) {
-    let (title, cols, items): (&str, usize, Vec<(String, Option<Color>)>) = match kind {
+    let (title, cols, items, hint): (&str, usize, Vec<(String, Option<Color>)>, &str) = match kind {
         PopupKind::Tool => {
             let items: Vec<_> = TOOLS.iter().map(|t| (t.name().to_string(), None)).collect();
-            (" Select Tool ", 3, items)
+            (" Select Tool ", 3, items, "hjkl: move, release key: select")
         }
         PopupKind::Color => {
             let items: Vec<_> = COLORS.iter().map(|c| {
                 (c.name().to_string(), Some(c.to_ratatui()))
             }).collect();
-            (" Select Color ", 4, items)
+            (" Select Color ", 4, items, "hjkl: move, release key: select")
         }
         PopupKind::Brush => {
             let items: Vec<_> = BRUSHES.iter().map(|&ch| (ch.to_string(), None)).collect();
-            (" Select Brush ", 6, items)
+            (" Select Brush ", 6, items, "hjkl: move, release key: select")
         }
     };
 
@@ -1141,7 +1245,7 @@ fn render_selection_popup(frame: &mut Frame, kind: PopupKind, selected: usize, a
         PopupKind::Brush => 3,  // Just the character
     };
     let width = (cols as u16 * cell_width + 2).min(area.width.saturating_sub(4));
-    let height = (rows as u16 + 2).min(area.height.saturating_sub(4));
+    let height = (rows as u16 + 3).min(area.height.saturating_sub(4)); // +3 for borders and hint
     let x = (area.width.saturating_sub(width)) / 2 + area.x;
     let y = (area.height.saturating_sub(height)) / 2 + area.y;
 
@@ -1156,9 +1260,13 @@ fn render_selection_popup(frame: &mut Frame, kind: PopupKind, selected: usize, a
         }
     }
 
-    // Draw border
+    // Draw border with hint at bottom
     let block = Block::default()
         .title(title)
+        .title_bottom(Line::from(Span::styled(
+            format!(" {} ", hint),
+            Style::default().fg(Color::DarkGray),
+        )))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
     frame.render_widget(block, popup_area);
@@ -1236,4 +1344,188 @@ fn render_selection_popup(frame: &mut Frame, kind: PopupKind, selected: usize, a
             }
         }
     }
+}
+
+/// Render confirmation dialog overlay
+fn render_confirm_dialog(frame: &mut Frame, action: &PendingAction, area: Rect) {
+    let title = action.title();
+    let message = action.message();
+
+    let width = 50.min(area.width.saturating_sub(4));
+    let height = 5;
+    let x = (area.width.saturating_sub(width)) / 2 + area.x;
+    let y = (area.height.saturating_sub(height)) / 2 + area.y;
+
+    let popup_area = Rect::new(x, y, width, height);
+
+    // Clear the popup area
+    for py in popup_area.y..popup_area.y + popup_area.height {
+        for px in popup_area.x..popup_area.x + popup_area.width {
+            frame.buffer_mut()[(px, py)]
+                .set_char(' ')
+                .set_style(Style::default().bg(Color::Black));
+        }
+    }
+
+    let block = Block::default()
+        .title(format!(" {} ", title))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+
+    // Build dialog content
+    let content = vec![
+        Line::from(Span::styled(message, Style::default().fg(Color::White))),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("[y]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::raw(" Yes  "),
+            Span::styled("[n]", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::raw(" No"),
+        ]),
+    ];
+
+    let paragraph = Paragraph::new(content)
+        .block(block)
+        .style(Style::default().bg(Color::Black))
+        .alignment(ratatui::layout::Alignment::Center);
+
+    frame.render_widget(paragraph, popup_area);
+}
+
+/// Render the help screen overlay
+fn render_help_screen(frame: &mut Frame, scroll: usize, area: Rect) {
+    // Help content with all keyboard shortcuts
+    let help_sections = vec![
+        ("GENERAL", vec![
+            ("q", "Quit"),
+            ("Ctrl+c", "Quit"),
+            ("Esc", "Cancel/deselect"),
+            ("?/F1", "Toggle help screen"),
+            ("u", "Undo"),
+            ("U", "Redo"),
+        ]),
+        ("TOOLS", vec![
+            ("Space", "Open tool popup"),
+            ("s", "Select tool"),
+            ("f", "Freehand draw"),
+            ("t", "Text tool"),
+            ("l", "Line tool"),
+            ("a", "Arrow tool"),
+            ("r", "Rectangle tool"),
+            ("b", "Double box tool"),
+            ("d", "Diamond tool"),
+            ("e", "Ellipse tool"),
+        ]),
+        ("DRAWING", vec![
+            ("c", "Open brush popup"),
+            ("C", "Open color popup"),
+            ("v", "Cycle line style"),
+            ("g", "Toggle grid snap"),
+        ]),
+        ("SELECTION", vec![
+            ("Click", "Select shape"),
+            ("Shift+Click", "Toggle selection"),
+            ("Drag", "Marquee select"),
+            ("y", "Yank (copy)"),
+            ("p", "Paste"),
+            ("Del/Backspace", "Delete selected"),
+            ("Enter", "Edit label"),
+        ]),
+        ("Z-ORDER", vec![
+            ("]", "Bring forward"),
+            ("[", "Send backward"),
+            ("}", "Bring to front"),
+            ("{", "Send to back"),
+        ]),
+        ("GROUPING", vec![
+            ("Shift+G", "Group selected"),
+            ("Ctrl+Shift+G", "Ungroup selected"),
+        ]),
+        ("LAYERS", vec![
+            ("L", "Toggle layer panel"),
+            ("Ctrl+n", "New layer"),
+            ("Ctrl+D", "Delete layer (confirm)"),
+            ("F2", "Rename layer"),
+            ("Alt+1-9", "Select layer 1-9"),
+            ("Ctrl+m", "Move selection to layer"),
+            ("Ctrl+h", "Toggle layer visibility"),
+        ]),
+        ("FILES", vec![
+            ("Ctrl+s", "Export ASCII (.txt)"),
+            ("Ctrl+o", "Import ASCII"),
+            ("Ctrl+Shift+S", "Save document (.automerge)"),
+            ("Ctrl+Shift+O", "Open document"),
+            ("E", "Export SVG"),
+            ("N", "New document (confirm)"),
+            ("R", "Recent files"),
+        ]),
+        ("COLLABORATION", vec![
+            ("T", "Copy sync ticket"),
+            ("P", "Toggle participants"),
+        ]),
+        ("NAVIGATION", vec![
+            ("Arrow keys", "Pan viewport"),
+        ]),
+    ];
+
+    // Build help lines
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "═══ KEYBOARD SHORTCUTS ═══",
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+
+    for (section_name, shortcuts) in &help_sections {
+        lines.push(Line::from(Span::styled(
+            format!("─── {} ───", section_name),
+            Style::default().fg(Color::Yellow),
+        )));
+        for (key, desc) in shortcuts {
+            lines.push(Line::from(vec![
+                Span::styled(format!("{:>14}", key), Style::default().fg(Color::Green)),
+                Span::raw("  "),
+                Span::raw(*desc),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
+
+    // Calculate visible area
+    let visible_height = area.height.saturating_sub(4) as usize;
+    let max_scroll = lines.len().saturating_sub(visible_height);
+    let actual_scroll = scroll.min(max_scroll);
+
+    // Clear the screen area
+    for py in area.y..area.y + area.height {
+        for px in area.x..area.x + area.width {
+            frame.buffer_mut()[(px, py)]
+                .set_char(' ')
+                .set_style(Style::default().bg(Color::Black));
+        }
+    }
+
+    let block = Block::default()
+        .title(" Help (press Esc to close) ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    // Show scroll indicator
+    let scroll_info = if max_scroll > 0 {
+        format!(" [{}/{}] ", actual_scroll + 1, max_scroll + 1)
+    } else {
+        String::new()
+    };
+
+    let visible_lines: Vec<Line> = lines
+        .into_iter()
+        .skip(actual_scroll)
+        .take(visible_height)
+        .collect();
+
+    let paragraph = Paragraph::new(visible_lines)
+        .block(block.title_bottom(scroll_info))
+        .style(Style::default().bg(Color::Black).fg(Color::White));
+
+    frame.render_widget(paragraph, area);
 }

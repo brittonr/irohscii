@@ -125,9 +125,13 @@ pub enum Mode {
     LayerRename { layer_id: LayerId, text: String },
     FileSave { path: String },
     FileOpen { path: String },
+    DocSave { path: String },
+    DocOpen { path: String },
     SvgExport { path: String },
     RecentFiles { selected: usize },
     SelectionPopup { kind: PopupKind, selected: usize },
+    ConfirmDialog { action: PendingAction },
+    HelpScreen { scroll: usize },
 }
 
 /// Kind of popup selection window
@@ -136,6 +140,49 @@ pub enum PopupKind {
     Tool,
     Color,
     Brush,
+}
+
+/// Pending action awaiting user confirmation
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingAction {
+    DeleteLayer(LayerId),
+    NewDocument,
+}
+
+impl PendingAction {
+    /// Get the confirmation dialog title
+    pub fn title(&self) -> &'static str {
+        match self {
+            PendingAction::DeleteLayer(_) => "Delete Layer",
+            PendingAction::NewDocument => "New Document",
+        }
+    }
+
+    /// Get the confirmation dialog message
+    pub fn message(&self) -> &'static str {
+        match self {
+            PendingAction::DeleteLayer(_) => "Delete this layer and all its shapes?",
+            PendingAction::NewDocument => "Discard unsaved changes and start new document?",
+        }
+    }
+}
+
+/// Severity level for status messages
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageSeverity {
+    /// Normal info message - clears on next action
+    Info,
+    /// Warning message - persists until dismissed
+    Warning,
+    /// Error message - persists until dismissed
+    Error,
+}
+
+impl MessageSeverity {
+    /// Whether this message should persist (not auto-clear)
+    pub fn is_persistent(&self) -> bool {
+        matches!(self, MessageSeverity::Warning | MessageSeverity::Error)
+    }
 }
 
 /// State for shape drawing (line, rectangle)
@@ -222,7 +269,8 @@ pub struct App {
     pub freehand_state: Option<FreehandState>,
     /// State for marquee selection
     pub marquee_state: Option<MarqueeState>,
-    pub status_message: Option<String>,
+    /// Status message with severity level
+    pub status_message: Option<(String, MessageSeverity)>,
     pub hover_snap: Option<SnapPoint>,
     pub hover_grid_snap: Option<Position>,
     /// Clipboard for copy/paste (supports multiple shapes)
@@ -424,13 +472,32 @@ impl App {
         }
     }
 
-    /// Set a status message to display
+    /// Set a status message to display (Info severity - clears on next action)
     pub fn set_status(&mut self, msg: impl Into<String>) {
-        self.status_message = Some(msg.into());
+        self.status_message = Some((msg.into(), MessageSeverity::Info));
     }
 
-    /// Clear the status message
+    /// Set a warning message (persists until dismissed)
+    pub fn set_warning(&mut self, msg: impl Into<String>) {
+        self.status_message = Some((msg.into(), MessageSeverity::Warning));
+    }
+
+    /// Set an error message (persists until dismissed)
+    pub fn set_error(&mut self, msg: impl Into<String>) {
+        self.status_message = Some((msg.into(), MessageSeverity::Error));
+    }
+
+    /// Clear the status message (only if it's an Info message)
     pub fn clear_status(&mut self) {
+        if let Some((_, severity)) = &self.status_message {
+            if !severity.is_persistent() {
+                self.status_message = None;
+            }
+        }
+    }
+
+    /// Dismiss any status message (including persistent ones)
+    pub fn dismiss_status(&mut self) {
         self.status_message = None;
     }
 
@@ -493,7 +560,16 @@ impl App {
     }
 
     /// Add a shape and assign it to the active layer
+    /// Returns None if the active layer is locked
     fn add_shape_to_active_layer(&mut self, kind: ShapeKind) -> anyhow::Result<ShapeId> {
+        // Check if active layer is locked - prevent creation
+        if self.check_active_layer_locked() {
+            return Err(anyhow::anyhow!("Layer is locked"));
+        }
+
+        // Warn if active layer is hidden (but still allow creation)
+        self.check_active_layer_hidden();
+
         let id = self.doc.add_shape(kind)?;
         if let Some(layer_id) = self.active_layer {
             let _ = self.doc.set_shape_layer(id, layer_id);
@@ -872,6 +948,14 @@ impl App {
             }
         }
 
+        // Check if shape is on a locked layer and warn
+        if let Some((layer_name, _visible, locked)) = self.get_shape_layer_info(id) {
+            if locked {
+                self.set_warning(format!("Shape on locked layer '{}' (read-only)", layer_name));
+                return;
+            }
+        }
+
         let count = self.selected.len();
         if count == 1 {
             self.set_status("Selected shape - drag to move, [Del] to delete");
@@ -1197,6 +1281,42 @@ impl App {
         false
     }
 
+    /// Check if the active layer is hidden and show warning if so
+    pub fn check_active_layer_hidden(&mut self) -> bool {
+        if let Some(layer_id) = self.active_layer {
+            if let Ok(Some(layer)) = self.doc.read_layer(layer_id) {
+                if !layer.visible {
+                    self.set_warning(format!("Active layer '{}' is hidden", layer.name));
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if the active layer is locked and show error if so
+    pub fn check_active_layer_locked(&mut self) -> bool {
+        if let Some(layer_id) = self.active_layer {
+            if let Ok(Some(layer)) = self.doc.read_layer(layer_id) {
+                if layer.locked {
+                    self.set_error(format!("Cannot draw on locked layer '{}'", layer.name));
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Get info about the layer a shape is on (for warnings)
+    pub fn get_shape_layer_info(&self, id: ShapeId) -> Option<(String, bool, bool)> {
+        if let Ok(Some(layer_id)) = self.doc.get_shape_layer(id) {
+            if let Ok(Some(layer)) = self.doc.read_layer(layer_id) {
+                return Some((layer.name.clone(), layer.visible, layer.locked));
+            }
+        }
+        None
+    }
+
     /// Toggle layer panel visibility
     pub fn toggle_layer_panel(&mut self) {
         self.show_layers = !self.show_layers;
@@ -1302,13 +1422,22 @@ impl App {
 
     /// Start dragging the selected shapes
     pub fn start_drag(&mut self, pos: Position) {
-        if !self.selected.is_empty() {
-            self.save_undo_state();
-            self.drag_state = Some(DragState {
-                shape_id: ShapeId::default(), // Not used for multi-select
-                last_mouse: pos,
-            });
+        if self.selected.is_empty() {
+            return;
         }
+
+        // Check if any selected shapes are on locked layers
+        let all_locked = self.selected.iter().all(|&id| self.is_shape_locked(id));
+        if all_locked {
+            self.set_error("Cannot move - shapes are on locked layers");
+            return;
+        }
+
+        self.save_undo_state();
+        self.drag_state = Some(DragState {
+            shape_id: ShapeId::default(), // Not used for multi-select
+            last_mouse: pos,
+        });
     }
 
     /// Find shape-to-shape snap adjustments during drag
@@ -1487,6 +1616,13 @@ impl App {
             return false;
         }
         let id = *self.selected.iter().next().unwrap();
+
+        // Check if shape is on a locked layer
+        if self.is_shape_locked(id) {
+            self.set_error("Cannot resize - shape is on a locked layer");
+            return false;
+        }
+
         if let Some(handle) = self.shape_view.find_resize_handle(id, pos, SNAP_THRESHOLD) {
             self.save_undo_state();
             self.resize_state = Some(ResizeState { shape_id: id, handle });
@@ -1523,19 +1659,37 @@ impl App {
         if self.selected.is_empty() {
             return;
         }
+
+        // Check if any selected shapes are on locked layers
+        let locked_count = self.selected.iter()
+            .filter(|&&id| self.is_shape_locked(id))
+            .count();
+
+        if locked_count > 0 {
+            if locked_count == self.selected.len() {
+                self.set_error("Cannot delete - all selected shapes are on locked layers");
+                return;
+            } else {
+                self.set_warning(format!("{} shape(s) on locked layers will be skipped", locked_count));
+            }
+        }
+
         self.save_undo_state();
-        let ids: Vec<_> = self.selected.iter().copied().collect();
+        let ids: Vec<_> = self.selected.iter()
+            .copied()
+            .filter(|&id| !self.is_shape_locked(id))
+            .collect();
+        let delete_count = ids.len();
         for id in ids {
             let _ = self.doc.delete_shape(id);
         }
-        let count = self.selected.len();
         self.selected.clear();
         self.rebuild_view();
         self.doc.mark_dirty();
         self.set_status(format!(
             "Deleted {} shape{}",
-            count,
-            if count == 1 { "" } else { "s" }
+            delete_count,
+            if delete_count == 1 { "" } else { "s" }
         ));
     }
 
@@ -1592,10 +1746,31 @@ impl App {
         self.mode = Mode::SvgExport { path: initial_path };
     }
 
+    /// Enter document save mode (saves full .automerge document)
+    pub fn start_doc_save(&mut self) {
+        let initial_path = self
+            .doc
+            .storage_path()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "document.automerge".to_string());
+        self.mode = Mode::DocSave { path: initial_path };
+    }
+
+    /// Enter document open mode (opens .automerge document)
+    pub fn start_doc_open(&mut self) {
+        self.mode = Mode::DocOpen {
+            path: String::new(),
+        };
+    }
+
     /// Add character to current path input
     pub fn add_path_char(&mut self, ch: char) {
         match &mut self.mode {
-            Mode::FileSave { path } | Mode::FileOpen { path } | Mode::SvgExport { path } => {
+            Mode::FileSave { path }
+            | Mode::FileOpen { path }
+            | Mode::DocSave { path }
+            | Mode::DocOpen { path }
+            | Mode::SvgExport { path } => {
                 path.push(ch);
             }
             _ => {}
@@ -1605,8 +1780,110 @@ impl App {
     /// Remove last character from path input
     pub fn backspace_path(&mut self) {
         match &mut self.mode {
-            Mode::FileSave { path } | Mode::FileOpen { path } | Mode::SvgExport { path } => {
+            Mode::FileSave { path }
+            | Mode::FileOpen { path }
+            | Mode::DocSave { path }
+            | Mode::DocOpen { path }
+            | Mode::SvgExport { path } => {
                 path.pop();
+            }
+            _ => {}
+        }
+    }
+
+    /// Tab completion for file paths
+    pub fn complete_path(&mut self) {
+        let current_path = match &self.mode {
+            Mode::FileSave { path }
+            | Mode::FileOpen { path }
+            | Mode::DocSave { path }
+            | Mode::DocOpen { path }
+            | Mode::SvgExport { path } => path.clone(),
+            _ => return,
+        };
+
+        // Parse the current path
+        let path = std::path::Path::new(&current_path);
+
+        // Get the directory and prefix to complete
+        let (dir, prefix) = if current_path.ends_with('/') || current_path.ends_with(std::path::MAIN_SEPARATOR) {
+            (std::path::PathBuf::from(&current_path), String::new())
+        } else if let Some(parent) = path.parent() {
+            let parent_path = if parent.as_os_str().is_empty() {
+                std::path::PathBuf::from(".")
+            } else {
+                parent.to_path_buf()
+            };
+            let file_name = path.file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            (parent_path, file_name)
+        } else {
+            (std::path::PathBuf::from("."), current_path.clone())
+        };
+
+        // List directory and find matches
+        let matches: Vec<String> = match std::fs::read_dir(&dir) {
+            Ok(entries) => {
+                entries
+                    .filter_map(|e| e.ok())
+                    .filter_map(|e| {
+                        let name = e.file_name().to_string_lossy().to_string();
+                        if name.to_lowercase().starts_with(&prefix.to_lowercase()) {
+                            let full_path = if dir == std::path::PathBuf::from(".") {
+                                name.clone()
+                            } else {
+                                dir.join(&name).to_string_lossy().to_string()
+                            };
+                            // Add trailing slash for directories
+                            if e.path().is_dir() {
+                                Some(full_path + "/")
+                            } else {
+                                Some(full_path)
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            }
+            Err(_) => return,
+        };
+
+        // If exactly one match, use it
+        // If multiple matches, find common prefix
+        if matches.is_empty() {
+            self.set_status("No matches");
+            return;
+        }
+
+        let new_path = if matches.len() == 1 {
+            matches[0].clone()
+        } else {
+            // Find longest common prefix
+            let first = &matches[0];
+            let common_len = matches.iter()
+                .skip(1)
+                .fold(first.len(), |len, s| {
+                    first.chars()
+                        .zip(s.chars())
+                        .take(len)
+                        .take_while(|(a, b)| a == b)
+                        .count()
+                });
+            let common: String = first.chars().take(common_len).collect();
+            self.set_status(format!("{} matches", matches.len()));
+            common
+        };
+
+        // Update the path in the current mode
+        match &mut self.mode {
+            Mode::FileSave { path }
+            | Mode::FileOpen { path }
+            | Mode::DocSave { path }
+            | Mode::DocOpen { path }
+            | Mode::SvgExport { path } => {
+                *path = new_path;
             }
             _ => {}
         }
@@ -1822,6 +2099,80 @@ impl App {
             let new_row = (row as i32 + dy).clamp(0, rows as i32 - 1) as usize;
             let new_selected = new_row * cols + new_col;
             *selected = new_selected.min(total - 1);
+        }
+    }
+
+    // ========== Confirmation Dialog Methods ==========
+
+    /// Request to delete the active layer (shows confirmation dialog)
+    pub fn request_delete_layer(&mut self) {
+        if let Some(layer_id) = self.active_layer {
+            self.mode = Mode::ConfirmDialog {
+                action: PendingAction::DeleteLayer(layer_id),
+            };
+        }
+    }
+
+    /// Request a new document (shows confirmation if dirty)
+    pub fn request_new_document(&mut self) {
+        if self.is_dirty() {
+            self.mode = Mode::ConfirmDialog {
+                action: PendingAction::NewDocument,
+            };
+        } else {
+            // Not dirty, just create new document directly
+            self.new_document();
+        }
+    }
+
+    /// Confirm and execute the pending action
+    pub fn confirm_pending_action(&mut self) {
+        let action = if let Mode::ConfirmDialog { action } = &self.mode {
+            action.clone()
+        } else {
+            return;
+        };
+
+        self.mode = Mode::Normal;
+
+        match action {
+            PendingAction::DeleteLayer(layer_id) => {
+                // Set active layer to the one being deleted (in case it changed)
+                self.active_layer = Some(layer_id);
+                self.delete_active_layer();
+            }
+            PendingAction::NewDocument => {
+                self.new_document();
+            }
+        }
+    }
+
+    /// Cancel the pending action
+    pub fn cancel_pending_action(&mut self) {
+        self.mode = Mode::Normal;
+        self.set_status("Cancelled");
+    }
+
+    // ========== Help Screen Methods ==========
+
+    /// Open the help screen
+    pub fn open_help(&mut self) {
+        self.mode = Mode::HelpScreen { scroll: 0 };
+    }
+
+    /// Close the help screen
+    pub fn close_help(&mut self) {
+        self.mode = Mode::Normal;
+    }
+
+    /// Scroll the help screen
+    pub fn scroll_help(&mut self, delta: i32) {
+        if let Mode::HelpScreen { ref mut scroll } = self.mode {
+            if delta < 0 {
+                *scroll = scroll.saturating_sub((-delta) as usize);
+            } else {
+                *scroll = scroll.saturating_add(delta as usize);
+            }
         }
     }
 }
