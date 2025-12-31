@@ -2,6 +2,7 @@ mod app;
 mod canvas;
 mod document;
 mod file_io;
+mod layers;
 mod presence;
 mod recent_files;
 mod shapes;
@@ -407,6 +408,32 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
         // Copy/Paste (Helix keymaps)
         KeyCode::Char('y') => app.yank(),
         KeyCode::Char('p') => app.paste(),
+
+        // Z-order control
+        KeyCode::Char(']') => app.bring_forward(),
+        KeyCode::Char('[') => app.send_backward(),
+        KeyCode::Char('}') => app.bring_to_front(),
+        KeyCode::Char('{') => app.send_to_back(),
+
+        // Grouping (Shift+G to group, Ctrl+Shift+G to ungroup)
+        KeyCode::Char('G') if !key.modifiers.contains(KeyModifiers::CONTROL) => app.group_selection(),
+        KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => app.group_selection(),
+        KeyCode::Char('G') if key.modifiers.contains(KeyModifiers::CONTROL) => app.ungroup_selection(),
+
+        // Layer shortcuts
+        KeyCode::Char('L') => app.toggle_layer_panel(),
+        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => app.create_layer(),
+        KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(1),
+        KeyCode::Char('2') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(2),
+        KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(3),
+        KeyCode::Char('4') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(4),
+        KeyCode::Char('5') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(5),
+        KeyCode::Char('6') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(6),
+        KeyCode::Char('7') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(7),
+        KeyCode::Char('8') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(8),
+        KeyCode::Char('9') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(9),
+        KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => app.move_selection_to_active_layer(),
+        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => app.toggle_active_layer_visibility(),
 
         // Delete selected shape
         KeyCode::Delete | KeyCode::Backspace => {

@@ -2,7 +2,8 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::canvas::{LineStyle, Position, Viewport};
-use crate::document::{default_storage_path, Document, ShapeId};
+use crate::document::{default_storage_path, Document, Group, GroupId, ShapeId};
+use crate::layers::{Layer, LayerId};
 use crate::presence::{CursorActivity, PeerId, PeerPresence, PresenceManager, ToolKind};
 use crate::shapes::{resize_shape, ResizeHandle, ShapeColor, ShapeKind, ShapeView, SnapPoint};
 use crate::recent_files::RecentFiles;
@@ -221,6 +222,10 @@ pub struct App {
     pub grid_enabled: bool,
     /// Recent files manager
     pub recent_files: RecentFiles,
+    /// Active layer for new shapes
+    pub active_layer: Option<LayerId>,
+    /// Whether to show the layer panel
+    pub show_layers: bool,
 }
 
 impl App {
@@ -254,6 +259,15 @@ impl App {
             show_participants: false,
             grid_enabled: false,
             recent_files: RecentFiles::load(),
+            active_layer: None,
+            show_layers: false,
+        }
+    }
+
+    /// Initialize active layer from document (call after document is loaded)
+    pub fn init_active_layer(&mut self) {
+        if let Ok(layer_id) = self.doc.get_default_layer() {
+            self.active_layer = Some(layer_id);
         }
     }
 
@@ -810,10 +824,26 @@ impl App {
     // ========== Selection Methods ==========
 
     /// Select a single shape (replaces current selection)
+    /// If the shape is part of a group, selects all shapes in the group
     pub fn select_single(&mut self, id: ShapeId) {
         self.selected.clear();
         self.selected.insert(id);
-        self.set_status("Selected shape - drag to move, [Del] to delete");
+
+        // Expand selection to include all shapes in the same group
+        if let Ok(Some(group_id)) = self.doc.get_shape_group(id) {
+            if let Ok(all_shapes) = self.doc.get_all_group_shapes(group_id) {
+                for shape_id in all_shapes {
+                    self.selected.insert(shape_id);
+                }
+            }
+        }
+
+        let count = self.selected.len();
+        if count == 1 {
+            self.set_status("Selected shape - drag to move, [Del] to delete");
+        } else {
+            self.set_status(format!("Selected group ({} shapes) - drag to move, [Del] to delete", count));
+        }
     }
 
     /// Toggle shape in selection (for Shift+click)
@@ -856,6 +886,292 @@ impl App {
             self.clear_selection();
             false
         }
+    }
+
+    // ========== Z-Order Methods ==========
+
+    /// Bring selected shapes to front (top of z-order)
+    pub fn bring_to_front(&mut self) {
+        if self.selected.is_empty() {
+            return;
+        }
+        self.save_undo_state();
+        let ids: Vec<ShapeId> = self.selected.iter().copied().collect();
+        if let Err(e) = self.doc.bring_to_front(&ids) {
+            self.set_status(format!("Error: {}", e));
+            return;
+        }
+        self.rebuild_view();
+        self.set_status("Brought to front");
+    }
+
+    /// Send selected shapes to back (bottom of z-order)
+    pub fn send_to_back(&mut self) {
+        if self.selected.is_empty() {
+            return;
+        }
+        self.save_undo_state();
+        let ids: Vec<ShapeId> = self.selected.iter().copied().collect();
+        if let Err(e) = self.doc.send_to_back(&ids) {
+            self.set_status(format!("Error: {}", e));
+            return;
+        }
+        self.rebuild_view();
+        self.set_status("Sent to back");
+    }
+
+    /// Bring selected shapes forward one level
+    pub fn bring_forward(&mut self) {
+        if self.selected.is_empty() {
+            return;
+        }
+        self.save_undo_state();
+        let ids: Vec<ShapeId> = self.selected.iter().copied().collect();
+        if let Err(e) = self.doc.bring_forward(&ids) {
+            self.set_status(format!("Error: {}", e));
+            return;
+        }
+        self.rebuild_view();
+        self.set_status("Brought forward");
+    }
+
+    /// Send selected shapes backward one level
+    pub fn send_backward(&mut self) {
+        if self.selected.is_empty() {
+            return;
+        }
+        self.save_undo_state();
+        let ids: Vec<ShapeId> = self.selected.iter().copied().collect();
+        if let Err(e) = self.doc.send_backward(&ids) {
+            self.set_status(format!("Error: {}", e));
+            return;
+        }
+        self.rebuild_view();
+        self.set_status("Sent backward");
+    }
+
+    // ========== Group Methods ==========
+
+    /// Group the currently selected shapes
+    pub fn group_selection(&mut self) {
+        if self.selected.len() < 2 {
+            self.set_status("Select at least 2 shapes to group");
+            return;
+        }
+
+        self.save_undo_state();
+        let members: Vec<ShapeId> = self.selected.iter().copied().collect();
+
+        match self.doc.create_group(&members, None) {
+            Ok(_group_id) => {
+                self.rebuild_view();
+                self.set_status(format!("Created group with {} shapes", members.len()));
+            }
+            Err(e) => {
+                self.set_status(format!("Error creating group: {}", e));
+            }
+        }
+    }
+
+    /// Ungroup the groups containing selected shapes
+    pub fn ungroup_selection(&mut self) {
+        if self.selected.is_empty() {
+            return;
+        }
+
+        self.save_undo_state();
+
+        // Find all groups that contain selected shapes
+        let mut groups_to_delete = HashSet::new();
+        for shape_id in &self.selected {
+            if let Ok(Some(group_id)) = self.doc.get_shape_group(*shape_id) {
+                groups_to_delete.insert(group_id);
+            }
+        }
+
+        if groups_to_delete.is_empty() {
+            self.set_status("No groups to ungroup");
+            return;
+        }
+
+        let count = groups_to_delete.len();
+        for group_id in groups_to_delete {
+            if let Err(e) = self.doc.delete_group(group_id) {
+                self.set_status(format!("Error ungrouping: {}", e));
+                return;
+            }
+        }
+
+        self.rebuild_view();
+        self.set_status(format!("Ungrouped {} group{}", count, if count == 1 { "" } else { "s" }));
+    }
+
+    /// Expand selection to include all shapes in the same groups
+    pub fn expand_selection_to_groups(&mut self) {
+        let mut expanded = self.selected.clone();
+
+        for shape_id in self.selected.iter() {
+            if let Ok(Some(group_id)) = self.doc.get_shape_group(*shape_id) {
+                // Get all shapes in this group (including nested)
+                if let Ok(all_shapes) = self.doc.get_all_group_shapes(group_id) {
+                    for id in all_shapes {
+                        expanded.insert(id);
+                    }
+                }
+            }
+        }
+
+        self.selected = expanded;
+    }
+
+    /// Get groups containing any of the selected shapes
+    pub fn get_selected_groups(&self) -> Vec<GroupId> {
+        let mut groups = HashSet::new();
+        for shape_id in &self.selected {
+            if let Ok(Some(group_id)) = self.doc.get_shape_group(*shape_id) {
+                groups.insert(group_id);
+            }
+        }
+        groups.into_iter().collect()
+    }
+
+    /// Check if a shape is part of any group
+    pub fn is_grouped(&self, id: ShapeId) -> bool {
+        matches!(self.doc.get_shape_group(id), Ok(Some(_)))
+    }
+
+    // ========== Layer Methods ==========
+
+    /// Get all layers
+    pub fn get_layers(&self) -> Vec<Layer> {
+        self.doc.read_all_layers().unwrap_or_default()
+    }
+
+    /// Create a new layer
+    pub fn create_layer(&mut self) {
+        let layers = self.get_layers();
+        let name = format!("Layer {}", layers.len() + 1);
+
+        self.save_undo_state();
+        match self.doc.create_layer(&name) {
+            Ok(layer_id) => {
+                self.active_layer = Some(layer_id);
+                self.rebuild_view();
+                self.set_status(format!("Created layer: {}", name));
+            }
+            Err(e) => {
+                self.set_status(format!("Error creating layer: {}", e));
+            }
+        }
+    }
+
+    /// Delete the active layer
+    pub fn delete_active_layer(&mut self) {
+        if let Some(layer_id) = self.active_layer {
+            self.save_undo_state();
+            match self.doc.delete_layer(layer_id) {
+                Ok(()) => {
+                    // Set active layer to default
+                    self.active_layer = self.doc.get_default_layer().ok();
+                    self.rebuild_view();
+                    self.set_status("Deleted layer");
+                }
+                Err(e) => {
+                    self.set_status(format!("Error: {}", e));
+                }
+            }
+        }
+    }
+
+    /// Select a layer by index (1-based for keyboard shortcuts)
+    pub fn select_layer_by_index(&mut self, index: usize) {
+        let layers = self.get_layers();
+        if index > 0 && index <= layers.len() {
+            self.active_layer = Some(layers[index - 1].id);
+            self.set_status(format!("Active layer: {}", layers[index - 1].name));
+        }
+    }
+
+    /// Toggle layer visibility
+    pub fn toggle_layer_visibility(&mut self, layer_id: LayerId) {
+        if let Ok(Some(layer)) = self.doc.read_layer(layer_id) {
+            let new_visible = !layer.visible;
+            if let Err(e) = self.doc.set_layer_visible(layer_id, new_visible) {
+                self.set_status(format!("Error: {}", e));
+                return;
+            }
+            self.shape_view.set_layer_visible(layer_id, new_visible);
+            self.set_status(format!(
+                "Layer '{}' {}",
+                layer.name,
+                if new_visible { "visible" } else { "hidden" }
+            ));
+        }
+    }
+
+    /// Toggle active layer visibility
+    pub fn toggle_active_layer_visibility(&mut self) {
+        if let Some(layer_id) = self.active_layer {
+            self.toggle_layer_visibility(layer_id);
+        }
+    }
+
+    /// Toggle layer locked state
+    pub fn toggle_layer_locked(&mut self, layer_id: LayerId) {
+        if let Ok(Some(layer)) = self.doc.read_layer(layer_id) {
+            let new_locked = !layer.locked;
+            if let Err(e) = self.doc.set_layer_locked(layer_id, new_locked) {
+                self.set_status(format!("Error: {}", e));
+                return;
+            }
+            self.set_status(format!(
+                "Layer '{}' {}",
+                layer.name,
+                if new_locked { "locked" } else { "unlocked" }
+            ));
+        }
+    }
+
+    /// Move selection to active layer
+    pub fn move_selection_to_active_layer(&mut self) {
+        if let Some(layer_id) = self.active_layer {
+            if self.selected.is_empty() {
+                self.set_status("No shapes selected");
+                return;
+            }
+
+            self.save_undo_state();
+            let count = self.selected.len();
+            for &shape_id in &self.selected {
+                if let Err(e) = self.doc.set_shape_layer(shape_id, layer_id) {
+                    self.set_status(format!("Error: {}", e));
+                    return;
+                }
+            }
+            self.rebuild_view();
+            self.set_status(format!("Moved {} shape{} to active layer", count, if count == 1 { "" } else { "s" }));
+        }
+    }
+
+    /// Check if a shape is on a locked layer
+    pub fn is_shape_locked(&self, id: ShapeId) -> bool {
+        if let Ok(Some(layer_id)) = self.doc.get_shape_layer(id) {
+            if let Ok(Some(layer)) = self.doc.read_layer(layer_id) {
+                return layer.locked;
+            }
+        }
+        false
+    }
+
+    /// Toggle layer panel visibility
+    pub fn toggle_layer_panel(&mut self) {
+        self.show_layers = !self.show_layers;
+        let status = if self.show_layers {
+            "Layer panel shown"
+        } else {
+            "Layer panel hidden"
+        };
+        self.set_status(status);
     }
 
     // ========== Marquee Selection Methods ==========

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::canvas::{LineStyle, Position};
 use crate::document::{Document, ShapeId};
+use crate::layers::LayerId;
 
 /// Color for shapes - 16-color terminal palette
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -628,6 +629,7 @@ pub struct ResizeHandleInfo {
 pub struct CachedShape {
     pub id: ShapeId,
     pub kind: ShapeKind,
+    pub layer_id: Option<LayerId>,
     bounds: (i32, i32, i32, i32),
     snap_points: Vec<Position>,
     resize_handles: Vec<ResizeHandleInfo>,
@@ -642,6 +644,22 @@ impl CachedShape {
         Self {
             id,
             kind,
+            layer_id: None,
+            bounds,
+            snap_points,
+            resize_handles,
+        }
+    }
+
+    /// Create a cached shape with a layer ID
+    pub fn with_layer(id: ShapeId, kind: ShapeKind, layer_id: Option<LayerId>) -> Self {
+        let bounds = Self::compute_bounds(&kind);
+        let snap_points = Self::compute_snap_points(&kind);
+        let resize_handles = Self::compute_resize_handles(&kind);
+        Self {
+            id,
+            kind,
+            layer_id,
             bounds,
             snap_points,
             resize_handles,
@@ -941,10 +959,12 @@ impl CachedShape {
 /// Read-only cache of shapes for rendering (rebuilds from document)
 #[derive(Debug)]
 pub struct ShapeView {
-    /// Cached shapes in render order
+    /// Cached shapes in render order (layer-first, then z-order within layer)
     shapes: Vec<CachedShape>,
     /// Fast lookup by ID
     by_id: HashMap<ShapeId, usize>,
+    /// Hidden layer IDs (for visibility toggle)
+    hidden_layers: std::collections::HashSet<LayerId>,
 }
 
 impl ShapeView {
@@ -952,26 +972,93 @@ impl ShapeView {
         Self {
             shapes: Vec::new(),
             by_id: HashMap::new(),
+            hidden_layers: std::collections::HashSet::new(),
         }
     }
 
-    /// Rebuild cache from document
+    /// Rebuild cache from document (respects layer order and shape order for z-ordering)
     pub fn rebuild(&mut self, doc: &Document) -> anyhow::Result<()> {
         self.shapes.clear();
         self.by_id.clear();
 
-        for (id, kind) in doc.read_all_shapes()? {
-            let idx = self.shapes.len();
-            self.shapes.push(CachedShape::new(id, kind));
-            self.by_id.insert(id, idx);
+        // Get layer order (bottom to top)
+        let layer_order = doc.read_layer_order()?;
+
+        // Get the ordered list of shape IDs
+        let shape_order = doc.read_shape_order()?;
+
+        // Build a map of all shapes for quick lookup
+        let all_shapes: std::collections::HashMap<_, _> = doc.read_all_shapes()?.into_iter().collect();
+
+        // Build shape -> layer mapping
+        let mut shape_layers: std::collections::HashMap<ShapeId, Option<LayerId>> = std::collections::HashMap::new();
+        for &id in all_shapes.keys() {
+            shape_layers.insert(id, doc.get_shape_layer(id).ok().flatten());
+        }
+
+        // Get default layer for shapes without layer
+        let default_layer = layer_order.first().copied();
+
+        // Add shapes in layer order (layer-first rendering)
+        // For each layer, add shapes in shape_order within that layer
+        for layer_id in &layer_order {
+            for shape_id in &shape_order {
+                if let Some(kind) = all_shapes.get(shape_id) {
+                    let shape_layer = shape_layers.get(shape_id).copied().flatten();
+                    // Shape belongs to this layer if:
+                    // - It has this layer ID, OR
+                    // - It has no layer and this is the default layer
+                    let belongs_to_layer = shape_layer == Some(*layer_id) ||
+                        (shape_layer.is_none() && default_layer == Some(*layer_id));
+
+                    if belongs_to_layer && !self.by_id.contains_key(shape_id) {
+                        let idx = self.shapes.len();
+                        self.shapes.push(CachedShape::with_layer(*shape_id, kind.clone(), Some(*layer_id)));
+                        self.by_id.insert(*shape_id, idx);
+                    }
+                }
+            }
+        }
+
+        // Add any shapes that might not be in any layer (migration case)
+        for (id, kind) in all_shapes {
+            if !self.by_id.contains_key(&id) {
+                let idx = self.shapes.len();
+                self.shapes.push(CachedShape::with_layer(id, kind, default_layer));
+                self.by_id.insert(id, idx);
+            }
         }
 
         Ok(())
     }
 
+    /// Set layer visibility
+    pub fn set_layer_visible(&mut self, layer_id: LayerId, visible: bool) {
+        if visible {
+            self.hidden_layers.remove(&layer_id);
+        } else {
+            self.hidden_layers.insert(layer_id);
+        }
+    }
+
+    /// Check if a layer is visible
+    pub fn is_layer_visible(&self, layer_id: LayerId) -> bool {
+        !self.hidden_layers.contains(&layer_id)
+    }
+
     /// Iterate all shapes for rendering
     pub fn iter(&self) -> impl Iterator<Item = &CachedShape> {
         self.shapes.iter()
+    }
+
+    /// Iterate only visible shapes (respecting layer visibility)
+    pub fn iter_visible(&self) -> impl Iterator<Item = &CachedShape> {
+        self.shapes.iter().filter(|shape| {
+            match shape.layer_id {
+                Some(layer_id) => !self.hidden_layers.contains(&layer_id),
+                None => true, // Shapes without layer are always visible
+            }
+        })
     }
 
     /// Find shape at position (returns topmost)
