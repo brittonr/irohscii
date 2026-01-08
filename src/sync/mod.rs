@@ -32,6 +32,8 @@ use protocol::IrohAutomergeProtocol;
 pub struct SyncConfig {
     pub mode: SyncMode,
     pub storage_path: Option<PathBuf>,
+    /// Disable DNS/Pkarr discovery (for test isolation)
+    pub disable_discovery: bool,
 }
 
 impl Default for SyncConfig {
@@ -39,6 +41,7 @@ impl Default for SyncConfig {
         Self {
             mode: SyncMode::Active { join_ticket: None },
             storage_path: None,
+            disable_discovery: false,
         }
     }
 }
@@ -156,13 +159,13 @@ pub fn start_sync_thread(config: SyncConfig) -> Result<SyncHandle> {
 }
 
 /// Encode an EndpointAddr as a shareable ticket string
-fn encode_ticket(addr: &EndpointAddr) -> String {
+pub fn encode_ticket(addr: &EndpointAddr) -> String {
     let bytes = postcard::to_stdvec(addr).expect("EndpointAddr serialization should not fail");
     format!("irohscii1{}", data_encoding::BASE32_NOPAD.encode(&bytes))
 }
 
 /// Decode a ticket string back to EndpointAddr
-fn decode_ticket(ticket: &str) -> Result<EndpointAddr> {
+pub fn decode_ticket(ticket: &str) -> Result<EndpointAddr> {
     if let Some(data) = ticket.strip_prefix("irohscii1") {
         let bytes = data_encoding::BASE32_NOPAD
             .decode(data.as_bytes())
@@ -186,12 +189,14 @@ async fn run_sync(
     command_rx: std_mpsc::Receiver<SyncCommand>,
     endpoint_id_tx: std_mpsc::Sender<String>,
 ) -> Result<()> {
-    // Create iroh endpoint with n0 discovery (DNS + Pkarr)
-    let endpoint = Endpoint::builder()
-        .discovery(DnsDiscovery::n0_dns())
-        .discovery(PkarrPublisher::n0_dns())
-        .bind()
-        .await?;
+    // Create iroh endpoint, optionally with n0 discovery (DNS + Pkarr)
+    let mut builder = Endpoint::builder();
+    if !config.disable_discovery {
+        builder = builder
+            .discovery(DnsDiscovery::n0_dns())
+            .discovery(PkarrPublisher::n0_dns());
+    }
+    let endpoint = builder.bind().await?;
 
     // Create a ticket from the endpoint address (includes relay URL and direct addresses)
     let addr = endpoint.addr();

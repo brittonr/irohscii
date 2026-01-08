@@ -56,11 +56,13 @@ fn main() -> Result<()> {
         SyncConfig {
             mode: SyncMode::Disabled,
             storage_path: None,
+            disable_discovery: false,
         }
     } else {
         SyncConfig {
             mode: SyncMode::Active { join_ticket: args.join },
             storage_path: None,
+            disable_discovery: false,
         }
     };
 
