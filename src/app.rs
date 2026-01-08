@@ -407,7 +407,12 @@ impl App {
     /// Build presence data for broadcasting
     pub fn build_presence(&self, cursor_pos: Position) -> Option<PeerPresence> {
         let peer_id = self.local_peer_id?;
-        Some(PeerPresence::new(peer_id, cursor_pos, self.current_activity()))
+        Some(PeerPresence::new(
+            peer_id,
+            cursor_pos,
+            self.current_activity(),
+            self.active_layer,
+        ))
     }
 
     /// Copy sync ticket to system clipboard

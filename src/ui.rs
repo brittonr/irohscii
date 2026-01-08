@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
@@ -14,6 +16,7 @@ use crate::canvas::{
     rounded_rect_points, star_points, trapezoid_points, triangle_points, Position,
 };
 use crate::document::ShapeId;
+use crate::layers::LayerId;
 use crate::presence::{peer_color, CursorActivity, PeerPresence, ToolKind};
 use crate::shapes::ShapeKind;
 
@@ -794,10 +797,18 @@ fn render_participants_panel(frame: &mut Frame, app: &App, area: Rect) {
     // Build list items
     let mut items: Vec<Line> = Vec::new();
 
+    // Get local user's active layer name
+    let local_layer_name = app
+        .active_layer
+        .and_then(|id| app.doc.read_layer(id).ok().flatten())
+        .map(|l| truncate_name(&l.name, 8))
+        .unwrap_or_else(|| "?".to_string());
+
     // Add "You" entry first (local user)
     items.push(Line::from(vec![
         Span::styled("● ", Style::default().fg(Color::White)),
         Span::raw("You"),
+        Span::styled(format!(" [{}]", local_layer_name), Style::default().fg(Color::Cyan)),
     ]));
 
     // Add remote peers
@@ -805,10 +816,18 @@ fn render_participants_panel(frame: &mut Frame, app: &App, area: Rect) {
         let color = peer_color(peer);
         let activity = peer.activity.label();
 
+        // Get peer's active layer name
+        let layer_name = peer
+            .active_layer_id
+            .and_then(|id| app.doc.read_layer(id).ok().flatten())
+            .map(|l| truncate_name(&l.name, 8))
+            .unwrap_or_else(|| "?".to_string());
+
         items.push(Line::from(vec![
             Span::styled("█ ", Style::default().fg(color)),
             Span::raw(peer.display_name()),
             Span::styled(format!(" ({})", activity), Style::default().fg(Color::DarkGray)),
+            Span::styled(format!(" [{}]", layer_name), Style::default().fg(Color::DarkGray)),
         ]));
     }
 
@@ -817,6 +836,15 @@ fn render_participants_panel(frame: &mut Frame, app: &App, area: Rect) {
         .wrap(ratatui::widgets::Wrap { trim: true });
 
     frame.render_widget(paragraph, area);
+}
+
+/// Truncate a name for display
+fn truncate_name(name: &str, max_len: usize) -> String {
+    if name.chars().count() > max_len {
+        name.chars().take(max_len - 2).collect::<String>() + ".."
+    } else {
+        name.to_string()
+    }
 }
 
 /// Render the layer panel
@@ -835,6 +863,17 @@ fn render_layer_panel(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         None
     };
+
+    // Collect peers by their active layer
+    let mut peers_by_layer: HashMap<LayerId, Vec<Color>> = HashMap::new();
+    if let Some(ref presence_mgr) = app.presence {
+        for peer in presence_mgr.active_peers() {
+            if let Some(layer_id) = peer.active_layer_id {
+                let color = peer_color(peer);
+                peers_by_layer.entry(layer_id).or_default().push(color);
+            }
+        }
+    }
 
     // Build list items
     let mut items: Vec<Line> = Vec::new();
@@ -890,13 +929,28 @@ fn render_layer_panel(frame: &mut Frame, app: &App, area: Rect) {
             )
         };
 
-        items.push(Line::from(vec![
+        // Peer indicators (colored blocks for peers on this layer)
+        let peer_indicators: Vec<Span> = peers_by_layer
+            .get(&layer.id)
+            .map(|colors| {
+                colors
+                    .iter()
+                    .take(3) // Max 3 indicators
+                    .map(|color| Span::styled("█", Style::default().fg(*color)))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut line_spans = vec![
             active_indicator,
             name_span,
             Span::raw(" "),
             vis_span,
             lock_span,
-        ]));
+        ];
+        line_spans.extend(peer_indicators);
+
+        items.push(Line::from(line_spans));
     }
 
     let paragraph = Paragraph::new(items)
@@ -1551,4 +1605,59 @@ fn render_help_screen(frame: &mut Frame, scroll: usize, area: Rect) {
         .style(Style::default().bg(Color::Black).fg(Color::White));
 
     frame.render_widget(paragraph, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_name_short_string() {
+        // String shorter than max_len should be returned as-is
+        assert_eq!(truncate_name("Layer 1", 10), "Layer 1");
+        assert_eq!(truncate_name("abc", 8), "abc");
+    }
+
+    #[test]
+    fn truncate_name_exact_length() {
+        // String exactly at max_len should be returned as-is
+        assert_eq!(truncate_name("12345678", 8), "12345678");
+    }
+
+    #[test]
+    fn truncate_name_long_string() {
+        // String longer than max_len should be truncated with ".."
+        assert_eq!(truncate_name("VeryLongLayerName", 8), "VeryLo..");
+        assert_eq!(truncate_name("1234567890", 8), "123456..");
+    }
+
+    #[test]
+    fn truncate_name_empty_string() {
+        // Empty string should return empty
+        assert_eq!(truncate_name("", 8), "");
+    }
+
+    #[test]
+    fn truncate_name_unicode() {
+        // Unicode characters should be counted correctly
+        // Japanese characters are single graphemes
+        assert_eq!(truncate_name("...", 8), "...");
+        // Mixed ASCII and unicode
+        assert_eq!(truncate_name("Layer...", 8), "Layer...");
+    }
+
+    #[test]
+    fn truncate_name_very_small_max() {
+        // Edge case: max_len of 3 means only 1 char + ".."
+        assert_eq!(truncate_name("Hello", 3), "H..");
+        // max_len of 2 means 0 chars + ".."
+        assert_eq!(truncate_name("Hello", 2), "..");
+    }
+
+    #[test]
+    fn truncate_name_whitespace() {
+        // Names with whitespace
+        assert_eq!(truncate_name("Layer With Spaces", 8), "Layer ..");
+        assert_eq!(truncate_name("   ", 2), "..");
+    }
 }

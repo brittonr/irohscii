@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::canvas::Position;
 use crate::document::ShapeId;
+use crate::layers::LayerId;
 
 /// Staleness threshold - remove cursors not updated in 5 seconds
 const STALE_THRESHOLD: Duration = Duration::from_secs(5);
@@ -108,10 +109,17 @@ pub struct PeerPresence {
     pub activity: CursorActivity,
     pub color_index: u8,
     pub timestamp_ms: u64,
+    /// The active layer this peer is drawing on
+    pub active_layer_id: Option<LayerId>,
 }
 
 impl PeerPresence {
-    pub fn new(peer_id: PeerId, cursor_pos: Position, activity: CursorActivity) -> Self {
+    pub fn new(
+        peer_id: PeerId,
+        cursor_pos: Position,
+        activity: CursorActivity,
+        active_layer_id: Option<LayerId>,
+    ) -> Self {
         let color_index = peer_id.0[0] % (PEER_COLORS.len() as u8);
         let timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -124,6 +132,7 @@ impl PeerPresence {
             activity,
             color_index,
             timestamp_ms,
+            active_layer_id,
         }
     }
 
@@ -204,5 +213,178 @@ impl PresenceManager {
     /// Get peer count
     pub fn peer_count(&self) -> usize {
         self.peers.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn peer_presence_with_layer() {
+        let peer_id = PeerId([1u8; 32]);
+        let pos = Position::new(10, 20);
+        let layer_id = LayerId::new();
+
+        let presence = PeerPresence::new(peer_id, pos, CursorActivity::Idle, Some(layer_id));
+
+        assert_eq!(presence.active_layer_id, Some(layer_id));
+        assert_eq!(presence.cursor_pos, pos);
+    }
+
+    #[test]
+    fn peer_presence_without_layer() {
+        let peer_id = PeerId([1u8; 32]);
+        let pos = Position::new(10, 20);
+
+        let presence = PeerPresence::new(peer_id, pos, CursorActivity::Idle, None);
+
+        assert_eq!(presence.active_layer_id, None);
+    }
+
+    #[test]
+    fn peer_presence_serialization_roundtrip_with_layer() {
+        let peer_id = PeerId([1u8; 32]);
+        let pos = Position::new(10, 20);
+        let layer_id = LayerId::new();
+        let presence = PeerPresence::new(peer_id, pos, CursorActivity::Idle, Some(layer_id));
+
+        let bytes = rmp_serde::to_vec(&presence).unwrap();
+        let decoded: PeerPresence = rmp_serde::from_slice(&bytes).unwrap();
+
+        assert_eq!(decoded.active_layer_id, Some(layer_id));
+        assert_eq!(decoded.peer_id, peer_id);
+        assert_eq!(decoded.cursor_pos, pos);
+    }
+
+    #[test]
+    fn peer_presence_serialization_roundtrip_without_layer() {
+        let peer_id = PeerId([1u8; 32]);
+        let pos = Position::new(10, 20);
+        let presence = PeerPresence::new(peer_id, pos, CursorActivity::Idle, None);
+
+        let bytes = rmp_serde::to_vec(&presence).unwrap();
+        let decoded: PeerPresence = rmp_serde::from_slice(&bytes).unwrap();
+
+        assert_eq!(decoded.active_layer_id, None);
+    }
+
+    #[test]
+    fn peer_presence_display_name_format() {
+        // Test that display name is always well-formed
+        let peer_id = PeerId([0xAB, 0xCD, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                              0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                              0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                              0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        let presence = PeerPresence::new(peer_id, Position::new(0, 0), CursorActivity::Idle, None);
+
+        assert_eq!(presence.display_name(), "Peer-abcd");
+        assert!(!presence.display_name().is_empty());
+    }
+
+    #[test]
+    fn peer_presence_color_index_deterministic() {
+        // Same peer_id should always get same color
+        let peer_id = PeerId([42u8; 32]);
+        let presence1 = PeerPresence::new(peer_id, Position::new(0, 0), CursorActivity::Idle, None);
+        let presence2 = PeerPresence::new(peer_id, Position::new(100, 100), CursorActivity::Idle, None);
+
+        assert_eq!(presence1.color_index, presence2.color_index);
+    }
+
+    #[test]
+    fn peer_presence_color_index_within_bounds() {
+        // Color index should always be within PEER_COLORS bounds
+        for i in 0u8..=255 {
+            let peer_id = PeerId([i; 32]);
+            let presence = PeerPresence::new(peer_id, Position::new(0, 0), CursorActivity::Idle, None);
+            assert!((presence.color_index as usize) < PEER_COLORS.len());
+        }
+    }
+
+    #[test]
+    fn presence_manager_update_peer_with_layer() {
+        let local_id = PeerId([1u8; 32]);
+        let remote_id = PeerId([2u8; 32]);
+        let layer_id = LayerId::new();
+
+        let mut manager = PresenceManager::new(local_id);
+
+        let presence = PeerPresence::new(remote_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_id));
+        manager.update_peer(presence.clone());
+
+        assert_eq!(manager.peer_count(), 1);
+        let peers: Vec<_> = manager.active_peers().collect();
+        assert_eq!(peers[0].active_layer_id, Some(layer_id));
+    }
+
+    #[test]
+    fn presence_manager_does_not_store_local_peer() {
+        let local_id = PeerId([1u8; 32]);
+        let layer_id = LayerId::new();
+
+        let mut manager = PresenceManager::new(local_id);
+
+        // Try to add our own presence (should be ignored)
+        let presence = PeerPresence::new(local_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_id));
+        manager.update_peer(presence);
+
+        assert_eq!(manager.peer_count(), 0);
+    }
+
+    #[test]
+    fn presence_manager_updates_existing_peer() {
+        let local_id = PeerId([1u8; 32]);
+        let remote_id = PeerId([2u8; 32]);
+        let layer_1 = LayerId::new();
+        let layer_2 = LayerId::new();
+
+        let mut manager = PresenceManager::new(local_id);
+
+        // Add peer on layer 1
+        let presence1 = PeerPresence::new(remote_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_1));
+        manager.update_peer(presence1);
+
+        // Update peer to layer 2
+        let presence2 = PeerPresence::new(remote_id, Position::new(30, 40), CursorActivity::Idle, Some(layer_2));
+        manager.update_peer(presence2);
+
+        // Should still be only 1 peer, with updated layer
+        assert_eq!(manager.peer_count(), 1);
+        let peers: Vec<_> = manager.active_peers().collect();
+        assert_eq!(peers[0].active_layer_id, Some(layer_2));
+        assert_eq!(peers[0].cursor_pos, Position::new(30, 40));
+    }
+
+    #[test]
+    fn presence_message_serialization() {
+        let peer_id = PeerId([1u8; 32]);
+        let layer_id = LayerId::new();
+        let presence = PeerPresence::new(peer_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_id));
+
+        let msg = PresenceMessage::Update(presence.clone());
+        let bytes = rmp_serde::to_vec(&msg).unwrap();
+        let decoded: PresenceMessage = rmp_serde::from_slice(&bytes).unwrap();
+
+        if let PresenceMessage::Update(p) = decoded {
+            assert_eq!(p.active_layer_id, Some(layer_id));
+        } else {
+            panic!("Expected Update message");
+        }
+    }
+
+    #[test]
+    fn activity_labels_are_not_empty() {
+        // All activity labels should be meaningful strings
+        assert!(!CursorActivity::Idle.label().is_empty());
+        assert!(!CursorActivity::Drawing {
+            tool: ToolKind::Rectangle,
+            start: Position::new(0, 0),
+            current: Position::new(10, 10)
+        }.label().is_empty());
+        assert!(!CursorActivity::Selected { shape_id: crate::document::ShapeId::new() }.label().is_empty());
+        assert!(!CursorActivity::Dragging { shape_id: crate::document::ShapeId::new() }.label().is_empty());
+        assert!(!CursorActivity::Resizing { shape_id: crate::document::ShapeId::new() }.label().is_empty());
+        assert!(!CursorActivity::Typing { position: Position::new(0, 0) }.label().is_empty());
     }
 }

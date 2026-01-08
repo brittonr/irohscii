@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use automerge::Automerge;
 use irohscii::canvas::Position;
 use irohscii::document::Document;
+use irohscii::layers::LayerId;
 use irohscii::presence::{CursorActivity, PeerId, PeerPresence};
 use irohscii::shapes::{ShapeColor, ShapeKind};
 use irohscii::sync::{
@@ -109,7 +110,7 @@ fn make_test_rect(x: i32, y: i32, w: i32, h: i32) -> ShapeKind {
 
 /// Create a test presence
 fn make_test_presence(peer_id: PeerId, x: i32, y: i32) -> PeerPresence {
-    PeerPresence::new(peer_id, Position::new(x, y), CursorActivity::Idle)
+    PeerPresence::new(peer_id, Position::new(x, y), CursorActivity::Idle, None)
 }
 
 /// Setup a host peer (no join ticket) with discovery disabled for test isolation
@@ -577,6 +578,299 @@ fn test_peer_disconnect_handling() {
 // ========== Property-Based Tests ==========
 
 #[cfg(test)]
+#[test]
+fn test_layer_presence_sync() {
+    let _guard = TEST_MUTEX.lock().unwrap();
+
+    let (handle_a, ticket_a, peer_id_a) = setup_host_peer();
+    let (handle_b, _peer_id_b) = setup_joining_peer(&ticket_a);
+
+    std::thread::sleep(CONNECTION_DELAY);
+
+    // Create a layer ID that Peer A is working on
+    let layer_id = LayerId::new();
+
+    // Peer A broadcasts presence with active layer
+    let presence_a = PeerPresence::new(
+        peer_id_a,
+        Position::new(100, 200),
+        CursorActivity::Idle,
+        Some(layer_id),
+    );
+    handle_a
+        .send_command(SyncCommand::BroadcastPresence(presence_a.clone()))
+        .expect("Failed to broadcast presence");
+
+    // Peer B should receive presence update with layer info
+    let received = wait_for_presence_update(&handle_b, SYNC_TIMEOUT)
+        .expect("Peer B should receive presence update");
+
+    assert_eq!(received.peer_id, peer_id_a);
+    assert_eq!(received.active_layer_id, Some(layer_id));
+
+    // Peer A changes to a different layer
+    let layer_id_2 = LayerId::new();
+    let presence_a_2 = PeerPresence::new(
+        peer_id_a,
+        Position::new(150, 250),
+        CursorActivity::Idle,
+        Some(layer_id_2),
+    );
+    handle_a
+        .send_command(SyncCommand::BroadcastPresence(presence_a_2))
+        .expect("Failed to broadcast updated presence");
+
+    // Peer B should receive the updated presence with new layer
+    let received_2 = wait_for_presence_update(&handle_b, SYNC_TIMEOUT)
+        .expect("Peer B should receive updated presence");
+
+    assert_eq!(received_2.peer_id, peer_id_a);
+    assert_eq!(received_2.active_layer_id, Some(layer_id_2));
+
+    cleanup_peers(vec![handle_a, handle_b]);
+}
+
+#[test]
+fn test_presence_without_layer() {
+    let _guard = TEST_MUTEX.lock().unwrap();
+
+    let (handle_a, ticket_a, peer_id_a) = setup_host_peer();
+    let (handle_b, _peer_id_b) = setup_joining_peer(&ticket_a);
+
+    std::thread::sleep(CONNECTION_DELAY);
+
+    // Peer A broadcasts presence without an active layer (None)
+    let presence_a = PeerPresence::new(
+        peer_id_a,
+        Position::new(100, 200),
+        CursorActivity::Idle,
+        None,
+    );
+    handle_a
+        .send_command(SyncCommand::BroadcastPresence(presence_a))
+        .expect("Failed to broadcast presence");
+
+    // Peer B should receive presence update with no layer
+    let received = wait_for_presence_update(&handle_b, SYNC_TIMEOUT)
+        .expect("Peer B should receive presence update");
+
+    assert_eq!(received.peer_id, peer_id_a);
+    assert_eq!(received.active_layer_id, None);
+
+    cleanup_peers(vec![handle_a, handle_b]);
+}
+
+#[test]
+fn test_rapid_layer_switching_presence() {
+    let _guard = TEST_MUTEX.lock().unwrap();
+
+    let (handle_a, ticket_a, peer_id_a) = setup_host_peer();
+    let (handle_b, _peer_id_b) = setup_joining_peer(&ticket_a);
+
+    std::thread::sleep(CONNECTION_DELAY);
+
+    // Create multiple layer IDs to switch between rapidly
+    let layer_ids: Vec<LayerId> = (0..5).map(|_| LayerId::new()).collect();
+
+    // Rapidly switch through all layers multiple times
+    for _ in 0..4 {
+        for layer_id in &layer_ids {
+            let presence = PeerPresence::new(
+                peer_id_a,
+                Position::new(100, 100),
+                CursorActivity::Idle,
+                Some(*layer_id),
+            );
+            handle_a
+                .send_command(SyncCommand::BroadcastPresence(presence))
+                .expect("Failed to broadcast presence");
+            // Very short delay to stress test the system
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    // Wait for presence to propagate
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Drain all presence updates and verify we received multiple updates
+    // (some may be coalesced, but we should get at least a few)
+    let mut received_count = 0;
+    let mut received_layer_ids = Vec::new();
+    while let Some(event) = handle_b.poll_event() {
+        if let SyncEvent::PresenceUpdate(presence) = event {
+            if presence.peer_id == peer_id_a {
+                received_count += 1;
+                if let Some(layer_id) = presence.active_layer_id {
+                    received_layer_ids.push(layer_id);
+                }
+            }
+        }
+    }
+
+    // Should have received at least some updates (network may coalesce some)
+    assert!(received_count > 0, "Should have received at least one presence update");
+
+    // All received layer IDs should be from our set
+    for layer_id in &received_layer_ids {
+        assert!(
+            layer_ids.contains(layer_id),
+            "Received unknown layer_id: {:?}",
+            layer_id
+        );
+    }
+
+    cleanup_peers(vec![handle_a, handle_b]);
+}
+
+#[test]
+fn test_multiple_peers_same_layer() {
+    let _guard = TEST_MUTEX.lock().unwrap();
+
+    let (handle_a, ticket_a, peer_id_a) = setup_host_peer();
+    let (handle_b, peer_id_b) = setup_joining_peer(&ticket_a);
+
+    std::thread::sleep(CONNECTION_DELAY);
+
+    // Both peers select the same layer
+    let shared_layer = LayerId::new();
+
+    // Peer A broadcasts presence with shared layer
+    let presence_a = PeerPresence::new(
+        peer_id_a,
+        Position::new(100, 100),
+        CursorActivity::Idle,
+        Some(shared_layer),
+    );
+    handle_a
+        .send_command(SyncCommand::BroadcastPresence(presence_a))
+        .expect("Failed to broadcast A's presence");
+
+    // Peer B broadcasts presence with same layer
+    let presence_b = PeerPresence::new(
+        peer_id_b,
+        Position::new(200, 200),
+        CursorActivity::Idle,
+        Some(shared_layer),
+    );
+    handle_b
+        .send_command(SyncCommand::BroadcastPresence(presence_b))
+        .expect("Failed to broadcast B's presence");
+
+    // Wait for propagation
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Peer A should receive Peer B's presence with same layer
+    let received_at_a = wait_for_presence_update(&handle_a, SYNC_TIMEOUT)
+        .expect("Peer A should receive Peer B's presence");
+
+    assert_eq!(received_at_a.peer_id, peer_id_b);
+    assert_eq!(received_at_a.active_layer_id, Some(shared_layer));
+
+    // Peer B should receive Peer A's presence with same layer
+    let received_at_b = wait_for_presence_update(&handle_b, SYNC_TIMEOUT)
+        .expect("Peer B should receive Peer A's presence");
+
+    assert_eq!(received_at_b.peer_id, peer_id_a);
+    assert_eq!(received_at_b.active_layer_id, Some(shared_layer));
+
+    cleanup_peers(vec![handle_a, handle_b]);
+}
+
+#[test]
+fn test_layer_id_serialization_roundtrip() {
+    let _guard = TEST_MUTEX.lock().unwrap();
+
+    let (handle_a, ticket_a, peer_id_a) = setup_host_peer();
+    let (handle_b, _peer_id_b) = setup_joining_peer(&ticket_a);
+
+    std::thread::sleep(CONNECTION_DELAY);
+
+    // Create a specific layer ID and verify it round-trips correctly
+    let layer_id = LayerId::new();
+    let original_uuid = layer_id.0; // The inner Uuid
+
+    let presence = PeerPresence::new(
+        peer_id_a,
+        Position::new(50, 75),
+        CursorActivity::Idle,
+        Some(layer_id),
+    );
+
+    handle_a
+        .send_command(SyncCommand::BroadcastPresence(presence))
+        .expect("Failed to broadcast presence");
+
+    let received = wait_for_presence_update(&handle_b, SYNC_TIMEOUT)
+        .expect("Peer B should receive presence update");
+
+    // Verify the LayerId survived serialization/deserialization
+    assert!(received.active_layer_id.is_some());
+    let received_layer_id = received.active_layer_id.unwrap();
+    assert_eq!(received_layer_id.0, original_uuid, "LayerId UUID should be preserved through serialization");
+
+    cleanup_peers(vec![handle_a, handle_b]);
+}
+
+#[test]
+fn test_layer_switching_updates_presence() {
+    let _guard = TEST_MUTEX.lock().unwrap();
+
+    let (handle_a, ticket_a, peer_id_a) = setup_host_peer();
+    let (handle_b, _peer_id_b) = setup_joining_peer(&ticket_a);
+
+    std::thread::sleep(CONNECTION_DELAY);
+
+    let layer_1 = LayerId::new();
+    let layer_2 = LayerId::new();
+
+    // Start on layer 1
+    let presence_1 = PeerPresence::new(
+        peer_id_a,
+        Position::new(10, 10),
+        CursorActivity::Idle,
+        Some(layer_1),
+    );
+    handle_a
+        .send_command(SyncCommand::BroadcastPresence(presence_1))
+        .expect("Failed to broadcast");
+
+    let received_1 = wait_for_presence_update(&handle_b, SYNC_TIMEOUT)
+        .expect("Should receive first presence");
+    assert_eq!(received_1.active_layer_id, Some(layer_1));
+
+    // Switch to layer 2
+    let presence_2 = PeerPresence::new(
+        peer_id_a,
+        Position::new(20, 20),
+        CursorActivity::Idle,
+        Some(layer_2),
+    );
+    handle_a
+        .send_command(SyncCommand::BroadcastPresence(presence_2))
+        .expect("Failed to broadcast");
+
+    let received_2 = wait_for_presence_update(&handle_b, SYNC_TIMEOUT)
+        .expect("Should receive second presence");
+    assert_eq!(received_2.active_layer_id, Some(layer_2));
+
+    // Switch back to layer 1
+    let presence_3 = PeerPresence::new(
+        peer_id_a,
+        Position::new(30, 30),
+        CursorActivity::Idle,
+        Some(layer_1),
+    );
+    handle_a
+        .send_command(SyncCommand::BroadcastPresence(presence_3))
+        .expect("Failed to broadcast");
+
+    let received_3 = wait_for_presence_update(&handle_b, SYNC_TIMEOUT)
+        .expect("Should receive third presence");
+    assert_eq!(received_3.active_layer_id, Some(layer_1));
+
+    cleanup_peers(vec![handle_a, handle_b]);
+}
+
 mod proptest_tests {
     use irohscii::sync::decode_ticket;
     use proptest::prelude::*;
