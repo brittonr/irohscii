@@ -83,12 +83,14 @@ pub enum CursorActivity {
     Dragging {
         shape_id: ShapeId,
         /// Movement delta from original position (dx, dy)
+        #[serde(default)]
         delta: (i32, i32),
     },
     /// Resizing a shape - includes preview bounds for real-time preview
     Resizing {
         shape_id: ShapeId,
         /// Preview bounding box (min, max) if available
+        #[serde(default)]
         preview_bounds: Option<(Position, Position)>,
     },
     /// Typing text
