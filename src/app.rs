@@ -371,8 +371,10 @@ impl App {
                 current: shape_state.current,
             }
         } else if let Some(ref drag_state) = self.drag_state {
+            // Use actual selected shape (drag_state.shape_id is ShapeId::default() for multi-select)
+            let shape_id = self.selected.iter().next().copied().unwrap_or(drag_state.shape_id);
             CursorActivity::Dragging {
-                shape_id: drag_state.shape_id,
+                shape_id,
                 delta: (drag_state.total_dx, drag_state.total_dy),
             }
         } else if let Some(ref resize_state) = self.resize_state {
