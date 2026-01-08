@@ -648,6 +648,83 @@ impl ShapeKind {
         }
     }
 
+    /// Update line/arrow endpoints for a resize operation where different snap points move differently
+    /// Returns updated shape if connected to the resized shape
+    pub fn update_for_resize(
+        &self,
+        resized_id: u64,
+        old_snaps: &[Position],
+        new_snaps: &[Position],
+    ) -> Option<ShapeKind> {
+        match self {
+            ShapeKind::Line { start, end, style, start_connection, end_connection, label, color } => {
+                let mut new_start = *start;
+                let mut new_end = *end;
+                let mut changed = false;
+
+                if *start_connection == Some(resized_id) {
+                    if let Some(new_pos) = find_corresponding_snap(start, old_snaps, new_snaps) {
+                        new_start = new_pos;
+                        changed = true;
+                    }
+                }
+                if *end_connection == Some(resized_id) {
+                    if let Some(new_pos) = find_corresponding_snap(end, old_snaps, new_snaps) {
+                        new_end = new_pos;
+                        changed = true;
+                    }
+                }
+
+                if changed {
+                    Some(ShapeKind::Line {
+                        start: new_start,
+                        end: new_end,
+                        style: *style,
+                        start_connection: *start_connection,
+                        end_connection: *end_connection,
+                        label: label.clone(),
+                        color: *color,
+                    })
+                } else {
+                    None
+                }
+            }
+            ShapeKind::Arrow { start, end, style, start_connection, end_connection, label, color } => {
+                let mut new_start = *start;
+                let mut new_end = *end;
+                let mut changed = false;
+
+                if *start_connection == Some(resized_id) {
+                    if let Some(new_pos) = find_corresponding_snap(start, old_snaps, new_snaps) {
+                        new_start = new_pos;
+                        changed = true;
+                    }
+                }
+                if *end_connection == Some(resized_id) {
+                    if let Some(new_pos) = find_corresponding_snap(end, old_snaps, new_snaps) {
+                        new_end = new_pos;
+                        changed = true;
+                    }
+                }
+
+                if changed {
+                    Some(ShapeKind::Arrow {
+                        start: new_start,
+                        end: new_end,
+                        style: *style,
+                        start_connection: *start_connection,
+                        end_connection: *end_connection,
+                        label: label.clone(),
+                        color: *color,
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Get snap points for this shape (used for connection updates during resize)
     pub fn snap_points(&self) -> Vec<Position> {
         match self {
@@ -1315,6 +1392,39 @@ impl ShapeView {
             self.shapes[idx].update(kind);
         }
     }
+
+    /// Find all shapes connected to the resized shape and return updated versions
+    /// This handles the case where different snap points move by different amounts
+    /// Returns Vec of (ShapeId, new ShapeKind) for shapes that need updating
+    pub fn find_connected_updates_for_resize(
+        &self,
+        resized_id: ShapeId,
+        original_kind: &ShapeKind,
+        new_kind: &ShapeKind,
+    ) -> Vec<(ShapeId, ShapeKind)> {
+        let old_snaps = original_kind.snap_points();
+        let new_snaps = new_kind.snap_points();
+
+        // If snap point counts don't match, we can't reliably update connections
+        if old_snaps.len() != new_snaps.len() {
+            return Vec::new();
+        }
+
+        let resized_conn_id = resized_id.0.as_u128() as u64;
+        let mut updates = Vec::new();
+
+        for shape in &self.shapes {
+            if let Some(new_shape_kind) = shape.kind.update_for_resize(
+                resized_conn_id,
+                &old_snaps,
+                &new_snaps,
+            ) {
+                updates.push((shape.id, new_shape_kind));
+            }
+        }
+
+        updates
+    }
 }
 
 impl Default for ShapeView {
@@ -1622,4 +1732,22 @@ where
     };
 
     make_shape(new_start, new_end)
+}
+
+/// Find the corresponding new snap point for a position based on the closest old snap point
+fn find_corresponding_snap(pos: &Position, old_snaps: &[Position], new_snaps: &[Position]) -> Option<Position> {
+    // Find the closest old snap point to this position
+    let mut best_idx = None;
+    let mut best_dist = i32::MAX;
+
+    for (idx, old_snap) in old_snaps.iter().enumerate() {
+        let dist = (pos.x - old_snap.x).abs() + (pos.y - old_snap.y).abs();
+        if dist < best_dist {
+            best_dist = dist;
+            best_idx = Some(idx);
+        }
+    }
+
+    // If we found a matching snap point and the new snaps have the same index, return it
+    best_idx.and_then(|idx| new_snaps.get(idx).copied())
 }

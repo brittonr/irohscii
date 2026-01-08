@@ -207,10 +207,12 @@ pub struct DragState {
 }
 
 /// State for resizing a shape
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ResizeState {
     pub shape_id: ShapeId,
     pub handle: ResizeHandle,
+    pub original_kind: ShapeKind,
+    pub modified_shapes: Vec<ShapeId>,
 }
 
 /// Orientation of a snap guide line
@@ -1668,38 +1670,77 @@ impl App {
         }
 
         if let Some(handle) = self.shape_view.find_resize_handle(id, pos, SNAP_THRESHOLD) {
-            self.save_undo_state();
-            self.resize_state = Some(ResizeState { shape_id: id, handle });
-            self.set_status("Resizing shape");
-            return true;
+            // Capture the original kind before resize starts
+            let original_kind = self.shape_view.get(id).map(|s| s.kind.clone());
+            if let Some(original_kind) = original_kind {
+                self.save_undo_state();
+                self.resize_state = Some(ResizeState {
+                    shape_id: id,
+                    handle,
+                    original_kind,
+                    modified_shapes: vec![id],
+                });
+                self.set_status("Resizing shape");
+                return true;
+            }
         }
         false
     }
 
-    /// Continue resizing
+    /// Continue resizing - updates only cache during resize for performance
     pub fn continue_resize(&mut self, pos: Position) {
-        if let Some(ref resize) = self.resize_state {
-            if let Some(shape) = self.shape_view.get(resize.shape_id) {
-                let old_kind = shape.kind.clone();
-                let new_kind = resize_shape(&old_kind, resize.handle, pos);
-                let shape_id = resize.shape_id;
-                if self.doc.update_shape(shape_id, new_kind.clone()).is_ok() {
-                    // Update connected lines to follow the resized shape's snap points
-                    let mut updated = vec![shape_id];
-                    if let Ok(connected) = self.doc.update_connections_for_resize(shape_id, &old_kind, &new_kind) {
-                        updated.extend(connected);
-                    }
-                    // Only update modified shapes, not the entire view
-                    self.shape_view.update_shapes(&self.doc, &updated);
-                    self.doc.mark_dirty();
-                }
-            }
+        let Some(ref resize) = self.resize_state else {
+            return;
+        };
+
+        let shape_id = resize.shape_id;
+        let handle = resize.handle;
+        let original_kind = resize.original_kind.clone();
+
+        // Get current shape from cache to compute new state
+        let Some(shape) = self.shape_view.get(shape_id) else {
+            return;
+        };
+
+        let old_kind = shape.kind.clone();
+        let new_kind = resize_shape(&old_kind, handle, pos);
+
+        // Update ONLY the cache during resize (no document writes - they're slow!)
+        self.shape_view.update_shape_kind(shape_id, new_kind.clone());
+
+        // Find and update connected shapes in cache
+        let connected_updates = self.shape_view.find_connected_updates_for_resize(
+            shape_id,
+            &original_kind,
+            &new_kind,
+        );
+
+        let mut modified_ids = vec![shape_id];
+        for (id, kind) in connected_updates {
+            self.shape_view.update_shape_kind(id, kind);
+            modified_ids.push(id);
+        }
+
+        // Track all modified shapes (dedupe happens at finish)
+        if let Some(ref mut resize) = self.resize_state {
+            resize.modified_shapes.extend(modified_ids);
         }
     }
 
-    /// Finish resizing
+    /// Finish resizing - write final positions to document
     pub fn finish_resize(&mut self) {
-        self.resize_state = None;
+        if let Some(resize) = self.resize_state.take() {
+            // Dedupe modified shapes and write final positions to document
+            let mut written = std::collections::HashSet::new();
+            for id in resize.modified_shapes {
+                if written.insert(id) {
+                    if let Some(shape) = self.shape_view.get(id) {
+                        let _ = self.doc.update_shape(id, shape.kind.clone());
+                    }
+                }
+            }
+            self.doc.mark_dirty();
+        }
     }
 
     /// Delete all selected shapes
