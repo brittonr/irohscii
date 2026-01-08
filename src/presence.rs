@@ -79,10 +79,18 @@ pub enum CursorActivity {
     },
     /// Has a shape selected
     Selected { shape_id: ShapeId },
-    /// Dragging a shape
-    Dragging { shape_id: ShapeId },
-    /// Resizing a shape
-    Resizing { shape_id: ShapeId },
+    /// Dragging a shape - includes movement delta for real-time preview
+    Dragging {
+        shape_id: ShapeId,
+        /// Movement delta from original position (dx, dy)
+        delta: (i32, i32),
+    },
+    /// Resizing a shape - includes preview bounds for real-time preview
+    Resizing {
+        shape_id: ShapeId,
+        /// Preview bounding box (min, max) if available
+        preview_bounds: Option<(Position, Position)>,
+    },
     /// Typing text
     Typing { position: Position },
 }
@@ -111,6 +119,10 @@ pub struct PeerPresence {
     pub timestamp_ms: u64,
     /// The active layer this peer is drawing on
     pub active_layer_id: Option<LayerId>,
+    /// When a drag operation started (for soft lock ordering)
+    /// Earlier timestamp = higher priority for the shape
+    #[serde(default)]
+    pub drag_start_ms: Option<u64>,
 }
 
 impl PeerPresence {
@@ -119,6 +131,7 @@ impl PeerPresence {
         cursor_pos: Position,
         activity: CursorActivity,
         active_layer_id: Option<LayerId>,
+        drag_start_ms: Option<u64>,
     ) -> Self {
         let color_index = peer_id.0[0] % (PEER_COLORS.len() as u8);
         let timestamp_ms = SystemTime::now()
@@ -133,6 +146,7 @@ impl PeerPresence {
             color_index,
             timestamp_ms,
             active_layer_id,
+            drag_start_ms,
         }
     }
 
@@ -214,6 +228,37 @@ impl PresenceManager {
     pub fn peer_count(&self) -> usize {
         self.peers.len()
     }
+
+    /// Find a peer who is currently dragging the specified shape
+    /// Returns the peer presence if found
+    pub fn get_dragger_for_shape(&self, shape_id: crate::document::ShapeId) -> Option<&PeerPresence> {
+        self.peers.values()
+            .map(|(p, _)| p)
+            .find(|p| matches!(p.activity, CursorActivity::Dragging { shape_id: sid, .. } if sid == shape_id))
+    }
+
+    /// Check if any remote peer started dragging a shape before the given timestamp
+    /// Used for soft lock - first dragger wins priority
+    pub fn has_earlier_dragger(&self, shape_id: crate::document::ShapeId, our_start_ms: u64) -> Option<&PeerPresence> {
+        self.peers.values()
+            .map(|(p, _)| p)
+            .filter(|p| matches!(p.activity, CursorActivity::Dragging { shape_id: sid, .. } if sid == shape_id))
+            .find(|p| p.drag_start_ms.map_or(false, |t| t < our_start_ms))
+    }
+
+    /// Get all peers currently dragging any shape (for ghost rendering)
+    pub fn peers_dragging(&self) -> impl Iterator<Item = &PeerPresence> {
+        self.peers.values()
+            .map(|(p, _)| p)
+            .filter(|p| matches!(p.activity, CursorActivity::Dragging { .. }))
+    }
+
+    /// Get all peers currently resizing any shape (for ghost rendering)
+    pub fn peers_resizing(&self) -> impl Iterator<Item = &PeerPresence> {
+        self.peers.values()
+            .map(|(p, _)| p)
+            .filter(|p| matches!(p.activity, CursorActivity::Resizing { .. }))
+    }
 }
 
 #[cfg(test)]
@@ -226,7 +271,7 @@ mod tests {
         let pos = Position::new(10, 20);
         let layer_id = LayerId::new();
 
-        let presence = PeerPresence::new(peer_id, pos, CursorActivity::Idle, Some(layer_id));
+        let presence = PeerPresence::new(peer_id, pos, CursorActivity::Idle, Some(layer_id), None);
 
         assert_eq!(presence.active_layer_id, Some(layer_id));
         assert_eq!(presence.cursor_pos, pos);
@@ -237,7 +282,7 @@ mod tests {
         let peer_id = PeerId([1u8; 32]);
         let pos = Position::new(10, 20);
 
-        let presence = PeerPresence::new(peer_id, pos, CursorActivity::Idle, None);
+        let presence = PeerPresence::new(peer_id, pos, CursorActivity::Idle, None, None);
 
         assert_eq!(presence.active_layer_id, None);
     }
@@ -247,7 +292,7 @@ mod tests {
         let peer_id = PeerId([1u8; 32]);
         let pos = Position::new(10, 20);
         let layer_id = LayerId::new();
-        let presence = PeerPresence::new(peer_id, pos, CursorActivity::Idle, Some(layer_id));
+        let presence = PeerPresence::new(peer_id, pos, CursorActivity::Idle, Some(layer_id), None);
 
         let bytes = rmp_serde::to_vec(&presence).unwrap();
         let decoded: PeerPresence = rmp_serde::from_slice(&bytes).unwrap();
@@ -261,7 +306,7 @@ mod tests {
     fn peer_presence_serialization_roundtrip_without_layer() {
         let peer_id = PeerId([1u8; 32]);
         let pos = Position::new(10, 20);
-        let presence = PeerPresence::new(peer_id, pos, CursorActivity::Idle, None);
+        let presence = PeerPresence::new(peer_id, pos, CursorActivity::Idle, None, None);
 
         let bytes = rmp_serde::to_vec(&presence).unwrap();
         let decoded: PeerPresence = rmp_serde::from_slice(&bytes).unwrap();
@@ -276,7 +321,7 @@ mod tests {
                               0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                               0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                               0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
-        let presence = PeerPresence::new(peer_id, Position::new(0, 0), CursorActivity::Idle, None);
+        let presence = PeerPresence::new(peer_id, Position::new(0, 0), CursorActivity::Idle, None, None);
 
         assert_eq!(presence.display_name(), "Peer-abcd");
         assert!(!presence.display_name().is_empty());
@@ -286,8 +331,8 @@ mod tests {
     fn peer_presence_color_index_deterministic() {
         // Same peer_id should always get same color
         let peer_id = PeerId([42u8; 32]);
-        let presence1 = PeerPresence::new(peer_id, Position::new(0, 0), CursorActivity::Idle, None);
-        let presence2 = PeerPresence::new(peer_id, Position::new(100, 100), CursorActivity::Idle, None);
+        let presence1 = PeerPresence::new(peer_id, Position::new(0, 0), CursorActivity::Idle, None, None);
+        let presence2 = PeerPresence::new(peer_id, Position::new(100, 100), CursorActivity::Idle, None, None);
 
         assert_eq!(presence1.color_index, presence2.color_index);
     }
@@ -297,7 +342,7 @@ mod tests {
         // Color index should always be within PEER_COLORS bounds
         for i in 0u8..=255 {
             let peer_id = PeerId([i; 32]);
-            let presence = PeerPresence::new(peer_id, Position::new(0, 0), CursorActivity::Idle, None);
+            let presence = PeerPresence::new(peer_id, Position::new(0, 0), CursorActivity::Idle, None, None);
             assert!((presence.color_index as usize) < PEER_COLORS.len());
         }
     }
@@ -310,7 +355,7 @@ mod tests {
 
         let mut manager = PresenceManager::new(local_id);
 
-        let presence = PeerPresence::new(remote_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_id));
+        let presence = PeerPresence::new(remote_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_id), None);
         manager.update_peer(presence.clone());
 
         assert_eq!(manager.peer_count(), 1);
@@ -326,7 +371,7 @@ mod tests {
         let mut manager = PresenceManager::new(local_id);
 
         // Try to add our own presence (should be ignored)
-        let presence = PeerPresence::new(local_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_id));
+        let presence = PeerPresence::new(local_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_id), None);
         manager.update_peer(presence);
 
         assert_eq!(manager.peer_count(), 0);
@@ -342,11 +387,11 @@ mod tests {
         let mut manager = PresenceManager::new(local_id);
 
         // Add peer on layer 1
-        let presence1 = PeerPresence::new(remote_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_1));
+        let presence1 = PeerPresence::new(remote_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_1), None);
         manager.update_peer(presence1);
 
         // Update peer to layer 2
-        let presence2 = PeerPresence::new(remote_id, Position::new(30, 40), CursorActivity::Idle, Some(layer_2));
+        let presence2 = PeerPresence::new(remote_id, Position::new(30, 40), CursorActivity::Idle, Some(layer_2), None);
         manager.update_peer(presence2);
 
         // Should still be only 1 peer, with updated layer
@@ -360,7 +405,7 @@ mod tests {
     fn presence_message_serialization() {
         let peer_id = PeerId([1u8; 32]);
         let layer_id = LayerId::new();
-        let presence = PeerPresence::new(peer_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_id));
+        let presence = PeerPresence::new(peer_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_id), None);
 
         let msg = PresenceMessage::Update(presence.clone());
         let bytes = rmp_serde::to_vec(&msg).unwrap();
@@ -383,8 +428,8 @@ mod tests {
             current: Position::new(10, 10)
         }.label().is_empty());
         assert!(!CursorActivity::Selected { shape_id: crate::document::ShapeId::new() }.label().is_empty());
-        assert!(!CursorActivity::Dragging { shape_id: crate::document::ShapeId::new() }.label().is_empty());
-        assert!(!CursorActivity::Resizing { shape_id: crate::document::ShapeId::new() }.label().is_empty());
+        assert!(!CursorActivity::Dragging { shape_id: crate::document::ShapeId::new(), delta: (0, 0) }.label().is_empty());
+        assert!(!CursorActivity::Resizing { shape_id: crate::document::ShapeId::new(), preview_bounds: None }.label().is_empty());
         assert!(!CursorActivity::Typing { position: Position::new(0, 0) }.label().is_empty());
     }
 }

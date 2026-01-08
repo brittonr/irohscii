@@ -224,3 +224,168 @@ pub fn load_ascii(path: &Path) -> Result<Vec<ShapeKind>> {
 
     Ok(shapes)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn make_rect(x: i32, y: i32, w: i32, h: i32) -> ShapeKind {
+        ShapeKind::Rectangle {
+            start: Position::new(x, y),
+            end: Position::new(x + w, y + h),
+            color: ShapeColor::default(),
+            label: None,
+        }
+    }
+
+    fn make_labeled_rect(x: i32, y: i32, w: i32, h: i32, label: &str) -> ShapeKind {
+        ShapeKind::Rectangle {
+            start: Position::new(x, y),
+            end: Position::new(x + w, y + h),
+            color: ShapeColor::default(),
+            label: Some(label.to_string()),
+        }
+    }
+
+    fn make_text(x: i32, y: i32, content: &str) -> ShapeKind {
+        ShapeKind::Text {
+            pos: Position::new(x, y),
+            content: content.to_string(),
+            color: ShapeColor::default(),
+        }
+    }
+
+    fn build_shape_view(shapes: Vec<ShapeKind>) -> ShapeView {
+        use crate::document::Document;
+
+        let mut doc = Document::new();
+        for kind in shapes {
+            doc.add_shape(kind).unwrap();
+        }
+        let mut view = ShapeView::default();
+        view.rebuild(&doc).unwrap();
+        view
+    }
+
+    #[test]
+    fn render_label_to_grid_centered() {
+        let mut grid = HashMap::new();
+        let bounds = (0, 0, 10, 5);
+        render_label_to_grid(&mut grid, bounds, "Hi");
+
+        // Label should be centered at y=2 (middle of 0-5)
+        // and horizontally centered in the shape
+        let y = 2;
+        let chars: String = (0..=10)
+            .filter_map(|x| grid.get(&Position::new(x, y)).copied())
+            .collect();
+        assert!(chars.contains("Hi"));
+    }
+
+    #[test]
+    fn render_shapes_to_text_empty() {
+        let view = build_shape_view(vec![]);
+        let result = render_shapes_to_text(&view);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn render_shapes_to_text_single_rect() {
+        let view = build_shape_view(vec![make_rect(0, 0, 5, 3)]);
+        let result = render_shapes_to_text(&view);
+
+        // Should contain the rectangle corners (Unicode box drawing)
+        assert!(result.contains('┌') || result.contains('─') || result.contains('│'));
+    }
+
+    #[test]
+    fn render_shapes_to_text_with_label() {
+        let view = build_shape_view(vec![make_labeled_rect(0, 0, 10, 4, "Test")]);
+        let result = render_shapes_to_text(&view);
+
+        // Should contain both the rectangle and the label
+        assert!(result.contains('┌') || result.contains('─'));
+        assert!(result.contains("Test"));
+    }
+
+    #[test]
+    fn render_shapes_to_text_text_shape() {
+        let view = build_shape_view(vec![make_text(0, 0, "Hello World")]);
+        let result = render_shapes_to_text(&view);
+
+        assert_eq!(result.trim(), "Hello World");
+    }
+
+    #[test]
+    fn save_and_load_ascii_roundtrip() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Create shapes and save
+        let view = build_shape_view(vec![make_rect(0, 0, 5, 3)]);
+        save_ascii(&view, &file_path).unwrap();
+
+        // Load and verify
+        let loaded_shapes = load_ascii(&file_path).unwrap();
+        assert!(!loaded_shapes.is_empty());
+
+        // All loaded shapes should be Text shapes
+        for shape in &loaded_shapes {
+            assert!(matches!(shape, ShapeKind::Text { .. }));
+        }
+    }
+
+    #[test]
+    fn save_ascii_creates_file() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        let view = build_shape_view(vec![make_text(0, 0, "Hello")]);
+        save_ascii(&view, &file_path).unwrap();
+
+        assert!(file_path.exists());
+    }
+
+    #[test]
+    fn load_ascii_preserves_lines() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Write a file manually
+        std::fs::write(&file_path, "Line 1\nLine 2\nLine 3").unwrap();
+
+        let shapes = load_ascii(&file_path).unwrap();
+        assert_eq!(shapes.len(), 3);
+
+        // Check each line is at correct y position
+        for (i, shape) in shapes.iter().enumerate() {
+            if let ShapeKind::Text { pos, content, .. } = shape {
+                assert_eq!(pos.y, i as i32);
+                assert_eq!(pos.x, 0);
+                assert!(!content.is_empty());
+            } else {
+                panic!("Expected Text shape");
+            }
+        }
+    }
+
+    #[test]
+    fn load_ascii_skips_empty_lines() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Write a file with empty lines
+        std::fs::write(&file_path, "Line 1\n\nLine 3").unwrap();
+
+        let shapes = load_ascii(&file_path).unwrap();
+        // Should have 2 shapes (empty line skipped)
+        assert_eq!(shapes.len(), 2);
+    }
+
+    #[test]
+    fn load_ascii_nonexistent_file() {
+        let result = load_ascii(Path::new("/nonexistent/path/file.txt"));
+        assert!(result.is_err());
+    }
+}

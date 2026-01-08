@@ -751,3 +751,300 @@ fn render_star(
         .unwrap();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shapes::ShapeColor;
+
+    fn make_rect(x: i32, y: i32, w: i32, h: i32) -> ShapeKind {
+        ShapeKind::Rectangle {
+            start: Position::new(x, y),
+            end: Position::new(x + w, y + h),
+            color: ShapeColor::default(),
+            label: None,
+        }
+    }
+
+    fn make_labeled_rect(x: i32, y: i32, w: i32, h: i32, label: &str) -> ShapeKind {
+        ShapeKind::Rectangle {
+            start: Position::new(x, y),
+            end: Position::new(x + w, y + h),
+            color: ShapeColor::default(),
+            label: Some(label.to_string()),
+        }
+    }
+
+    fn make_line(x1: i32, y1: i32, x2: i32, y2: i32) -> ShapeKind {
+        ShapeKind::Line {
+            start: Position::new(x1, y1),
+            end: Position::new(x2, y2),
+            color: ShapeColor::default(),
+            style: LineStyle::Straight,
+            start_connection: None,
+            end_connection: None,
+            label: None,
+        }
+    }
+
+    fn make_arrow(x1: i32, y1: i32, x2: i32, y2: i32) -> ShapeKind {
+        ShapeKind::Arrow {
+            start: Position::new(x1, y1),
+            end: Position::new(x2, y2),
+            color: ShapeColor::default(),
+            style: LineStyle::Straight,
+            start_connection: None,
+            end_connection: None,
+            label: None,
+        }
+    }
+
+    fn make_ellipse(cx: i32, cy: i32, rx: i32, ry: i32) -> ShapeKind {
+        ShapeKind::Ellipse {
+            center: Position::new(cx, cy),
+            radius_x: rx,
+            radius_y: ry,
+            color: ShapeColor::default(),
+            label: None,
+        }
+    }
+
+    fn make_text(x: i32, y: i32, content: &str) -> ShapeKind {
+        ShapeKind::Text {
+            pos: Position::new(x, y),
+            content: content.to_string(),
+            color: ShapeColor::default(),
+        }
+    }
+
+    fn build_shape_view(shapes: Vec<ShapeKind>) -> ShapeView {
+        use crate::document::Document;
+
+        let mut doc = Document::new();
+        for kind in shapes {
+            doc.add_shape(kind).unwrap();
+        }
+        let mut view = ShapeView::default();
+        view.rebuild(&doc).unwrap();
+        view
+    }
+
+    // --- Coordinate conversion tests ---
+
+    #[test]
+    fn to_svg_coords_origin() {
+        let (x, y) = to_svg_coords(Position::new(0, 0));
+        assert_eq!(x, 0);
+        assert_eq!(y, 0);
+    }
+
+    #[test]
+    fn to_svg_coords_positive() {
+        let (x, y) = to_svg_coords(Position::new(10, 5));
+        assert_eq!(x, 10 * CHAR_WIDTH);
+        assert_eq!(y, 5 * CHAR_HEIGHT);
+    }
+
+    #[test]
+    fn to_svg_coords_negative() {
+        let (x, y) = to_svg_coords(Position::new(-5, -3));
+        assert_eq!(x, -5 * CHAR_WIDTH);
+        assert_eq!(y, -3 * CHAR_HEIGHT);
+    }
+
+    // --- Bounds calculation tests ---
+
+    #[test]
+    fn calculate_bounds_empty() {
+        let view = build_shape_view(vec![]);
+        let bounds = calculate_bounds(&view);
+        assert_eq!(bounds, (0, 0, 10, 10)); // Default for empty
+    }
+
+    #[test]
+    fn calculate_bounds_single_rect() {
+        let view = build_shape_view(vec![make_rect(5, 5, 10, 8)]);
+        let (min_x, min_y, max_x, max_y) = calculate_bounds(&view);
+        assert!(min_x <= 5);
+        assert!(min_y <= 5);
+        assert!(max_x >= 15);
+        assert!(max_y >= 13);
+    }
+
+    #[test]
+    fn calculate_bounds_multiple_shapes() {
+        let view = build_shape_view(vec![
+            make_rect(0, 0, 5, 5),
+            make_rect(20, 20, 5, 5),
+        ]);
+        let (min_x, min_y, max_x, max_y) = calculate_bounds(&view);
+        assert!(min_x <= 0);
+        assert!(min_y <= 0);
+        assert!(max_x >= 25);
+        assert!(max_y >= 25);
+    }
+
+    // --- SVG export tests ---
+
+    #[test]
+    fn export_svg_has_header() {
+        let view = build_shape_view(vec![make_rect(0, 0, 5, 5)]);
+        let svg = export_svg(&view);
+
+        assert!(svg.starts_with("<?xml version=\"1.0\""));
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("xmlns="));
+    }
+
+    #[test]
+    fn export_svg_has_footer() {
+        let view = build_shape_view(vec![make_rect(0, 0, 5, 5)]);
+        let svg = export_svg(&view);
+
+        assert!(svg.trim().ends_with("</svg>"));
+    }
+
+    #[test]
+    fn export_svg_has_arrow_marker() {
+        let view = build_shape_view(vec![make_arrow(0, 0, 10, 10)]);
+        let svg = export_svg(&view);
+
+        assert!(svg.contains("<defs>"));
+        assert!(svg.contains("id=\"arrowhead\""));
+        assert!(svg.contains("</defs>"));
+    }
+
+    #[test]
+    fn export_svg_rectangle() {
+        let view = build_shape_view(vec![make_rect(0, 0, 10, 5)]);
+        let svg = export_svg(&view);
+
+        assert!(svg.contains("<rect"));
+        assert!(svg.contains("stroke="));
+        assert!(svg.contains("fill="));
+    }
+
+    #[test]
+    fn export_svg_line() {
+        let view = build_shape_view(vec![make_line(0, 0, 10, 10)]);
+        let svg = export_svg(&view);
+
+        assert!(svg.contains("<line"));
+        assert!(svg.contains("x1="));
+        assert!(svg.contains("y1="));
+        assert!(svg.contains("x2="));
+        assert!(svg.contains("y2="));
+    }
+
+    #[test]
+    fn export_svg_arrow() {
+        let view = build_shape_view(vec![make_arrow(0, 0, 10, 10)]);
+        let svg = export_svg(&view);
+
+        // Arrow should reference the marker
+        assert!(svg.contains("marker-end=\"url(#arrowhead)\""));
+    }
+
+    #[test]
+    fn export_svg_ellipse() {
+        let view = build_shape_view(vec![make_ellipse(10, 10, 5, 3)]);
+        let svg = export_svg(&view);
+
+        assert!(svg.contains("<ellipse"));
+        assert!(svg.contains("cx="));
+        assert!(svg.contains("cy="));
+        assert!(svg.contains("rx="));
+        assert!(svg.contains("ry="));
+    }
+
+    #[test]
+    fn export_svg_text() {
+        let view = build_shape_view(vec![make_text(0, 0, "Hello World")]);
+        let svg = export_svg(&view);
+
+        assert!(svg.contains("<text"));
+        assert!(svg.contains("Hello World"));
+    }
+
+    #[test]
+    fn export_svg_with_label() {
+        let view = build_shape_view(vec![make_labeled_rect(0, 0, 10, 5, "Label")]);
+        let svg = export_svg(&view);
+
+        assert!(svg.contains("<rect"));
+        assert!(svg.contains("<text"));
+        assert!(svg.contains("Label"));
+    }
+
+    // --- XML escaping tests ---
+
+    #[test]
+    fn escape_xml_ampersand() {
+        assert_eq!(escape_xml("A & B"), "A &amp; B");
+    }
+
+    #[test]
+    fn escape_xml_less_than() {
+        assert_eq!(escape_xml("A < B"), "A &lt; B");
+    }
+
+    #[test]
+    fn escape_xml_greater_than() {
+        assert_eq!(escape_xml("A > B"), "A &gt; B");
+    }
+
+    #[test]
+    fn escape_xml_quote() {
+        assert_eq!(escape_xml("A \"B\" C"), "A &quot;B&quot; C");
+    }
+
+    #[test]
+    fn escape_xml_apostrophe() {
+        assert_eq!(escape_xml("A 'B' C"), "A &apos;B&apos; C");
+    }
+
+    #[test]
+    fn escape_xml_multiple() {
+        assert_eq!(escape_xml("<>&\"'"), "&lt;&gt;&amp;&quot;&apos;");
+    }
+
+    #[test]
+    fn escape_xml_none_needed() {
+        assert_eq!(escape_xml("Hello World"), "Hello World");
+    }
+
+    // --- Save SVG tests ---
+
+    #[test]
+    fn save_svg_creates_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.svg");
+
+        let view = build_shape_view(vec![make_rect(0, 0, 10, 5)]);
+        save_svg(&view, &file_path).unwrap();
+
+        assert!(file_path.exists());
+
+        // Verify content
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert!(content.contains("<svg"));
+        assert!(content.contains("</svg>"));
+    }
+
+    // --- Color export tests ---
+
+    #[test]
+    fn export_svg_with_color() {
+        let rect = ShapeKind::Rectangle {
+            start: Position::new(0, 0),
+            end: Position::new(10, 5),
+            color: ShapeColor::Red,
+            label: None,
+        };
+        let view = build_shape_view(vec![rect]);
+        let svg = export_svg(&view);
+
+        // Should contain the red color
+        assert!(svg.contains("red") || svg.contains("Red") || svg.contains("#"));
+    }
+}

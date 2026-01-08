@@ -1939,3 +1939,462 @@ fn find_corresponding_snap(pos: &Position, old_snaps: &[Position], new_snaps: &[
     // If we found a matching snap point and the new snaps have the same index, return it
     best_idx.and_then(|idx| new_snaps.get(idx).copied())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_rect(x: i32, y: i32, w: i32, h: i32) -> ShapeKind {
+        ShapeKind::Rectangle {
+            start: Position::new(x, y),
+            end: Position::new(x + w, y + h),
+            color: ShapeColor::default(),
+            label: None,
+        }
+    }
+
+    fn make_line(x1: i32, y1: i32, x2: i32, y2: i32) -> ShapeKind {
+        ShapeKind::Line {
+            start: Position::new(x1, y1),
+            end: Position::new(x2, y2),
+            color: ShapeColor::default(),
+            style: LineStyle::Straight,
+            start_connection: None,
+            end_connection: None,
+            label: None,
+        }
+    }
+
+    // --- DocumentId tests ---
+
+    #[test]
+    fn document_id_new_unique() {
+        let id1 = DocumentId::new();
+        let id2 = DocumentId::new();
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn document_id_display() {
+        let id = DocumentId::new();
+        let s = format!("{}", id);
+        assert!(!s.is_empty());
+        assert!(uuid::Uuid::parse_str(&s).is_ok());
+    }
+
+    // --- ShapeId tests ---
+
+    #[test]
+    fn shape_id_new_unique() {
+        let id1 = ShapeId::new();
+        let id2 = ShapeId::new();
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn shape_id_display() {
+        let id = ShapeId::new();
+        let s = format!("{}", id);
+        assert!(!s.is_empty());
+        assert!(uuid::Uuid::parse_str(&s).is_ok());
+    }
+
+    // --- GroupId tests ---
+
+    #[test]
+    fn group_id_new_unique() {
+        let id1 = GroupId::new();
+        let id2 = GroupId::new();
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn group_id_display() {
+        let id = GroupId::new();
+        let s = format!("{}", id);
+        assert!(!s.is_empty());
+        assert!(uuid::Uuid::parse_str(&s).is_ok());
+    }
+
+    // --- Document tests ---
+
+    #[test]
+    fn document_new() {
+        let doc = Document::new();
+        assert!(!doc.is_dirty());
+        assert!(doc.storage_path().is_none());
+    }
+
+    #[test]
+    fn document_add_shape() {
+        let mut doc = Document::new();
+        let id = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        assert!(doc.is_dirty());
+
+        let shapes = doc.read_all_shapes().unwrap();
+        assert_eq!(shapes.len(), 1);
+        assert_eq!(shapes[0].0, id);
+    }
+
+    #[test]
+    fn document_add_multiple_shapes() {
+        let mut doc = Document::new();
+        let id1 = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        let id2 = doc.add_shape(make_rect(20, 20, 10, 5)).unwrap();
+        let id3 = doc.add_shape(make_line(0, 0, 10, 10)).unwrap();
+
+        let shapes = doc.read_all_shapes().unwrap();
+        assert_eq!(shapes.len(), 3);
+
+        let ids: Vec<_> = shapes.iter().map(|(id, _)| *id).collect();
+        assert!(ids.contains(&id1));
+        assert!(ids.contains(&id2));
+        assert!(ids.contains(&id3));
+    }
+
+    #[test]
+    fn document_update_shape() {
+        let mut doc = Document::new();
+        let id = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+
+        // Update the shape
+        let new_rect = make_rect(5, 5, 15, 10);
+        doc.update_shape(id, new_rect.clone()).unwrap();
+
+        let shapes = doc.read_all_shapes().unwrap();
+        assert_eq!(shapes.len(), 1);
+
+        // Verify the shape was updated
+        if let ShapeKind::Rectangle { start, end, .. } = &shapes[0].1 {
+            assert_eq!(start.x, 5);
+            assert_eq!(start.y, 5);
+            assert_eq!(end.x, 20);
+            assert_eq!(end.y, 15);
+        } else {
+            panic!("Expected Rectangle");
+        }
+    }
+
+    #[test]
+    fn document_delete_shape() {
+        let mut doc = Document::new();
+        let id1 = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        let id2 = doc.add_shape(make_rect(20, 20, 10, 5)).unwrap();
+
+        doc.delete_shape(id1).unwrap();
+
+        let shapes = doc.read_all_shapes().unwrap();
+        assert_eq!(shapes.len(), 1);
+        assert_eq!(shapes[0].0, id2);
+    }
+
+    // --- Shape order tests ---
+
+    #[test]
+    fn document_shape_order() {
+        let mut doc = Document::new();
+        let id1 = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        let id2 = doc.add_shape(make_rect(20, 20, 10, 5)).unwrap();
+        let id3 = doc.add_shape(make_rect(40, 40, 10, 5)).unwrap();
+
+        let order = doc.read_shape_order().unwrap();
+        assert_eq!(order.len(), 3);
+        // New shapes are added to the end (top)
+        assert_eq!(order[0], id1);
+        assert_eq!(order[1], id2);
+        assert_eq!(order[2], id3);
+    }
+
+    #[test]
+    fn document_bring_to_front() {
+        let mut doc = Document::new();
+        let id1 = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        let id2 = doc.add_shape(make_rect(20, 20, 10, 5)).unwrap();
+        let id3 = doc.add_shape(make_rect(40, 40, 10, 5)).unwrap();
+
+        doc.bring_to_front(&[id1]).unwrap();
+
+        let order = doc.read_shape_order().unwrap();
+        assert_eq!(order, vec![id2, id3, id1]);
+    }
+
+    #[test]
+    fn document_send_to_back() {
+        let mut doc = Document::new();
+        let id1 = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        let id2 = doc.add_shape(make_rect(20, 20, 10, 5)).unwrap();
+        let id3 = doc.add_shape(make_rect(40, 40, 10, 5)).unwrap();
+
+        doc.send_to_back(&[id3]).unwrap();
+
+        let order = doc.read_shape_order().unwrap();
+        assert_eq!(order, vec![id3, id1, id2]);
+    }
+
+    #[test]
+    fn document_bring_forward() {
+        let mut doc = Document::new();
+        let id1 = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        let id2 = doc.add_shape(make_rect(20, 20, 10, 5)).unwrap();
+        let id3 = doc.add_shape(make_rect(40, 40, 10, 5)).unwrap();
+
+        doc.bring_forward(&[id1]).unwrap();
+
+        let order = doc.read_shape_order().unwrap();
+        assert_eq!(order, vec![id2, id1, id3]);
+    }
+
+    #[test]
+    fn document_send_backward() {
+        let mut doc = Document::new();
+        let id1 = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        let id2 = doc.add_shape(make_rect(20, 20, 10, 5)).unwrap();
+        let id3 = doc.add_shape(make_rect(40, 40, 10, 5)).unwrap();
+
+        doc.send_backward(&[id3]).unwrap();
+
+        let order = doc.read_shape_order().unwrap();
+        assert_eq!(order, vec![id1, id3, id2]);
+    }
+
+    // --- Layer tests ---
+
+    #[test]
+    fn document_default_layer() {
+        let doc = Document::new();
+        let layers = doc.read_all_layers().unwrap();
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0].name, "Layer 1");
+        assert!(layers[0].visible);
+        assert!(!layers[0].locked);
+    }
+
+    #[test]
+    fn document_create_layer() {
+        let mut doc = Document::new();
+        let id = doc.create_layer("Layer 2").unwrap();
+
+        let layers = doc.read_all_layers().unwrap();
+        assert_eq!(layers.len(), 2);
+
+        let new_layer = layers.iter().find(|l| l.id == id).unwrap();
+        assert_eq!(new_layer.name, "Layer 2");
+    }
+
+    #[test]
+    fn document_delete_layer() {
+        let mut doc = Document::new();
+        let id1 = doc.create_layer("Layer 2").unwrap();
+        let _id2 = doc.create_layer("Layer 3").unwrap();
+
+        doc.delete_layer(id1).unwrap();
+
+        let layers = doc.read_all_layers().unwrap();
+        assert_eq!(layers.len(), 2); // Original layer + Layer 3
+
+        assert!(!layers.iter().any(|l| l.id == id1));
+    }
+
+    #[test]
+    fn document_rename_layer() {
+        let mut doc = Document::new();
+        let layers = doc.read_all_layers().unwrap();
+        let layer_id = layers[0].id;
+
+        doc.rename_layer(layer_id, "Renamed Layer").unwrap();
+
+        let layer = doc.read_layer(layer_id).unwrap().unwrap();
+        assert_eq!(layer.name, "Renamed Layer");
+    }
+
+    #[test]
+    fn document_layer_visibility() {
+        let mut doc = Document::new();
+        let layers = doc.read_all_layers().unwrap();
+        let layer_id = layers[0].id;
+
+        doc.set_layer_visible(layer_id, false).unwrap();
+
+        let layer = doc.read_layer(layer_id).unwrap().unwrap();
+        assert!(!layer.visible);
+    }
+
+    #[test]
+    fn document_layer_locked() {
+        let mut doc = Document::new();
+        let layers = doc.read_all_layers().unwrap();
+        let layer_id = layers[0].id;
+
+        doc.set_layer_locked(layer_id, true).unwrap();
+
+        let layer = doc.read_layer(layer_id).unwrap().unwrap();
+        assert!(layer.locked);
+    }
+
+    // --- Group tests ---
+
+    #[test]
+    fn document_create_group() {
+        let mut doc = Document::new();
+        let id1 = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        let id2 = doc.add_shape(make_rect(20, 20, 10, 5)).unwrap();
+
+        let group_id = doc.create_group(&[id1, id2], None).unwrap();
+
+        let group = doc.read_group(group_id).unwrap().unwrap();
+        assert_eq!(group.members.len(), 2);
+        assert!(group.members.contains(&id1));
+        assert!(group.members.contains(&id2));
+    }
+
+    #[test]
+    fn document_delete_group() {
+        let mut doc = Document::new();
+        let id1 = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        let id2 = doc.add_shape(make_rect(20, 20, 10, 5)).unwrap();
+
+        let group_id = doc.create_group(&[id1, id2], None).unwrap();
+        doc.delete_group(group_id).unwrap();
+
+        let group = doc.read_group(group_id).unwrap();
+        assert!(group.is_none());
+    }
+
+    #[test]
+    fn document_read_all_groups() {
+        let mut doc = Document::new();
+        let id1 = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        let id2 = doc.add_shape(make_rect(20, 20, 10, 5)).unwrap();
+        let id3 = doc.add_shape(make_rect(40, 40, 10, 5)).unwrap();
+        let id4 = doc.add_shape(make_rect(60, 60, 10, 5)).unwrap();
+
+        let _group1 = doc.create_group(&[id1, id2], None).unwrap();
+        let _group2 = doc.create_group(&[id3, id4], None).unwrap();
+
+        let groups = doc.read_all_groups().unwrap();
+        assert_eq!(groups.len(), 2);
+    }
+
+    // --- Persistence tests ---
+
+    #[test]
+    fn document_save_and_load() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test_doc.automerge");
+
+        // Create and save document
+        let mut doc = Document::new();
+        let id = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        doc.save_to(&file_path).unwrap();
+
+        // Load and verify
+        let loaded_doc = Document::load(&file_path).unwrap();
+        let shapes = loaded_doc.read_all_shapes().unwrap();
+        assert_eq!(shapes.len(), 1);
+        assert_eq!(shapes[0].0, id);
+    }
+
+    #[test]
+    fn document_merge() {
+        // Create a document and save it, then load two copies to simulate P2P
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("shared.automerge");
+
+        // Create original document with one shape and save
+        let mut original = Document::new();
+        original.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        original.save_to(&file_path).unwrap();
+
+        // Load two copies (simulating two peers)
+        let mut doc1 = Document::load(&file_path).unwrap();
+        let mut doc2 = Document::load(&file_path).unwrap();
+
+        // Each peer makes an edit
+        doc1.add_shape(make_rect(50, 50, 10, 5)).unwrap();
+        doc2.add_shape(make_rect(100, 100, 10, 5)).unwrap();
+
+        // Get doc2's automerge for merge
+        let mut doc2_am = doc2.clone_automerge();
+
+        // Merge doc2's changes into doc1
+        doc1.merge(&mut doc2_am).unwrap();
+
+        // After merge, doc1 should have all 3 shapes
+        let shapes = doc1.read_all_shapes().unwrap();
+        assert_eq!(shapes.len(), 3);
+    }
+
+    // --- Dirty flag tests ---
+
+    #[test]
+    fn document_dirty_flag() {
+        let mut doc = Document::new();
+        assert!(!doc.is_dirty());
+
+        doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        assert!(doc.is_dirty());
+
+        // Save clears dirty flag
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.automerge");
+        doc.save_to(&file_path).unwrap();
+        assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn document_mark_dirty() {
+        let mut doc = Document::new();
+        assert!(!doc.is_dirty());
+
+        doc.mark_dirty();
+        assert!(doc.is_dirty());
+    }
+
+    // --- Helper function tests ---
+
+    #[test]
+    fn str_to_shape_color_all_colors() {
+        assert_eq!(str_to_shape_color("White"), ShapeColor::White);
+        assert_eq!(str_to_shape_color("Black"), ShapeColor::Black);
+        assert_eq!(str_to_shape_color("Red"), ShapeColor::Red);
+        assert_eq!(str_to_shape_color("Green"), ShapeColor::Green);
+        assert_eq!(str_to_shape_color("Yellow"), ShapeColor::Yellow);
+        assert_eq!(str_to_shape_color("Blue"), ShapeColor::Blue);
+        assert_eq!(str_to_shape_color("Magenta"), ShapeColor::Magenta);
+        assert_eq!(str_to_shape_color("Cyan"), ShapeColor::Cyan);
+        assert_eq!(str_to_shape_color("Gray"), ShapeColor::Gray);
+        assert_eq!(str_to_shape_color("DarkGray"), ShapeColor::DarkGray);
+        assert_eq!(str_to_shape_color("LightRed"), ShapeColor::LightRed);
+        assert_eq!(str_to_shape_color("LightGreen"), ShapeColor::LightGreen);
+        assert_eq!(str_to_shape_color("LightYellow"), ShapeColor::LightYellow);
+        assert_eq!(str_to_shape_color("LightBlue"), ShapeColor::LightBlue);
+        assert_eq!(str_to_shape_color("LightMagenta"), ShapeColor::LightMagenta);
+        assert_eq!(str_to_shape_color("LightCyan"), ShapeColor::LightCyan);
+    }
+
+    #[test]
+    fn str_to_shape_color_unknown() {
+        assert_eq!(str_to_shape_color("Unknown"), ShapeColor::default());
+        assert_eq!(str_to_shape_color(""), ShapeColor::default());
+    }
+
+    #[test]
+    fn find_corresponding_snap_basic() {
+        let old_snaps = vec![Position::new(0, 0), Position::new(10, 0), Position::new(5, 5)];
+        let new_snaps = vec![Position::new(2, 2), Position::new(12, 2), Position::new(7, 7)];
+
+        // Position closest to old_snaps[0] should map to new_snaps[0]
+        let result = find_corresponding_snap(&Position::new(1, 1), &old_snaps, &new_snaps);
+        assert_eq!(result, Some(Position::new(2, 2)));
+
+        // Position closest to old_snaps[1] should map to new_snaps[1]
+        let result = find_corresponding_snap(&Position::new(9, 0), &old_snaps, &new_snaps);
+        assert_eq!(result, Some(Position::new(12, 2)));
+    }
+
+    #[test]
+    fn find_corresponding_snap_empty() {
+        let result = find_corresponding_snap(&Position::new(0, 0), &[], &[]);
+        assert_eq!(result, None);
+    }
+}

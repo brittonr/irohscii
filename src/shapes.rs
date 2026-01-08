@@ -293,6 +293,11 @@ impl ShapeKind {
         }
     }
 
+    /// Get the bounding box of this shape as (min_x, min_y, max_x, max_y)
+    pub fn bounds(&self) -> (i32, i32, i32, i32) {
+        CachedShape::compute_bounds(self)
+    }
+
     /// Create a translated copy of this shape
     pub fn translated(&self, dx: i32, dy: i32) -> Self {
         match self {
@@ -926,7 +931,7 @@ impl CachedShape {
         self.kind = kind;
     }
 
-    fn compute_bounds(kind: &ShapeKind) -> (i32, i32, i32, i32) {
+    pub fn compute_bounds(kind: &ShapeKind) -> (i32, i32, i32, i32) {
         match kind {
             ShapeKind::Line { start, end, .. } | ShapeKind::Arrow { start, end, .. } => {
                 let min_x = start.x.min(end.x);
@@ -1750,4 +1755,446 @@ fn find_corresponding_snap(pos: &Position, old_snaps: &[Position], new_snaps: &[
 
     // If we found a matching snap point and the new snaps have the same index, return it
     best_idx.and_then(|idx| new_snaps.get(idx).copied())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========== ShapeColor tests ==========
+
+    #[test]
+    fn shape_color_default() {
+        assert_eq!(ShapeColor::default(), ShapeColor::White);
+    }
+
+    #[test]
+    fn shape_color_cycle_all() {
+        let mut color = ShapeColor::White;
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..16 {
+            seen.insert(std::mem::discriminant(&color));
+            color = color.next();
+        }
+        assert_eq!(seen.len(), 16);
+        assert_eq!(color, ShapeColor::White); // Completes cycle
+    }
+
+    #[test]
+    fn shape_color_to_css() {
+        assert_eq!(ShapeColor::White.to_css(), "white");
+        assert_eq!(ShapeColor::Black.to_css(), "black");
+        assert_eq!(ShapeColor::Red.to_css(), "#cd0000");
+        assert_eq!(ShapeColor::LightRed.to_css(), "#ff0000");
+    }
+
+    #[test]
+    fn shape_color_name() {
+        assert_eq!(ShapeColor::White.name(), "White");
+        assert_eq!(ShapeColor::LightMagenta.name(), "LightMagenta");
+    }
+
+    // ========== ShapeKind tests ==========
+
+    fn make_rect(x1: i32, y1: i32, x2: i32, y2: i32) -> ShapeKind {
+        ShapeKind::Rectangle {
+            start: Position::new(x1, y1),
+            end: Position::new(x2, y2),
+            label: None,
+            color: ShapeColor::White,
+        }
+    }
+
+    fn make_line(x1: i32, y1: i32, x2: i32, y2: i32) -> ShapeKind {
+        ShapeKind::Line {
+            start: Position::new(x1, y1),
+            end: Position::new(x2, y2),
+            style: LineStyle::Straight,
+            start_connection: None,
+            end_connection: None,
+            label: None,
+            color: ShapeColor::White,
+        }
+    }
+
+    #[test]
+    fn shape_kind_type_name() {
+        assert_eq!(make_rect(0, 0, 10, 10).type_name(), "Rectangle");
+        assert_eq!(make_line(0, 0, 10, 10).type_name(), "Line");
+        assert_eq!(
+            ShapeKind::Text {
+                pos: Position::new(0, 0),
+                content: "test".to_string(),
+                color: ShapeColor::White
+            }
+            .type_name(),
+            "Text"
+        );
+    }
+
+    #[test]
+    fn shape_kind_translated_rectangle() {
+        let rect = make_rect(0, 0, 10, 5);
+        let translated = rect.translated(5, 3);
+        if let ShapeKind::Rectangle { start, end, .. } = translated {
+            assert_eq!(start, Position::new(5, 3));
+            assert_eq!(end, Position::new(15, 8));
+        } else {
+            panic!("Expected Rectangle");
+        }
+    }
+
+    #[test]
+    fn shape_kind_translated_line() {
+        let line = make_line(0, 0, 10, 10);
+        let translated = line.translated(-5, 2);
+        if let ShapeKind::Line { start, end, .. } = translated {
+            assert_eq!(start, Position::new(-5, 2));
+            assert_eq!(end, Position::new(5, 12));
+        } else {
+            panic!("Expected Line");
+        }
+    }
+
+    #[test]
+    fn shape_kind_translated_freehand() {
+        let freehand = ShapeKind::Freehand {
+            points: vec![Position::new(0, 0), Position::new(1, 1), Position::new(2, 2)],
+            char: '*',
+            label: None,
+            color: ShapeColor::White,
+        };
+        let translated = freehand.translated(10, 10);
+        if let ShapeKind::Freehand { points, .. } = translated {
+            assert_eq!(points[0], Position::new(10, 10));
+            assert_eq!(points[1], Position::new(11, 11));
+            assert_eq!(points[2], Position::new(12, 12));
+        } else {
+            panic!("Expected Freehand");
+        }
+    }
+
+    #[test]
+    fn shape_kind_translated_text() {
+        let text = ShapeKind::Text {
+            pos: Position::new(5, 5),
+            content: "Hello".to_string(),
+            color: ShapeColor::White,
+        };
+        let translated = text.translated(3, 2);
+        if let ShapeKind::Text { pos, content, .. } = translated {
+            assert_eq!(pos, Position::new(8, 7));
+            assert_eq!(content, "Hello");
+        } else {
+            panic!("Expected Text");
+        }
+    }
+
+    #[test]
+    fn shape_kind_label() {
+        let rect = ShapeKind::Rectangle {
+            start: Position::new(0, 0),
+            end: Position::new(10, 5),
+            label: Some("Test".to_string()),
+            color: ShapeColor::White,
+        };
+        assert_eq!(rect.label(), Some("Test"));
+
+        let rect_no_label = make_rect(0, 0, 10, 5);
+        assert_eq!(rect_no_label.label(), None);
+
+        // Text doesn't use label
+        let text = ShapeKind::Text {
+            pos: Position::new(0, 0),
+            content: "Hello".to_string(),
+            color: ShapeColor::White,
+        };
+        assert_eq!(text.label(), None);
+    }
+
+    #[test]
+    fn shape_kind_with_label() {
+        let rect = make_rect(0, 0, 10, 5);
+        let labeled = rect.with_label(Some("New Label".to_string()));
+        assert_eq!(labeled.label(), Some("New Label"));
+    }
+
+    #[test]
+    fn shape_kind_color() {
+        let rect = make_rect(0, 0, 10, 5);
+        assert_eq!(rect.color(), ShapeColor::White);
+    }
+
+    #[test]
+    fn shape_kind_with_color() {
+        let rect = make_rect(0, 0, 10, 5);
+        let colored = rect.with_color(ShapeColor::Red);
+        assert_eq!(colored.color(), ShapeColor::Red);
+    }
+
+    #[test]
+    fn shape_kind_supports_label() {
+        assert!(make_rect(0, 0, 10, 5).supports_label());
+        assert!(make_line(0, 0, 10, 5).supports_label());
+        assert!(
+            ShapeKind::Ellipse {
+                center: Position::new(5, 5),
+                radius_x: 3,
+                radius_y: 2,
+                label: None,
+                color: ShapeColor::White
+            }
+            .supports_label()
+        );
+
+        // Text does NOT support label (its content IS the label)
+        assert!(
+            !ShapeKind::Text {
+                pos: Position::new(0, 0),
+                content: "test".to_string(),
+                color: ShapeColor::White
+            }
+            .supports_label()
+        );
+    }
+
+    #[test]
+    fn shape_kind_snap_points_rectangle() {
+        let rect = make_rect(0, 0, 10, 6);
+        let snaps = rect.snap_points();
+        assert_eq!(snaps.len(), 8);
+        // Corners
+        assert!(snaps.contains(&Position::new(0, 0)));
+        assert!(snaps.contains(&Position::new(10, 0)));
+        assert!(snaps.contains(&Position::new(0, 6)));
+        assert!(snaps.contains(&Position::new(10, 6)));
+        // Midpoints
+        assert!(snaps.contains(&Position::new(5, 0)));
+        assert!(snaps.contains(&Position::new(5, 6)));
+        assert!(snaps.contains(&Position::new(0, 3)));
+        assert!(snaps.contains(&Position::new(10, 3)));
+    }
+
+    #[test]
+    fn shape_kind_snap_points_line() {
+        let line = make_line(0, 0, 10, 10);
+        let snaps = line.snap_points();
+        assert_eq!(snaps.len(), 2);
+        assert!(snaps.contains(&Position::new(0, 0)));
+        assert!(snaps.contains(&Position::new(10, 10)));
+    }
+
+    // ========== CachedShape tests ==========
+
+    #[test]
+    fn cached_shape_bounds_rectangle() {
+        let shape = CachedShape::new(ShapeId::new(), make_rect(5, 10, 15, 20));
+        assert_eq!(shape.bounds(), (5, 10, 15, 20));
+    }
+
+    #[test]
+    fn cached_shape_bounds_rectangle_swapped() {
+        let shape = CachedShape::new(ShapeId::new(), make_rect(15, 20, 5, 10));
+        assert_eq!(shape.bounds(), (5, 10, 15, 20));
+    }
+
+    #[test]
+    fn cached_shape_bounds_ellipse() {
+        let shape = CachedShape::new(
+            ShapeId::new(),
+            ShapeKind::Ellipse {
+                center: Position::new(10, 10),
+                radius_x: 5,
+                radius_y: 3,
+                label: None,
+                color: ShapeColor::White,
+            },
+        );
+        assert_eq!(shape.bounds(), (5, 7, 15, 13));
+    }
+
+    #[test]
+    fn cached_shape_bounds_text() {
+        let shape = CachedShape::new(
+            ShapeId::new(),
+            ShapeKind::Text {
+                pos: Position::new(5, 10),
+                content: "Hello".to_string(),
+                color: ShapeColor::White,
+            },
+        );
+        assert_eq!(shape.bounds(), (5, 10, 9, 10)); // 5 chars wide
+    }
+
+    #[test]
+    fn cached_shape_bounds_freehand_empty() {
+        let shape = CachedShape::new(
+            ShapeId::new(),
+            ShapeKind::Freehand {
+                points: vec![],
+                char: '*',
+                label: None,
+                color: ShapeColor::White,
+            },
+        );
+        assert_eq!(shape.bounds(), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn cached_shape_bounds_freehand() {
+        let shape = CachedShape::new(
+            ShapeId::new(),
+            ShapeKind::Freehand {
+                points: vec![
+                    Position::new(5, 5),
+                    Position::new(10, 3),
+                    Position::new(7, 8),
+                ],
+                char: '*',
+                label: None,
+                color: ShapeColor::White,
+            },
+        );
+        assert_eq!(shape.bounds(), (5, 3, 10, 8));
+    }
+
+    #[test]
+    fn cached_shape_snap_points() {
+        let shape = CachedShape::new(ShapeId::new(), make_rect(0, 0, 10, 6));
+        assert_eq!(shape.snap_points().len(), 8);
+    }
+
+    #[test]
+    fn cached_shape_contains() {
+        let shape = CachedShape::new(ShapeId::new(), make_rect(0, 0, 10, 10));
+        assert!(shape.contains(Position::new(5, 5)));
+        assert!(shape.contains(Position::new(0, 0)));
+        assert!(shape.contains(Position::new(10, 10)));
+        assert!(!shape.contains(Position::new(-1, 5)));
+        assert!(!shape.contains(Position::new(11, 5)));
+    }
+
+    #[test]
+    fn cached_shape_label() {
+        let shape = CachedShape::new(
+            ShapeId::new(),
+            ShapeKind::Rectangle {
+                start: Position::new(0, 0),
+                end: Position::new(10, 5),
+                label: Some("Test".to_string()),
+                color: ShapeColor::White,
+            },
+        );
+        assert_eq!(shape.label(), Some("Test"));
+    }
+
+    #[test]
+    fn cached_shape_resize_handles_rectangle() {
+        let shape = CachedShape::new(ShapeId::new(), make_rect(0, 0, 10, 10));
+        let handles = shape.resize_handles();
+        assert_eq!(handles.len(), 4);
+        assert!(handles.iter().any(|h| h.handle == ResizeHandle::TopLeft));
+        assert!(handles.iter().any(|h| h.handle == ResizeHandle::TopRight));
+        assert!(handles.iter().any(|h| h.handle == ResizeHandle::BottomLeft));
+        assert!(handles.iter().any(|h| h.handle == ResizeHandle::BottomRight));
+    }
+
+    #[test]
+    fn cached_shape_resize_handles_line() {
+        let shape = CachedShape::new(ShapeId::new(), make_line(0, 0, 10, 10));
+        let handles = shape.resize_handles();
+        assert_eq!(handles.len(), 2);
+        assert!(handles.iter().any(|h| h.handle == ResizeHandle::Start));
+        assert!(handles.iter().any(|h| h.handle == ResizeHandle::End));
+    }
+
+    // ========== resize_shape tests ==========
+
+    #[test]
+    fn resize_rectangle_bottom_right() {
+        let rect = make_rect(0, 0, 10, 10);
+        let resized = resize_shape(&rect, ResizeHandle::BottomRight, Position::new(20, 15));
+        if let ShapeKind::Rectangle { start, end, .. } = resized {
+            assert_eq!(start, Position::new(0, 0));
+            assert_eq!(end, Position::new(20, 15));
+        } else {
+            panic!("Expected Rectangle");
+        }
+    }
+
+    #[test]
+    fn resize_rectangle_top_left() {
+        let rect = make_rect(0, 0, 10, 10);
+        let resized = resize_shape(&rect, ResizeHandle::TopLeft, Position::new(-5, -5));
+        if let ShapeKind::Rectangle { start, end, .. } = resized {
+            assert_eq!(start, Position::new(-5, -5));
+            assert_eq!(end, Position::new(10, 10));
+        } else {
+            panic!("Expected Rectangle");
+        }
+    }
+
+    #[test]
+    fn resize_line_start() {
+        let line = make_line(0, 0, 10, 10);
+        let resized = resize_shape(&line, ResizeHandle::Start, Position::new(-5, -5));
+        if let ShapeKind::Line { start, end, .. } = resized {
+            assert_eq!(start, Position::new(-5, -5));
+            assert_eq!(end, Position::new(10, 10));
+        } else {
+            panic!("Expected Line");
+        }
+    }
+
+    #[test]
+    fn resize_line_end() {
+        let line = make_line(0, 0, 10, 10);
+        let resized = resize_shape(&line, ResizeHandle::End, Position::new(20, 5));
+        if let ShapeKind::Line { start, end, .. } = resized {
+            assert_eq!(start, Position::new(0, 0));
+            assert_eq!(end, Position::new(20, 5));
+        } else {
+            panic!("Expected Line");
+        }
+    }
+
+    #[test]
+    fn resize_ellipse() {
+        let ellipse = ShapeKind::Ellipse {
+            center: Position::new(10, 10),
+            radius_x: 5,
+            radius_y: 3,
+            label: None,
+            color: ShapeColor::White,
+        };
+        let resized = resize_shape(&ellipse, ResizeHandle::BottomRight, Position::new(20, 15));
+        if let ShapeKind::Ellipse {
+            center,
+            radius_x,
+            radius_y,
+            ..
+        } = resized
+        {
+            assert_eq!(center, Position::new(10, 10));
+            assert_eq!(radius_x, 10);
+            assert_eq!(radius_y, 5);
+        } else {
+            panic!("Expected Ellipse");
+        }
+    }
+
+    // ========== ShapeView tests ==========
+
+    #[test]
+    fn shape_view_new() {
+        let view = ShapeView::new();
+        assert!(view.is_empty());
+        assert_eq!(view.len(), 0);
+    }
+
+    #[test]
+    fn shape_view_default() {
+        let view = ShapeView::default();
+        assert!(view.is_empty());
+    }
 }

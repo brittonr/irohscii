@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ratatui::layout::Rect;
 
@@ -204,6 +205,8 @@ pub struct DragState {
     pub total_dx: i32,
     pub total_dy: i32,
     pub modified_shapes: Vec<ShapeId>,
+    /// When the drag started (epoch ms) for soft lock ordering
+    pub started_at_ms: u64,
 }
 
 /// State for resizing a shape
@@ -213,6 +216,10 @@ pub struct ResizeState {
     pub handle: ResizeHandle,
     pub original_kind: ShapeKind,
     pub modified_shapes: Vec<ShapeId>,
+    /// When the resize started (epoch ms) for soft lock ordering
+    pub started_at_ms: u64,
+    /// Current preview bounds (min, max) for remote ghost rendering
+    pub preview_bounds: Option<(Position, Position)>,
 }
 
 /// Orientation of a snap guide line
@@ -366,10 +373,12 @@ impl App {
         } else if let Some(ref drag_state) = self.drag_state {
             CursorActivity::Dragging {
                 shape_id: drag_state.shape_id,
+                delta: (drag_state.total_dx, drag_state.total_dy),
             }
         } else if let Some(ref resize_state) = self.resize_state {
             CursorActivity::Resizing {
                 shape_id: resize_state.shape_id,
+                preview_bounds: resize_state.preview_bounds,
             }
         } else if let Mode::TextInput { start_pos, .. } = &self.mode {
             CursorActivity::Typing { position: *start_pos }
@@ -407,11 +416,15 @@ impl App {
     /// Build presence data for broadcasting
     pub fn build_presence(&self, cursor_pos: Position) -> Option<PeerPresence> {
         let peer_id = self.local_peer_id?;
+        // Include drag/resize start time for soft lock ordering
+        let drag_start_ms = self.drag_state.as_ref().map(|d| d.started_at_ms)
+            .or_else(|| self.resize_state.as_ref().map(|r| r.started_at_ms));
         Some(PeerPresence::new(
             peer_id,
             cursor_pos,
             self.current_activity(),
             self.active_layer,
+            drag_start_ms,
         ))
     }
 
@@ -1443,6 +1456,23 @@ impl App {
             return;
         }
 
+        // Get current timestamp for soft lock ordering
+        let started_at_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        // Check if any remote peer is already dragging any of our selected shapes (soft lock)
+        if let Some(ref presence_mgr) = self.presence {
+            for &id in &self.selected {
+                if let Some(peer) = presence_mgr.get_dragger_for_shape(id) {
+                    // Another peer is dragging this shape - warn but allow
+                    self.set_warning(format!("{} is already moving this shape", peer.display_name()));
+                    break;
+                }
+            }
+        }
+
         self.save_undo_state();
         self.drag_state = Some(DragState {
             shape_id: ShapeId::default(), // Not used for multi-select
@@ -1450,6 +1480,7 @@ impl App {
             total_dx: 0,
             total_dy: 0,
             modified_shapes: Vec::new(),
+            started_at_ms,
         });
     }
 
@@ -1678,12 +1709,31 @@ impl App {
             // Capture the original kind before resize starts
             let original_kind = self.shape_view.get(id).map(|s| s.kind.clone());
             if let Some(original_kind) = original_kind {
+                // Get current timestamp for soft lock ordering
+                let started_at_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+
+                // Check if any remote peer is already resizing this shape (soft lock)
+                if let Some(ref presence_mgr) = self.presence {
+                    if let Some(peer) = presence_mgr.get_dragger_for_shape(id) {
+                        self.set_warning(format!("{} is already manipulating this shape", peer.display_name()));
+                    }
+                }
+
+                // Get initial preview bounds
+                let (min_x, min_y, max_x, max_y) = original_kind.bounds();
+                let preview_bounds = Some((Position::new(min_x, min_y), Position::new(max_x, max_y)));
+
                 self.save_undo_state();
                 self.resize_state = Some(ResizeState {
                     shape_id: id,
                     handle,
                     original_kind,
                     modified_shapes: vec![id],
+                    started_at_ms,
+                    preview_bounds,
                 });
                 self.set_status("Resizing shape");
                 return true;
@@ -1726,9 +1776,12 @@ impl App {
             modified_ids.push(id);
         }
 
-        // Track all modified shapes (dedupe happens at finish)
+        // Track all modified shapes and update preview bounds (dedupe happens at finish)
         if let Some(ref mut resize) = self.resize_state {
             resize.modified_shapes.extend(modified_ids);
+            // Update preview bounds for presence broadcast
+            let (min_x, min_y, max_x, max_y) = new_kind.bounds();
+            resize.preview_bounds = Some((Position::new(min_x, min_y), Position::new(max_x, max_y)));
         }
     }
 

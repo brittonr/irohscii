@@ -196,6 +196,51 @@ impl CanvasWidget<'_> {
         }
     }
 
+    /// Render a text string at a canvas position
+    fn render_text(&self, buf: &mut Buffer, area: Rect, pos: Position, text: &str, style: Style) {
+        for (i, ch) in text.chars().enumerate() {
+            let char_pos = Position::new(pos.x + i as i32, pos.y);
+            self.render_char(buf, area, char_pos, ch, style);
+        }
+    }
+
+    /// Render a dashed rectangle outline (for ghost shapes during remote drag/resize)
+    fn render_dashed_rect(&self, buf: &mut Buffer, area: Rect, min_x: i32, min_y: i32, max_x: i32, max_y: i32, style: Style) {
+        // Top edge (dashed horizontal line)
+        for x in min_x..=max_x {
+            let ch = if (x - min_x) % 2 == 0 { '╌' } else { ' ' };
+            if ch != ' ' {
+                self.render_char(buf, area, Position::new(x, min_y), ch, style);
+            }
+        }
+        // Bottom edge (dashed horizontal line)
+        for x in min_x..=max_x {
+            let ch = if (x - min_x) % 2 == 0 { '╌' } else { ' ' };
+            if ch != ' ' {
+                self.render_char(buf, area, Position::new(x, max_y), ch, style);
+            }
+        }
+        // Left edge (dashed vertical line)
+        for y in min_y..=max_y {
+            let ch = if (y - min_y) % 2 == 0 { '╎' } else { ' ' };
+            if ch != ' ' {
+                self.render_char(buf, area, Position::new(min_x, y), ch, style);
+            }
+        }
+        // Right edge (dashed vertical line)
+        for y in min_y..=max_y {
+            let ch = if (y - min_y) % 2 == 0 { '╎' } else { ' ' };
+            if ch != ' ' {
+                self.render_char(buf, area, Position::new(max_x, y), ch, style);
+            }
+        }
+        // Corners
+        self.render_char(buf, area, Position::new(min_x, min_y), '┌', style);
+        self.render_char(buf, area, Position::new(max_x, min_y), '┐', style);
+        self.render_char(buf, area, Position::new(min_x, max_y), '└', style);
+        self.render_char(buf, area, Position::new(max_x, max_y), '┘', style);
+    }
+
     fn render_grid(&self, buf: &mut Buffer, area: Rect) {
         if !self.app.grid_enabled {
             return;
@@ -652,14 +697,56 @@ impl CanvasWidget<'_> {
                     .add_modifier(Modifier::DIM);
                 self.render_shape_preview(buf, area, *tool, *start, *current, preview_style);
             }
-            CursorActivity::Selected { shape_id }
-            | CursorActivity::Dragging { shape_id }
-            | CursorActivity::Resizing { shape_id } => {
-                // Highlight the shape they're working with
+            CursorActivity::Selected { shape_id } => {
+                // Highlight the shape they have selected
                 if let Some(shape) = self.app.shape_view.get(*shape_id) {
                     let (min_x, min_y, max_x, max_y) = shape.bounds();
                     let highlight_style = Style::default().fg(color);
                     // Draw colored corners to show remote selection
+                    for (x, y, ch) in [
+                        (min_x - 1, min_y - 1, '╭'),
+                        (max_x + 1, min_y - 1, '╮'),
+                        (min_x - 1, max_y + 1, '╰'),
+                        (max_x + 1, max_y + 1, '╯'),
+                    ] {
+                        self.render_char(buf, area, Position::new(x, y), ch, highlight_style);
+                    }
+                }
+            }
+            CursorActivity::Dragging { shape_id, delta } => {
+                // Render ghost shape at the dragged position
+                if let Some(shape) = self.app.shape_view.get(*shape_id) {
+                    let (orig_min_x, orig_min_y, orig_max_x, orig_max_y) = shape.bounds();
+                    let (dx, dy) = *delta;
+                    // Ghost bounds at new position
+                    let ghost_min_x = orig_min_x + dx;
+                    let ghost_min_y = orig_min_y + dy;
+                    let ghost_max_x = orig_max_x + dx;
+                    let ghost_max_y = orig_max_y + dy;
+                    let ghost_style = Style::default().fg(color);
+                    // Draw dashed outline for the ghost shape
+                    self.render_dashed_rect(buf, area, ghost_min_x, ghost_min_y, ghost_max_x, ghost_max_y, ghost_style);
+                    // Show peer label above ghost
+                    let label = format!("{} moving", peer.display_name());
+                    let label_pos = Position::new(ghost_min_x, ghost_min_y.saturating_sub(1));
+                    self.render_text(buf, area, label_pos, &label, ghost_style);
+                }
+            }
+            CursorActivity::Resizing { shape_id, preview_bounds } => {
+                // Render ghost shape at the resized bounds
+                if let Some(bounds) = preview_bounds {
+                    let (min_pos, max_pos) = bounds;
+                    let ghost_style = Style::default().fg(color);
+                    // Draw dashed outline for the ghost shape
+                    self.render_dashed_rect(buf, area, min_pos.x, min_pos.y, max_pos.x, max_pos.y, ghost_style);
+                    // Show peer label above ghost
+                    let label = format!("{} resizing", peer.display_name());
+                    let label_pos = Position::new(min_pos.x, min_pos.y.saturating_sub(1));
+                    self.render_text(buf, area, label_pos, &label, ghost_style);
+                } else if let Some(shape) = self.app.shape_view.get(*shape_id) {
+                    // Fallback: show original shape with highlight
+                    let (min_x, min_y, max_x, max_y) = shape.bounds();
+                    let highlight_style = Style::default().fg(color);
                     for (x, y, ch) in [
                         (min_x - 1, min_y - 1, '╭'),
                         (max_x + 1, min_y - 1, '╮'),

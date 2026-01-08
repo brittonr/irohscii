@@ -1204,3 +1204,563 @@ fn draw_line_edge(points: &mut Vec<(Position, char)>, from: Position, to: Positi
         points.push((pos, ch));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========== Position tests ==========
+
+    #[test]
+    fn position_new() {
+        let pos = Position::new(10, 20);
+        assert_eq!(pos.x, 10);
+        assert_eq!(pos.y, 20);
+    }
+
+    #[test]
+    fn position_negative_coords() {
+        let pos = Position::new(-5, -10);
+        assert_eq!(pos.x, -5);
+        assert_eq!(pos.y, -10);
+    }
+
+    #[test]
+    fn position_equality() {
+        let p1 = Position::new(5, 10);
+        let p2 = Position::new(5, 10);
+        let p3 = Position::new(10, 5);
+        assert_eq!(p1, p2);
+        assert_ne!(p1, p3);
+    }
+
+    #[test]
+    fn position_hash() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(Position::new(1, 2));
+        set.insert(Position::new(1, 2)); // duplicate
+        set.insert(Position::new(3, 4));
+        assert_eq!(set.len(), 2);
+    }
+
+    // ========== Canvas tests ==========
+
+    #[test]
+    fn canvas_new_is_empty() {
+        let canvas = Canvas::new();
+        assert_eq!(canvas.get(Position::new(0, 0)), ' ');
+        assert!(canvas.bounds().is_none());
+    }
+
+    #[test]
+    fn canvas_default() {
+        let canvas = Canvas::default();
+        assert_eq!(canvas.get(Position::new(0, 0)), ' ');
+    }
+
+    #[test]
+    fn canvas_set_and_get() {
+        let mut canvas = Canvas::new();
+        canvas.set(Position::new(5, 5), 'X');
+        assert_eq!(canvas.get(Position::new(5, 5)), 'X');
+        assert_eq!(canvas.get(Position::new(0, 0)), ' ');
+    }
+
+    #[test]
+    fn canvas_set_space_removes() {
+        let mut canvas = Canvas::new();
+        canvas.set(Position::new(5, 5), 'X');
+        assert_eq!(canvas.get(Position::new(5, 5)), 'X');
+        canvas.set(Position::new(5, 5), ' ');
+        assert_eq!(canvas.get(Position::new(5, 5)), ' ');
+    }
+
+    #[test]
+    fn canvas_bounds_empty() {
+        let canvas = Canvas::new();
+        assert!(canvas.bounds().is_none());
+    }
+
+    #[test]
+    fn canvas_bounds_single_char() {
+        let mut canvas = Canvas::new();
+        canvas.set(Position::new(5, 10), 'X');
+        assert_eq!(canvas.bounds(), Some((5, 10, 5, 10)));
+    }
+
+    #[test]
+    fn canvas_bounds_multiple_chars() {
+        let mut canvas = Canvas::new();
+        canvas.set(Position::new(0, 0), 'A');
+        canvas.set(Position::new(10, 5), 'B');
+        canvas.set(Position::new(-3, 8), 'C');
+        assert_eq!(canvas.bounds(), Some((-3, 0, 10, 8)));
+    }
+
+    #[test]
+    fn canvas_clear() {
+        let mut canvas = Canvas::new();
+        canvas.set(Position::new(1, 1), 'X');
+        canvas.set(Position::new(2, 2), 'Y');
+        canvas.clear();
+        assert!(canvas.bounds().is_none());
+        assert_eq!(canvas.get(Position::new(1, 1)), ' ');
+    }
+
+    #[test]
+    fn canvas_to_string_and_from_string() {
+        let mut canvas = Canvas::new();
+        canvas.set(Position::new(0, 0), 'H');
+        canvas.set(Position::new(1, 0), 'i');
+        let content = canvas.to_string_content();
+        let loaded = Canvas::from_string(&content);
+        assert_eq!(loaded.get(Position::new(0, 0)), 'H');
+        assert_eq!(loaded.get(Position::new(1, 0)), 'i');
+    }
+
+    #[test]
+    fn canvas_to_string_empty() {
+        let canvas = Canvas::new();
+        assert_eq!(canvas.to_string_content(), "");
+    }
+
+    #[test]
+    fn canvas_draw_line() {
+        let mut canvas = Canvas::new();
+        canvas.draw_line(Position::new(0, 0), Position::new(3, 0), '-');
+        assert_eq!(canvas.get(Position::new(0, 0)), '-');
+        assert_eq!(canvas.get(Position::new(1, 0)), '-');
+        assert_eq!(canvas.get(Position::new(2, 0)), '-');
+        assert_eq!(canvas.get(Position::new(3, 0)), '-');
+    }
+
+    #[test]
+    fn canvas_draw_rect() {
+        let mut canvas = Canvas::new();
+        canvas.draw_rect(Position::new(0, 0), Position::new(3, 2));
+        // Check corners
+        assert_eq!(canvas.get(Position::new(0, 0)), '┌');
+        assert_eq!(canvas.get(Position::new(3, 0)), '┐');
+        assert_eq!(canvas.get(Position::new(0, 2)), '└');
+        assert_eq!(canvas.get(Position::new(3, 2)), '┘');
+        // Check edges
+        assert_eq!(canvas.get(Position::new(1, 0)), '─');
+        assert_eq!(canvas.get(Position::new(0, 1)), '│');
+    }
+
+    // ========== line_points tests (Bresenham) ==========
+
+    #[test]
+    fn line_points_single_point() {
+        let points = line_points(Position::new(5, 5), Position::new(5, 5));
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0], Position::new(5, 5));
+    }
+
+    #[test]
+    fn line_points_horizontal() {
+        let points = line_points(Position::new(0, 0), Position::new(5, 0));
+        assert_eq!(points.len(), 6);
+        assert_eq!(points[0], Position::new(0, 0));
+        assert_eq!(points[5], Position::new(5, 0));
+        assert!(points.iter().all(|p| p.y == 0));
+    }
+
+    #[test]
+    fn line_points_vertical() {
+        let points = line_points(Position::new(0, 0), Position::new(0, 5));
+        assert_eq!(points.len(), 6);
+        assert!(points.iter().all(|p| p.x == 0));
+    }
+
+    #[test]
+    fn line_points_diagonal_45_degrees() {
+        let points = line_points(Position::new(0, 0), Position::new(5, 5));
+        assert_eq!(points.len(), 6);
+        for (i, p) in points.iter().enumerate() {
+            assert_eq!(p.x, i as i32);
+            assert_eq!(p.y, i as i32);
+        }
+    }
+
+    #[test]
+    fn line_points_reverse_direction() {
+        let forward = line_points(Position::new(0, 0), Position::new(5, 3));
+        let backward = line_points(Position::new(5, 3), Position::new(0, 0));
+        assert_eq!(forward.len(), backward.len());
+    }
+
+    #[test]
+    fn line_points_negative_coords() {
+        let points = line_points(Position::new(-5, -5), Position::new(0, 0));
+        assert!(!points.is_empty());
+        assert_eq!(points[0], Position::new(-5, -5));
+        assert_eq!(*points.last().unwrap(), Position::new(0, 0));
+    }
+
+    #[test]
+    fn line_points_contiguous() {
+        let points = line_points(Position::new(0, 0), Position::new(10, 7));
+        for window in points.windows(2) {
+            let dx = (window[0].x - window[1].x).abs();
+            let dy = (window[0].y - window[1].y).abs();
+            assert!(dx <= 1 && dy <= 1, "Points not contiguous: {:?}", window);
+        }
+    }
+
+    // ========== rect_points tests ==========
+
+    #[test]
+    fn rect_points_single_point() {
+        let points = rect_points(Position::new(5, 5), Position::new(5, 5));
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0], (Position::new(5, 5), '┼'));
+    }
+
+    #[test]
+    fn rect_points_horizontal_line() {
+        let points = rect_points(Position::new(0, 0), Position::new(5, 0));
+        assert_eq!(points.len(), 6);
+        assert!(points.iter().all(|&(p, _)| p.y == 0));
+    }
+
+    #[test]
+    fn rect_points_vertical_line() {
+        let points = rect_points(Position::new(0, 0), Position::new(0, 5));
+        assert_eq!(points.len(), 6);
+        assert!(points.iter().all(|&(p, _)| p.x == 0));
+    }
+
+    #[test]
+    fn rect_points_full_rect() {
+        let points = rect_points(Position::new(0, 0), Position::new(5, 3));
+        // Check corners exist
+        assert!(points.iter().any(|&(p, c)| p == Position::new(0, 0) && c == '┌'));
+        assert!(points.iter().any(|&(p, c)| p == Position::new(5, 0) && c == '┐'));
+        assert!(points.iter().any(|&(p, c)| p == Position::new(0, 3) && c == '└'));
+        assert!(points.iter().any(|&(p, c)| p == Position::new(5, 3) && c == '┘'));
+    }
+
+    #[test]
+    fn rect_points_swapped_corners() {
+        let p1 = rect_points(Position::new(0, 0), Position::new(5, 3));
+        let p2 = rect_points(Position::new(5, 3), Position::new(0, 0));
+        assert_eq!(p1.len(), p2.len());
+    }
+
+    // ========== diamond_points tests ==========
+
+    #[test]
+    fn diamond_points_small() {
+        let points = diamond_points(Position::new(10, 10), 1, 1);
+        assert_eq!(points.len(), 4);
+    }
+
+    #[test]
+    fn diamond_points_has_tips() {
+        let points = diamond_points(Position::new(10, 10), 5, 3);
+        // Check tips
+        assert!(points.iter().any(|&(p, c)| p == Position::new(10, 7) && c == '^'));
+        assert!(points.iter().any(|&(p, c)| p == Position::new(10, 13) && c == 'v'));
+        assert!(points.iter().any(|&(p, c)| p == Position::new(5, 10) && c == '<'));
+        assert!(points.iter().any(|&(p, c)| p == Position::new(15, 10) && c == '>'));
+    }
+
+    // ========== ellipse_points tests ==========
+
+    #[test]
+    fn ellipse_points_small() {
+        let points = ellipse_points(Position::new(10, 10), 1, 1);
+        assert!(!points.is_empty());
+    }
+
+    #[test]
+    fn ellipse_points_has_sides() {
+        let points = ellipse_points(Position::new(10, 10), 5, 3);
+        // Check left and right parentheses
+        assert!(points.iter().any(|&(p, c)| p == Position::new(5, 10) && c == '('));
+        assert!(points.iter().any(|&(p, c)| p == Position::new(15, 10) && c == ')'));
+    }
+
+    // ========== LineStyle tests ==========
+
+    #[test]
+    fn line_style_cycle() {
+        assert_eq!(LineStyle::Straight.next(), LineStyle::OrthogonalHV);
+        assert_eq!(LineStyle::OrthogonalHV.next(), LineStyle::OrthogonalVH);
+        assert_eq!(LineStyle::OrthogonalVH.next(), LineStyle::Straight);
+    }
+
+    #[test]
+    fn line_style_default() {
+        assert_eq!(LineStyle::default(), LineStyle::Straight);
+    }
+
+    #[test]
+    fn line_style_name() {
+        assert_eq!(LineStyle::Straight.name(), "Straight");
+        assert_eq!(LineStyle::OrthogonalHV.name(), "Ortho H→V");
+        assert_eq!(LineStyle::OrthogonalVH.name(), "Ortho V→H");
+    }
+
+    // ========== line_points_styled tests ==========
+
+    #[test]
+    fn line_points_styled_straight_horizontal() {
+        let points = line_points_styled(Position::new(0, 0), Position::new(5, 0), LineStyle::Straight);
+        assert_eq!(points.len(), 6);
+        assert!(points.iter().all(|&(_, c)| c == '─'));
+    }
+
+    #[test]
+    fn line_points_styled_straight_vertical() {
+        let points = line_points_styled(Position::new(0, 0), Position::new(0, 5), LineStyle::Straight);
+        assert_eq!(points.len(), 6);
+        assert!(points.iter().all(|&(_, c)| c == '│'));
+    }
+
+    #[test]
+    fn line_points_styled_orthogonal_hv() {
+        let points = line_points_styled(Position::new(0, 0), Position::new(5, 3), LineStyle::OrthogonalHV);
+        // Should have a corner character
+        assert!(points.iter().any(|&(_, c)| c == '┐' || c == '┘' || c == '┌' || c == '└'));
+    }
+
+    // ========== arrow_points_styled tests ==========
+
+    #[test]
+    fn arrow_points_has_arrowhead() {
+        let points = arrow_points_styled(Position::new(0, 0), Position::new(5, 0), LineStyle::Straight);
+        let (_, last_char) = points.last().unwrap();
+        assert_eq!(*last_char, '→');
+    }
+
+    #[test]
+    fn arrow_points_up() {
+        let points = arrow_points_styled(Position::new(0, 5), Position::new(0, 0), LineStyle::Straight);
+        let (_, last_char) = points.last().unwrap();
+        assert_eq!(*last_char, '↑');
+    }
+
+    #[test]
+    fn arrow_points_down() {
+        let points = arrow_points_styled(Position::new(0, 0), Position::new(0, 5), LineStyle::Straight);
+        let (_, last_char) = points.last().unwrap();
+        assert_eq!(*last_char, '↓');
+    }
+
+    #[test]
+    fn arrow_points_left() {
+        let points = arrow_points_styled(Position::new(5, 0), Position::new(0, 0), LineStyle::Straight);
+        let (_, last_char) = points.last().unwrap();
+        assert_eq!(*last_char, '←');
+    }
+
+    // ========== Viewport tests ==========
+
+    #[test]
+    fn viewport_new() {
+        let vp = Viewport::new(80, 24);
+        assert_eq!(vp.width, 80);
+        assert_eq!(vp.height, 24);
+        assert_eq!(vp.offset_x, 0);
+        assert_eq!(vp.offset_y, 0);
+    }
+
+    #[test]
+    fn viewport_screen_to_canvas() {
+        let vp = Viewport::new(80, 24);
+        assert_eq!(vp.screen_to_canvas(0, 0), Position::new(0, 0));
+        assert_eq!(vp.screen_to_canvas(10, 5), Position::new(10, 5));
+    }
+
+    #[test]
+    fn viewport_screen_to_canvas_with_offset() {
+        let mut vp = Viewport::new(80, 24);
+        vp.pan(10, 5);
+        assert_eq!(vp.screen_to_canvas(0, 0), Position::new(10, 5));
+        assert_eq!(vp.screen_to_canvas(5, 3), Position::new(15, 8));
+    }
+
+    #[test]
+    fn viewport_canvas_to_screen_visible() {
+        let vp = Viewport::new(80, 24);
+        assert_eq!(vp.canvas_to_screen(Position::new(10, 5)), Some((10, 5)));
+    }
+
+    #[test]
+    fn viewport_canvas_to_screen_not_visible() {
+        let vp = Viewport::new(80, 24);
+        assert_eq!(vp.canvas_to_screen(Position::new(100, 5)), None);
+        assert_eq!(vp.canvas_to_screen(Position::new(-5, 5)), None);
+    }
+
+    #[test]
+    fn viewport_pan() {
+        let mut vp = Viewport::new(80, 24);
+        vp.pan(10, 5);
+        assert_eq!(vp.offset_x, 10);
+        assert_eq!(vp.offset_y, 5);
+        vp.pan(-5, -3);
+        assert_eq!(vp.offset_x, 5);
+        assert_eq!(vp.offset_y, 2);
+    }
+
+    #[test]
+    fn viewport_resize() {
+        let mut vp = Viewport::new(80, 24);
+        vp.resize(120, 40);
+        assert_eq!(vp.width, 120);
+        assert_eq!(vp.height, 40);
+    }
+
+    // ========== Other shape point functions ==========
+
+    #[test]
+    fn rounded_rect_points_full() {
+        let points = rounded_rect_points(Position::new(0, 0), Position::new(5, 3));
+        // Check rounded corners
+        assert!(points.iter().any(|&(p, c)| p == Position::new(0, 0) && c == '╭'));
+        assert!(points.iter().any(|&(p, c)| p == Position::new(5, 0) && c == '╮'));
+        assert!(points.iter().any(|&(p, c)| p == Position::new(0, 3) && c == '╰'));
+        assert!(points.iter().any(|&(p, c)| p == Position::new(5, 3) && c == '╯'));
+    }
+
+    #[test]
+    fn double_rect_points_full() {
+        let points = double_rect_points(Position::new(0, 0), Position::new(5, 3));
+        // Check double-line corners
+        assert!(points.iter().any(|&(p, c)| p == Position::new(0, 0) && c == '╔'));
+        assert!(points.iter().any(|&(p, c)| p == Position::new(5, 0) && c == '╗'));
+    }
+
+    #[test]
+    fn hexagon_points_not_empty() {
+        let points = hexagon_points(Position::new(10, 10), 5, 3);
+        assert!(!points.is_empty());
+    }
+
+    #[test]
+    fn trapezoid_points_not_empty() {
+        let points = trapezoid_points(Position::new(0, 0), Position::new(10, 5));
+        assert!(!points.is_empty());
+    }
+
+    #[test]
+    fn parallelogram_points_not_empty() {
+        let points = parallelogram_points(Position::new(0, 0), Position::new(10, 5));
+        assert!(!points.is_empty());
+    }
+
+    #[test]
+    fn cylinder_points_not_empty() {
+        let points = cylinder_points(Position::new(0, 0), Position::new(10, 8));
+        assert!(!points.is_empty());
+    }
+
+    #[test]
+    fn cloud_points_not_empty() {
+        let points = cloud_points(Position::new(0, 0), Position::new(15, 6));
+        assert!(!points.is_empty());
+    }
+
+    #[test]
+    fn star_points_not_empty() {
+        let points = star_points(Position::new(10, 10), 5, 2);
+        assert!(!points.is_empty());
+    }
+
+    #[test]
+    fn triangle_points_not_empty() {
+        let points = triangle_points(
+            Position::new(5, 0),
+            Position::new(0, 5),
+            Position::new(10, 5),
+        );
+        assert!(!points.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod proptest_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn line_includes_endpoints(
+            x1 in -100i32..100,
+            y1 in -100i32..100,
+            x2 in -100i32..100,
+            y2 in -100i32..100
+        ) {
+            let start = Position::new(x1, y1);
+            let end = Position::new(x2, y2);
+            let points = line_points(start, end);
+
+            prop_assert!(!points.is_empty());
+            prop_assert_eq!(points[0], start);
+            prop_assert_eq!(*points.last().unwrap(), end);
+        }
+
+        #[test]
+        fn line_points_are_contiguous(
+            x1 in -50i32..50,
+            y1 in -50i32..50,
+            x2 in -50i32..50,
+            y2 in -50i32..50
+        ) {
+            let points = line_points(Position::new(x1, y1), Position::new(x2, y2));
+
+            for window in points.windows(2) {
+                let dx = (window[0].x - window[1].x).abs();
+                let dy = (window[0].y - window[1].y).abs();
+                prop_assert!(dx <= 1 && dy <= 1);
+            }
+        }
+
+        #[test]
+        fn rect_bounds_normalized(
+            x1 in -100i32..100,
+            y1 in -100i32..100,
+            x2 in -100i32..100,
+            y2 in -100i32..100
+        ) {
+            let points = rect_points(Position::new(x1, y1), Position::new(x2, y2));
+
+            if !points.is_empty() {
+                let min_x = points.iter().map(|(p, _)| p.x).min().unwrap();
+                let max_x = points.iter().map(|(p, _)| p.x).max().unwrap();
+                let min_y = points.iter().map(|(p, _)| p.y).min().unwrap();
+                let max_y = points.iter().map(|(p, _)| p.y).max().unwrap();
+
+                prop_assert!(min_x <= max_x);
+                prop_assert!(min_y <= max_y);
+            }
+        }
+
+        #[test]
+        fn viewport_roundtrip(
+            width in 1u16..1000,
+            height in 1u16..1000,
+            offset_x in -1000i32..1000,
+            offset_y in -1000i32..1000,
+            screen_x in 0u16..100,
+            screen_y in 0u16..100
+        ) {
+            let mut vp = Viewport::new(width, height);
+            vp.pan(offset_x, offset_y);
+
+            let canvas_pos = vp.screen_to_canvas(screen_x, screen_y);
+
+            // If screen coords are within viewport, roundtrip should work
+            if screen_x < width && screen_y < height {
+                if let Some((sx, sy)) = vp.canvas_to_screen(canvas_pos) {
+                    prop_assert_eq!(sx, screen_x);
+                    prop_assert_eq!(sy, screen_y);
+                }
+            }
+        }
+    }
+}

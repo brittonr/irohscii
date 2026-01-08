@@ -31,3 +31,8 @@ clap = { version = "4", features = ["derive"] }
 dirs = "5"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 n0-future = "0.3"
+
+[dev-dependencies]
+proptest = "1.4"
+tempfile = "3"
+tokio-test = "0.4"

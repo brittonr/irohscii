@@ -98,3 +98,114 @@ impl Default for UndoManager {
         Self::new(100)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn undo_manager_new() {
+        let mgr = UndoManager::new(50);
+        assert!(!mgr.can_undo());
+        assert!(!mgr.can_redo());
+        assert_eq!(mgr.undo_count(), 0);
+        assert_eq!(mgr.redo_count(), 0);
+    }
+
+    #[test]
+    fn undo_manager_default() {
+        let mgr = UndoManager::default();
+        assert_eq!(mgr.undo_count(), 0);
+        assert_eq!(mgr.redo_count(), 0);
+    }
+
+    #[test]
+    fn undo_manager_save_state() {
+        let doc = Document::new();
+        let mut mgr = UndoManager::new(50);
+
+        mgr.save_state(&doc);
+        assert!(mgr.can_undo());
+        assert!(!mgr.can_redo());
+        assert_eq!(mgr.undo_count(), 1);
+    }
+
+    #[test]
+    fn undo_manager_save_clears_redo() {
+        let doc = Document::new();
+        let mut mgr = UndoManager::new(50);
+
+        mgr.save_state(&doc);
+        let _ = mgr.undo(&doc); // Creates redo entry
+        assert!(mgr.can_redo());
+
+        mgr.save_state(&doc); // Should clear redo
+        assert!(!mgr.can_redo());
+    }
+
+    #[test]
+    fn undo_manager_max_history() {
+        let doc = Document::new();
+        let mut mgr = UndoManager::new(3);
+
+        for _ in 0..5 {
+            mgr.save_state(&doc);
+        }
+
+        assert_eq!(mgr.undo_count(), 3); // Limited to max
+    }
+
+    #[test]
+    fn undo_manager_clear() {
+        let doc = Document::new();
+        let mut mgr = UndoManager::new(50);
+
+        mgr.save_state(&doc);
+        mgr.clear();
+
+        assert!(!mgr.can_undo());
+        assert!(!mgr.can_redo());
+        assert_eq!(mgr.undo_count(), 0);
+        assert_eq!(mgr.redo_count(), 0);
+    }
+
+    #[test]
+    fn undo_manager_undo_redo_cycle() {
+        let doc = Document::new();
+        let mut mgr = UndoManager::new(50);
+
+        // Save initial state
+        mgr.save_state(&doc);
+        assert_eq!(mgr.undo_count(), 1);
+
+        // Undo
+        let prev = mgr.undo(&doc);
+        assert!(prev.is_some());
+        assert_eq!(mgr.undo_count(), 0);
+        assert_eq!(mgr.redo_count(), 1);
+
+        // Redo
+        let next = mgr.redo(&doc);
+        assert!(next.is_some());
+        assert_eq!(mgr.undo_count(), 1);
+        assert_eq!(mgr.redo_count(), 0);
+    }
+
+    #[test]
+    fn undo_manager_undo_empty() {
+        let doc = Document::new();
+        let mut mgr = UndoManager::new(50);
+
+        let result = mgr.undo(&doc);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn undo_manager_redo_empty() {
+        let doc = Document::new();
+        let mut mgr = UndoManager::new(50);
+
+        let result = mgr.redo(&doc);
+        assert!(result.is_none());
+    }
+}

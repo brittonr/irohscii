@@ -110,7 +110,7 @@ fn make_test_rect(x: i32, y: i32, w: i32, h: i32) -> ShapeKind {
 
 /// Create a test presence
 fn make_test_presence(peer_id: PeerId, x: i32, y: i32) -> PeerPresence {
-    PeerPresence::new(peer_id, Position::new(x, y), CursorActivity::Idle, None)
+    PeerPresence::new(peer_id, Position::new(x, y), CursorActivity::Idle, None, None)
 }
 
 /// Setup a host peer (no join ticket) with discovery disabled for test isolation
@@ -596,6 +596,7 @@ fn test_layer_presence_sync() {
         Position::new(100, 200),
         CursorActivity::Idle,
         Some(layer_id),
+        None,
     );
     handle_a
         .send_command(SyncCommand::BroadcastPresence(presence_a.clone()))
@@ -615,6 +616,7 @@ fn test_layer_presence_sync() {
         Position::new(150, 250),
         CursorActivity::Idle,
         Some(layer_id_2),
+        None,
     );
     handle_a
         .send_command(SyncCommand::BroadcastPresence(presence_a_2))
@@ -644,6 +646,7 @@ fn test_presence_without_layer() {
         peer_id_a,
         Position::new(100, 200),
         CursorActivity::Idle,
+        None,
         None,
     );
     handle_a
@@ -680,6 +683,7 @@ fn test_rapid_layer_switching_presence() {
                 Position::new(100, 100),
                 CursorActivity::Idle,
                 Some(*layer_id),
+                None,
             );
             handle_a
                 .send_command(SyncCommand::BroadcastPresence(presence))
@@ -740,6 +744,7 @@ fn test_multiple_peers_same_layer() {
         Position::new(100, 100),
         CursorActivity::Idle,
         Some(shared_layer),
+        None,
     );
     handle_a
         .send_command(SyncCommand::BroadcastPresence(presence_a))
@@ -751,6 +756,7 @@ fn test_multiple_peers_same_layer() {
         Position::new(200, 200),
         CursorActivity::Idle,
         Some(shared_layer),
+        None,
     );
     handle_b
         .send_command(SyncCommand::BroadcastPresence(presence_b))
@@ -794,6 +800,7 @@ fn test_layer_id_serialization_roundtrip() {
         Position::new(50, 75),
         CursorActivity::Idle,
         Some(layer_id),
+        None,
     );
 
     handle_a
@@ -829,6 +836,7 @@ fn test_layer_switching_updates_presence() {
         Position::new(10, 10),
         CursorActivity::Idle,
         Some(layer_1),
+        None,
     );
     handle_a
         .send_command(SyncCommand::BroadcastPresence(presence_1))
@@ -844,6 +852,7 @@ fn test_layer_switching_updates_presence() {
         Position::new(20, 20),
         CursorActivity::Idle,
         Some(layer_2),
+        None,
     );
     handle_a
         .send_command(SyncCommand::BroadcastPresence(presence_2))
@@ -859,6 +868,7 @@ fn test_layer_switching_updates_presence() {
         Position::new(30, 30),
         CursorActivity::Idle,
         Some(layer_1),
+        None,
     );
     handle_a
         .send_command(SyncCommand::BroadcastPresence(presence_3))
