@@ -772,6 +772,12 @@ fn handle_normal_mode(
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::ALT) => app.align_center_h(),
         KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::ALT) => app.align_center_v(),
 
+        // Transform shortcuts (Alt + key)
+        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::ALT) => app.flip_horizontal(),
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::ALT) => app.flip_vertical(),
+        KeyCode::Char('.') if key.modifiers.contains(KeyModifiers::ALT) => app.rotate_90_cw(),
+        KeyCode::Char(',') if key.modifiers.contains(KeyModifiers::ALT) => app.rotate_90_ccw(),
+
         // Delete selected shape
         KeyCode::Delete | KeyCode::Backspace => {
             if app.current_tool == Tool::Select {

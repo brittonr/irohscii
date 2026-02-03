@@ -2555,6 +2555,826 @@ fn find_corresponding_snap(
     best_idx.and_then(|idx| new_snaps.get(idx).copied())
 }
 
+/// Flip a shape horizontally (mirror across vertical axis through center_x).
+pub fn flip_horizontal(kind: &ShapeKind, center_x: i32) -> ShapeKind {
+    let mirror_x = |x: i32| 2 * center_x - x;
+
+    match kind {
+        ShapeKind::Line {
+            start,
+            end,
+            style,
+            label,
+            color,
+            ..
+        } => ShapeKind::Line {
+            start: Position::new(mirror_x(start.x), start.y),
+            end: Position::new(mirror_x(end.x), end.y),
+            style: *style,
+            start_connection: None,
+            end_connection: None,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Arrow {
+            start,
+            end,
+            style,
+            label,
+            color,
+            ..
+        } => ShapeKind::Arrow {
+            start: Position::new(mirror_x(start.x), start.y),
+            end: Position::new(mirror_x(end.x), end.y),
+            style: *style,
+            start_connection: None,
+            end_connection: None,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Rectangle {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Rectangle {
+            start: Position::new(mirror_x(start.x), start.y),
+            end: Position::new(mirror_x(end.x), end.y),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::DoubleBox {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::DoubleBox {
+            start: Position::new(mirror_x(start.x), start.y),
+            end: Position::new(mirror_x(end.x), end.y),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Diamond {
+            center,
+            half_width,
+            half_height,
+            label,
+            color,
+        } => ShapeKind::Diamond {
+            center: Position::new(mirror_x(center.x), center.y),
+            half_width: *half_width,
+            half_height: *half_height,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Ellipse {
+            center,
+            radius_x,
+            radius_y,
+            label,
+            color,
+        } => ShapeKind::Ellipse {
+            center: Position::new(mirror_x(center.x), center.y),
+            radius_x: *radius_x,
+            radius_y: *radius_y,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Freehand {
+            points,
+            char,
+            label,
+            color,
+        } => ShapeKind::Freehand {
+            points: points
+                .iter()
+                .map(|p| Position::new(mirror_x(p.x), p.y))
+                .collect(),
+            char: *char,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Text {
+            pos,
+            content,
+            color,
+        } => ShapeKind::Text {
+            pos: Position::new(mirror_x(pos.x), pos.y),
+            content: content.clone(),
+            color: *color,
+        },
+        ShapeKind::Triangle {
+            p1,
+            p2,
+            p3,
+            label,
+            color,
+        } => ShapeKind::Triangle {
+            p1: Position::new(mirror_x(p1.x), p1.y),
+            p2: Position::new(mirror_x(p2.x), p2.y),
+            p3: Position::new(mirror_x(p3.x), p3.y),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Parallelogram {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Parallelogram {
+            start: Position::new(mirror_x(start.x), start.y),
+            end: Position::new(mirror_x(end.x), end.y),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Hexagon {
+            center,
+            radius_x,
+            radius_y,
+            label,
+            color,
+        } => ShapeKind::Hexagon {
+            center: Position::new(mirror_x(center.x), center.y),
+            radius_x: *radius_x,
+            radius_y: *radius_y,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Trapezoid {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Trapezoid {
+            start: Position::new(mirror_x(start.x), start.y),
+            end: Position::new(mirror_x(end.x), end.y),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::RoundedRect {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::RoundedRect {
+            start: Position::new(mirror_x(start.x), start.y),
+            end: Position::new(mirror_x(end.x), end.y),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Cylinder {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Cylinder {
+            start: Position::new(mirror_x(start.x), start.y),
+            end: Position::new(mirror_x(end.x), end.y),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Cloud {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Cloud {
+            start: Position::new(mirror_x(start.x), start.y),
+            end: Position::new(mirror_x(end.x), end.y),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Star {
+            center,
+            outer_radius,
+            inner_radius,
+            label,
+            color,
+        } => ShapeKind::Star {
+            center: Position::new(mirror_x(center.x), center.y),
+            outer_radius: *outer_radius,
+            inner_radius: *inner_radius,
+            label: label.clone(),
+            color: *color,
+        },
+    }
+}
+
+/// Flip a shape vertically (mirror across horizontal axis through center_y).
+pub fn flip_vertical(kind: &ShapeKind, center_y: i32) -> ShapeKind {
+    let mirror_y = |y: i32| 2 * center_y - y;
+
+    match kind {
+        ShapeKind::Line {
+            start,
+            end,
+            style,
+            label,
+            color,
+            ..
+        } => ShapeKind::Line {
+            start: Position::new(start.x, mirror_y(start.y)),
+            end: Position::new(end.x, mirror_y(end.y)),
+            style: *style,
+            start_connection: None,
+            end_connection: None,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Arrow {
+            start,
+            end,
+            style,
+            label,
+            color,
+            ..
+        } => ShapeKind::Arrow {
+            start: Position::new(start.x, mirror_y(start.y)),
+            end: Position::new(end.x, mirror_y(end.y)),
+            style: *style,
+            start_connection: None,
+            end_connection: None,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Rectangle {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Rectangle {
+            start: Position::new(start.x, mirror_y(start.y)),
+            end: Position::new(end.x, mirror_y(end.y)),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::DoubleBox {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::DoubleBox {
+            start: Position::new(start.x, mirror_y(start.y)),
+            end: Position::new(end.x, mirror_y(end.y)),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Diamond {
+            center,
+            half_width,
+            half_height,
+            label,
+            color,
+        } => ShapeKind::Diamond {
+            center: Position::new(center.x, mirror_y(center.y)),
+            half_width: *half_width,
+            half_height: *half_height,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Ellipse {
+            center,
+            radius_x,
+            radius_y,
+            label,
+            color,
+        } => ShapeKind::Ellipse {
+            center: Position::new(center.x, mirror_y(center.y)),
+            radius_x: *radius_x,
+            radius_y: *radius_y,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Freehand {
+            points,
+            char,
+            label,
+            color,
+        } => ShapeKind::Freehand {
+            points: points
+                .iter()
+                .map(|p| Position::new(p.x, mirror_y(p.y)))
+                .collect(),
+            char: *char,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Text {
+            pos,
+            content,
+            color,
+        } => ShapeKind::Text {
+            pos: Position::new(pos.x, mirror_y(pos.y)),
+            content: content.clone(),
+            color: *color,
+        },
+        ShapeKind::Triangle {
+            p1,
+            p2,
+            p3,
+            label,
+            color,
+        } => ShapeKind::Triangle {
+            p1: Position::new(p1.x, mirror_y(p1.y)),
+            p2: Position::new(p2.x, mirror_y(p2.y)),
+            p3: Position::new(p3.x, mirror_y(p3.y)),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Parallelogram {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Parallelogram {
+            start: Position::new(start.x, mirror_y(start.y)),
+            end: Position::new(end.x, mirror_y(end.y)),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Hexagon {
+            center,
+            radius_x,
+            radius_y,
+            label,
+            color,
+        } => ShapeKind::Hexagon {
+            center: Position::new(center.x, mirror_y(center.y)),
+            radius_x: *radius_x,
+            radius_y: *radius_y,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Trapezoid {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Trapezoid {
+            start: Position::new(start.x, mirror_y(start.y)),
+            end: Position::new(end.x, mirror_y(end.y)),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::RoundedRect {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::RoundedRect {
+            start: Position::new(start.x, mirror_y(start.y)),
+            end: Position::new(end.x, mirror_y(end.y)),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Cylinder {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Cylinder {
+            start: Position::new(start.x, mirror_y(start.y)),
+            end: Position::new(end.x, mirror_y(end.y)),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Cloud {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Cloud {
+            start: Position::new(start.x, mirror_y(start.y)),
+            end: Position::new(end.x, mirror_y(end.y)),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Star {
+            center,
+            outer_radius,
+            inner_radius,
+            label,
+            color,
+        } => ShapeKind::Star {
+            center: Position::new(center.x, mirror_y(center.y)),
+            outer_radius: *outer_radius,
+            inner_radius: *inner_radius,
+            label: label.clone(),
+            color: *color,
+        },
+    }
+}
+
+/// Rotate a shape 90 degrees clockwise around a center point.
+pub fn rotate_90_cw(kind: &ShapeKind, center: Position) -> ShapeKind {
+    // Rotation formula: (x', y') = (cx + (y - cy), cy - (x - cx))
+    let rotate_point = |p: Position| -> Position {
+        Position::new(center.x + (p.y - center.y), center.y - (p.x - center.x))
+    };
+
+    match kind {
+        ShapeKind::Line {
+            start,
+            end,
+            style,
+            label,
+            color,
+            ..
+        } => ShapeKind::Line {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            style: *style,
+            start_connection: None,
+            end_connection: None,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Arrow {
+            start,
+            end,
+            style,
+            label,
+            color,
+            ..
+        } => ShapeKind::Arrow {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            style: *style,
+            start_connection: None,
+            end_connection: None,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Rectangle {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Rectangle {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::DoubleBox {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::DoubleBox {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Diamond {
+            center: shape_center,
+            half_width,
+            half_height,
+            label,
+            color,
+        } => ShapeKind::Diamond {
+            center: rotate_point(*shape_center),
+            half_width: *half_height, // Swap dimensions
+            half_height: *half_width,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Ellipse {
+            center: shape_center,
+            radius_x,
+            radius_y,
+            label,
+            color,
+        } => ShapeKind::Ellipse {
+            center: rotate_point(*shape_center),
+            radius_x: *radius_y, // Swap dimensions
+            radius_y: *radius_x,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Freehand {
+            points,
+            char,
+            label,
+            color,
+        } => ShapeKind::Freehand {
+            points: points.iter().map(|p| rotate_point(*p)).collect(),
+            char: *char,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Text {
+            pos,
+            content,
+            color,
+        } => ShapeKind::Text {
+            pos: rotate_point(*pos),
+            content: content.clone(),
+            color: *color,
+        },
+        ShapeKind::Triangle {
+            p1,
+            p2,
+            p3,
+            label,
+            color,
+        } => ShapeKind::Triangle {
+            p1: rotate_point(*p1),
+            p2: rotate_point(*p2),
+            p3: rotate_point(*p3),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Parallelogram {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Parallelogram {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Hexagon {
+            center: shape_center,
+            radius_x,
+            radius_y,
+            label,
+            color,
+        } => ShapeKind::Hexagon {
+            center: rotate_point(*shape_center),
+            radius_x: *radius_y, // Swap dimensions
+            radius_y: *radius_x,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Trapezoid {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Trapezoid {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::RoundedRect {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::RoundedRect {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Cylinder {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Cylinder {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Cloud {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Cloud {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Star {
+            center: shape_center,
+            outer_radius,
+            inner_radius,
+            label,
+            color,
+        } => ShapeKind::Star {
+            center: rotate_point(*shape_center),
+            outer_radius: *outer_radius, // Star radii don't need swapping (radial symmetry)
+            inner_radius: *inner_radius,
+            label: label.clone(),
+            color: *color,
+        },
+    }
+}
+
+/// Rotate a shape 90 degrees counter-clockwise around a center point.
+pub fn rotate_90_ccw(kind: &ShapeKind, center: Position) -> ShapeKind {
+    // Rotation formula: (x', y') = (cx - (y - cy), cy + (x - cx))
+    let rotate_point = |p: Position| -> Position {
+        Position::new(center.x - (p.y - center.y), center.y + (p.x - center.x))
+    };
+
+    match kind {
+        ShapeKind::Line {
+            start,
+            end,
+            style,
+            label,
+            color,
+            ..
+        } => ShapeKind::Line {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            style: *style,
+            start_connection: None,
+            end_connection: None,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Arrow {
+            start,
+            end,
+            style,
+            label,
+            color,
+            ..
+        } => ShapeKind::Arrow {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            style: *style,
+            start_connection: None,
+            end_connection: None,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Rectangle {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Rectangle {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::DoubleBox {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::DoubleBox {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Diamond {
+            center: shape_center,
+            half_width,
+            half_height,
+            label,
+            color,
+        } => ShapeKind::Diamond {
+            center: rotate_point(*shape_center),
+            half_width: *half_height, // Swap dimensions
+            half_height: *half_width,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Ellipse {
+            center: shape_center,
+            radius_x,
+            radius_y,
+            label,
+            color,
+        } => ShapeKind::Ellipse {
+            center: rotate_point(*shape_center),
+            radius_x: *radius_y, // Swap dimensions
+            radius_y: *radius_x,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Freehand {
+            points,
+            char,
+            label,
+            color,
+        } => ShapeKind::Freehand {
+            points: points.iter().map(|p| rotate_point(*p)).collect(),
+            char: *char,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Text {
+            pos,
+            content,
+            color,
+        } => ShapeKind::Text {
+            pos: rotate_point(*pos),
+            content: content.clone(),
+            color: *color,
+        },
+        ShapeKind::Triangle {
+            p1,
+            p2,
+            p3,
+            label,
+            color,
+        } => ShapeKind::Triangle {
+            p1: rotate_point(*p1),
+            p2: rotate_point(*p2),
+            p3: rotate_point(*p3),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Parallelogram {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Parallelogram {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Hexagon {
+            center: shape_center,
+            radius_x,
+            radius_y,
+            label,
+            color,
+        } => ShapeKind::Hexagon {
+            center: rotate_point(*shape_center),
+            radius_x: *radius_y, // Swap dimensions
+            radius_y: *radius_x,
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Trapezoid {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Trapezoid {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::RoundedRect {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::RoundedRect {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Cylinder {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Cylinder {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Cloud {
+            start,
+            end,
+            label,
+            color,
+        } => ShapeKind::Cloud {
+            start: rotate_point(*start),
+            end: rotate_point(*end),
+            label: label.clone(),
+            color: *color,
+        },
+        ShapeKind::Star {
+            center: shape_center,
+            outer_radius,
+            inner_radius,
+            label,
+            color,
+        } => ShapeKind::Star {
+            center: rotate_point(*shape_center),
+            outer_radius: *outer_radius, // Star radii don't need swapping (radial symmetry)
+            inner_radius: *inner_radius,
+            label: label.clone(),
+            color: *color,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

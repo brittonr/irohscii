@@ -1818,6 +1818,21 @@ fn render_help_screen(frame: &mut Frame, scroll: usize, area: Rect) {
             ],
         ),
         (
+            "TRANSFORM",
+            vec![
+                ("Alt+L", "Align left"),
+                ("Alt+R", "Align right"),
+                ("Alt+T", "Align top"),
+                ("Alt+B", "Align bottom"),
+                ("Alt+C", "Center horizontal"),
+                ("Alt+M", "Center vertical"),
+                ("Alt+H", "Flip horizontal"),
+                ("Alt+V", "Flip vertical"),
+                ("Alt+.", "Rotate 90 CW"),
+                ("Alt+,", "Rotate 90 CCW"),
+            ],
+        ),
+        (
             "GROUPING",
             vec![
                 ("Shift+G", "Group selected"),
