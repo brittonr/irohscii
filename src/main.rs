@@ -474,11 +474,11 @@ fn run_app(
                                         app.doc = doc;
                                         app.current_session = Some(session_id);
                                         app.current_session_meta = Some(meta.clone());
-                                        app.selected.clear();
+                                        // Reset all UI state for the new session
+                                        app.reset_session_ui_state();
                                         if let Err(e) = app.shape_view.rebuild(&app.doc) {
                                             app.set_error(format!("Error rebuilding view: {}", e));
                                         } else {
-                                            app.init_active_layer();
                                             app.set_status(format!("Switched to: {}", meta.name));
                                         }
                                     }
@@ -505,11 +505,11 @@ fn run_app(
                                             app.doc = doc;
                                             app.current_session = Some(meta.id.clone());
                                             app.current_session_meta = Some(meta.clone());
-                                            app.selected.clear();
+                                            // Reset all UI state for the new session
+                                            app.reset_session_ui_state();
                                             if let Err(e) = app.shape_view.rebuild(&app.doc) {
                                                 app.set_error(format!("Error: {}", e));
                                             } else {
-                                                app.init_active_layer();
                                                 app.set_status(format!("Created: {}", meta.name));
                                             }
                                         }
@@ -532,11 +532,9 @@ fn run_app(
                                 match session_manager.delete_session(&session_id) {
                                     Ok(()) => {
                                         app.set_status("Session deleted");
-                                        // Refresh session list if still in browser
-                                        if matches!(app.mode, Mode::SessionBrowser { .. }) {
-                                            if let Ok(sessions) = session_manager.list_sessions() {
-                                                app.session_list = sessions;
-                                            }
+                                        // Refresh session list with bounds checking
+                                        if let Ok(sessions) = session_manager.list_sessions() {
+                                            app.refresh_session_list(sessions);
                                         }
                                     }
                                     Err(e) => {
@@ -1216,9 +1214,9 @@ fn handle_session_browser_mode(
         KeyCode::Char('p') => {
             if let Some(session_id) = app.session_browser_toggle_pin() {
                 if let Ok(pinned) = session_manager.toggle_pinned(&session_id) {
-                    // Refresh list to show updated pinned status
+                    // Refresh list with bounds checking to show updated pinned status
                     if let Ok(sessions) = session_manager.list_sessions() {
-                        app.session_list = sessions;
+                        app.refresh_session_list(sessions);
                     }
                     let msg = if pinned { "Pinned" } else { "Unpinned" };
                     app.set_status(msg);

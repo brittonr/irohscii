@@ -412,6 +412,25 @@ impl App {
         }
     }
 
+    /// Reset UI state when switching sessions (viewport, selection, etc.)
+    pub fn reset_session_ui_state(&mut self) {
+        // Reset viewport to origin
+        self.viewport.offset_x = 0;
+        self.viewport.offset_y = 0;
+        // Clear selection
+        self.selected.clear();
+        // Reset tool state
+        self.freehand_state = None;
+        self.shape_state = None;
+        self.marquee_state = None;
+        self.drag_state = None;
+        self.resize_state = None;
+        // Initialize layer from new document
+        self.init_active_layer();
+        // Reset mode to normal
+        self.mode = Mode::Normal;
+    }
+
     /// Initialize presence manager with local peer ID
     pub fn init_presence(&mut self, local_peer_id: PeerId) {
         self.local_peer_id = Some(local_peer_id);
@@ -2745,6 +2764,35 @@ impl App {
         None
     }
 
+    /// Refresh session list and clamp selection to valid bounds
+    pub fn refresh_session_list(&mut self, sessions: Vec<crate::session::SessionMeta>) {
+        self.session_list = sessions;
+        // Clamp selection to valid bounds
+        // Extract filter values first to avoid borrow checker issues
+        let (filter, show_pinned_only) = if let Mode::SessionBrowser {
+            ref filter,
+            show_pinned_only,
+            ..
+        } = self.mode
+        {
+            (filter.clone(), show_pinned_only)
+        } else {
+            return;
+        };
+
+        let filtered_len = self.get_filtered_sessions(&filter, show_pinned_only).len();
+        if let Mode::SessionBrowser {
+            ref mut selected, ..
+        } = self.mode
+        {
+            if filtered_len == 0 {
+                *selected = 0;
+            } else {
+                *selected = (*selected).min(filtered_len - 1);
+            }
+        }
+    }
+
     /// Open session create dialog
     pub fn open_session_create(&mut self) {
         self.mode = Mode::SessionCreate {
@@ -2769,11 +2817,18 @@ impl App {
     /// Confirm session creation
     pub fn session_create_confirm(&mut self) {
         if let Mode::SessionCreate { ref name } = self.mode {
-            if !name.is_empty() {
-                self.session_to_create = Some(name.clone());
+            let trimmed = name.trim();
+            if trimmed.len() >= 2 {
+                self.session_to_create = Some(trimmed.to_string());
+                self.mode = Mode::Normal;
+            } else {
+                self.set_error("Session name must be at least 2 characters");
+                // Stay in create mode so user can fix it
+                return;
             }
+        } else {
+            self.mode = Mode::Normal;
         }
-        self.mode = Mode::Normal;
     }
 
     /// Cancel session creation

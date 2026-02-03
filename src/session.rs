@@ -235,10 +235,12 @@ impl SessionManager {
         &self.sessions_dir
     }
 
-    /// Save the registry to disk
+    /// Save the registry to disk (atomic write via temp file)
     pub fn save_registry(&self) -> Result<()> {
         let content = serde_json::to_string_pretty(&self.registry)?;
-        fs::write(&self.registry_path, content).context("Failed to write registry")?;
+        let temp_path = self.registry_path.with_extension("tmp");
+        fs::write(&temp_path, &content).context("Failed to write temp registry")?;
+        fs::rename(&temp_path, &self.registry_path).context("Failed to rename registry")?;
         Ok(())
     }
 
@@ -292,20 +294,31 @@ impl SessionManager {
         serde_json::from_str(&content).context("Failed to parse session metadata")
     }
 
-    /// Save session metadata
+    /// Save session metadata (atomic write via temp file)
     pub fn save_meta(&self, meta: &SessionMeta) -> Result<()> {
         let dir = self.session_dir(&meta.id);
         fs::create_dir_all(&dir)?;
 
         let path = self.meta_path(&meta.id);
+        let temp_path = path.with_extension("tmp");
         let content = serde_json::to_string_pretty(meta)?;
-        fs::write(&path, content).context("Failed to write session metadata")?;
+        fs::write(&temp_path, &content).context("Failed to write temp metadata")?;
+        fs::rename(&temp_path, &path).context("Failed to rename metadata")?;
         Ok(())
     }
 
     /// Create a new session
     pub fn create_session(&mut self, name: &str) -> Result<SessionMeta> {
-        let mut meta = SessionMeta::new(name);
+        // Validate session name
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(anyhow!("Session name cannot be empty"));
+        }
+        if trimmed.len() < 2 {
+            return Err(anyhow!("Session name must be at least 2 characters"));
+        }
+
+        let mut meta = SessionMeta::new(trimmed);
 
         // Ensure unique ID by appending timestamp if needed
         let mut attempts = 0;
