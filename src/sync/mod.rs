@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use automerge::Automerge;
-use iroh::discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher};
 use iroh::Endpoint;
+use iroh::discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher};
 use iroh_base::EndpointAddr;
 use tokio::sync::mpsc as tokio_mpsc;
 
@@ -59,7 +59,10 @@ pub enum SyncMode {
 #[derive(Debug)]
 pub enum SyncEvent {
     /// Connection established, here's our endpoint ID and peer ID for sharing
-    Ready { endpoint_id: String, local_peer_id: PeerId },
+    Ready {
+        endpoint_id: String,
+        local_peer_id: PeerId,
+    },
     /// Remote changes received
     RemoteChanges { doc: Automerge },
     /// Peer connected/disconnected
@@ -86,17 +89,9 @@ pub enum SyncCommand {
 /// Change to a shape that needs to be synced
 #[derive(Debug, Clone)]
 pub enum ShapeChange {
-    Added {
-        id: ShapeId,
-        kind: ShapeKind,
-    },
-    Modified {
-        id: ShapeId,
-        kind: ShapeKind,
-    },
-    Deleted {
-        id: ShapeId,
-    },
+    Added { id: ShapeId, kind: ShapeKind },
+    Modified { id: ShapeId, kind: ShapeKind },
+    Deleted { id: ShapeId },
 }
 
 /// Handle for communicating with the sync thread from the main thread
@@ -146,9 +141,7 @@ pub fn start_sync_thread(config: SyncConfig) -> Result<SyncHandle> {
     });
 
     // Wait for endpoint ID (with timeout)
-    let endpoint_id = endpoint_id_rx
-        .recv_timeout(Duration::from_secs(10))
-        .ok();
+    let endpoint_id = endpoint_id_rx.recv_timeout(Duration::from_secs(10)).ok();
 
     Ok(SyncHandle {
         command_tx,
@@ -204,8 +197,8 @@ async fn run_sync(
 
     // Derive our local peer ID from the endpoint's public key
     let public_key = endpoint.id();
-    let local_peer_id = PeerId::from_bytes(public_key.as_bytes())
-        .expect("PublicKey should be 32 bytes");
+    let local_peer_id =
+        PeerId::from_bytes(public_key.as_bytes()).expect("PublicKey should be 32 bytes");
 
     // Send our ticket string back to main thread
     let _ = endpoint_id_tx.send(ticket_string.clone());

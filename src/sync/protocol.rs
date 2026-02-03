@@ -6,11 +6,11 @@ use std::future::Future;
 use std::sync::Arc;
 
 use anyhow::Result;
-use automerge::{sync::State as SyncState, sync::SyncDoc, Automerge};
+use automerge::{Automerge, sync::State as SyncState, sync::SyncDoc};
 use iroh::endpoint::Connection;
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::{mpsc, watch, Mutex};
+use tokio::sync::{Mutex, mpsc, watch};
 
 /// Protocol identifier for iroh
 pub const ALPN: &[u8] = b"irohscii/automerge/1";
@@ -158,9 +158,9 @@ impl ProtocolHandler for IrohAutomergeProtocol {
     fn accept(&self, conn: Connection) -> impl Future<Output = Result<(), AcceptError>> + Send {
         let this = self.clone();
         async move {
-            this.handle_peer(conn).await.map_err(|e| {
-                AcceptError::from_err(std::io::Error::other(e.to_string()))
-            })
+            this.handle_peer(conn)
+                .await
+                .map_err(|e| AcceptError::from_err(std::io::Error::other(e.to_string())))
         }
     }
 }

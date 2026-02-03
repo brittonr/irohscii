@@ -7,8 +7,8 @@
 
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Result};
-use automerge::{transaction::Transactable, Automerge, ObjId, ObjType, ReadDoc, ROOT};
+use anyhow::{Result, anyhow};
+use automerge::{Automerge, ObjId, ObjType, ROOT, ReadDoc, transaction::Transactable};
 use uuid::Uuid;
 
 use crate::canvas::{LineStyle, Position};
@@ -134,11 +134,14 @@ impl Document {
             let layer_order_obj = tx.put_object(ROOT, "layer_order", ObjType::List).unwrap();
 
             // Create default layer
-            let layer_obj = tx.put_object(&layers_obj, &default_layer_id.to_string(), ObjType::Map).unwrap();
+            let layer_obj = tx
+                .put_object(&layers_obj, &default_layer_id.to_string(), ObjType::Map)
+                .unwrap();
             tx.put(&layer_obj, "name", "Layer 1").unwrap();
             tx.put(&layer_obj, "visible", true).unwrap();
             tx.put(&layer_obj, "locked", false).unwrap();
-            tx.insert(&layer_order_obj, 0, default_layer_id.to_string()).unwrap();
+            tx.insert(&layer_order_obj, 0, default_layer_id.to_string())
+                .unwrap();
 
             tx.put_object(ROOT, "undo_stack", ObjType::List).unwrap();
             tx.put_object(ROOT, "redo_stack", ObjType::List).unwrap();
@@ -541,7 +544,11 @@ impl Document {
     }
 
     /// Create a group from a set of shapes
-    pub fn create_group(&mut self, members: &[ShapeId], parent: Option<GroupId>) -> Result<GroupId> {
+    pub fn create_group(
+        &mut self,
+        members: &[ShapeId],
+        parent: Option<GroupId>,
+    ) -> Result<GroupId> {
         if members.is_empty() {
             return Err(anyhow!("Cannot create empty group"));
         }
@@ -616,7 +623,9 @@ impl Document {
                         let len = self.doc.length(&members_obj);
                         let mut member_ids = Vec::with_capacity(len);
                         for i in 0..len {
-                            if let Some((automerge::Value::Scalar(s), _)) = self.doc.get(&members_obj, i)? {
+                            if let Some((automerge::Value::Scalar(s), _)) =
+                                self.doc.get(&members_obj, i)?
+                            {
                                 let id_str = s.to_string().trim_matches('"').to_string();
                                 if let Ok(uuid) = Uuid::parse_str(&id_str) {
                                     member_ids.push(ShapeId(uuid));
@@ -637,7 +646,11 @@ impl Document {
                     _ => None,
                 };
 
-                Ok(Some(Group { id, members, parent }))
+                Ok(Some(Group {
+                    id,
+                    members,
+                    parent,
+                }))
             }
             None => Ok(None),
         }
@@ -667,15 +680,13 @@ impl Document {
         let shapes_obj = self.get_shapes_map()?;
 
         match self.doc.get(&shapes_obj, &id.to_string())? {
-            Some((_, shape_obj)) => {
-                match self.doc.get(&shape_obj, "group_id")? {
-                    Some((automerge::Value::Scalar(s), _)) => {
-                        let id_str = s.to_string().trim_matches('"').to_string();
-                        Ok(Uuid::parse_str(&id_str).ok().map(GroupId))
-                    }
-                    _ => Ok(None),
+            Some((_, shape_obj)) => match self.doc.get(&shape_obj, "group_id")? {
+                Some((automerge::Value::Scalar(s), _)) => {
+                    let id_str = s.to_string().trim_matches('"').to_string();
+                    Ok(Uuid::parse_str(&id_str).ok().map(GroupId))
                 }
-            }
+                _ => Ok(None),
+            },
             None => Ok(None),
         }
     }
@@ -785,7 +796,10 @@ impl Document {
     /// Get the default (first) layer ID
     pub fn get_default_layer(&self) -> Result<LayerId> {
         let order = self.read_layer_order()?;
-        order.first().copied().ok_or_else(|| anyhow!("No layers in document"))
+        order
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow!("No layers in document"))
     }
 
     /// Create a new layer
@@ -829,7 +843,8 @@ impl Document {
         }
 
         // Find the default layer to move shapes to
-        let default_layer = layer_order.iter()
+        let default_layer = layer_order
+            .iter()
             .find(|&&lid| lid != id)
             .copied()
             .ok_or_else(|| anyhow!("No other layer to move shapes to"))?;
@@ -886,20 +901,21 @@ impl Document {
                 };
 
                 let visible = match self.doc.get(&layer_obj, "visible")? {
-                    Some((automerge::Value::Scalar(s), _)) => {
-                        s.to_bool().unwrap_or(true)
-                    }
+                    Some((automerge::Value::Scalar(s), _)) => s.to_bool().unwrap_or(true),
                     _ => true,
                 };
 
                 let locked = match self.doc.get(&layer_obj, "locked")? {
-                    Some((automerge::Value::Scalar(s), _)) => {
-                        s.to_bool().unwrap_or(false)
-                    }
+                    Some((automerge::Value::Scalar(s), _)) => s.to_bool().unwrap_or(false),
                     _ => false,
                 };
 
-                Ok(Some(Layer { id, name, visible, locked }))
+                Ok(Some(Layer {
+                    id,
+                    name,
+                    visible,
+                    locked,
+                }))
             }
             None => Ok(None),
         }
@@ -969,15 +985,13 @@ impl Document {
         let shapes_obj = self.get_shapes_map()?;
 
         match self.doc.get(&shapes_obj, &id.to_string())? {
-            Some((_, shape_obj)) => {
-                match self.doc.get(&shape_obj, "layer_id")? {
-                    Some((automerge::Value::Scalar(s), _)) => {
-                        let id_str = s.to_string().trim_matches('"').to_string();
-                        Ok(Uuid::parse_str(&id_str).ok().map(LayerId))
-                    }
-                    _ => Ok(None),
+            Some((_, shape_obj)) => match self.doc.get(&shape_obj, "layer_id")? {
+                Some((automerge::Value::Scalar(s), _)) => {
+                    let id_str = s.to_string().trim_matches('"').to_string();
+                    Ok(Uuid::parse_str(&id_str).ok().map(LayerId))
                 }
-            }
+                _ => Ok(None),
+            },
             None => Ok(None),
         }
     }
@@ -1002,7 +1016,9 @@ impl Document {
         let mut order = self.read_layer_order()?;
 
         // Find current position
-        let current_pos = order.iter().position(|&lid| lid == id)
+        let current_pos = order
+            .iter()
+            .position(|&lid| lid == id)
             .ok_or_else(|| anyhow!("Layer not found in order"))?;
 
         // Remove from current position
@@ -1047,13 +1063,26 @@ impl Document {
 
     /// Update connected lines when a shape moves
     /// Returns the IDs of shapes that were modified
-    pub fn update_connections_for_shape(&mut self, moved_id: ShapeId, dx: i32, dy: i32) -> Result<Vec<ShapeId>> {
+    pub fn update_connections_for_shape(
+        &mut self,
+        moved_id: ShapeId,
+        dx: i32,
+        dy: i32,
+    ) -> Result<Vec<ShapeId>> {
         let all_shapes = self.read_all_shapes()?;
         let mut updated = Vec::new();
 
         for (id, kind) in all_shapes {
             match kind {
-                ShapeKind::Line { start, end, style, start_connection, end_connection, label, color } => {
+                ShapeKind::Line {
+                    start,
+                    end,
+                    style,
+                    start_connection,
+                    end_connection,
+                    label,
+                    color,
+                } => {
                     let mut changed = false;
                     let mut new_start = start;
                     let mut new_end = end;
@@ -1068,19 +1097,30 @@ impl Document {
                     }
 
                     if changed {
-                        self.update_shape(id, ShapeKind::Line {
-                            start: new_start,
-                            end: new_end,
-                            style,
-                            start_connection,
-                            end_connection,
-                            label,
-                            color,
-                        })?;
+                        self.update_shape(
+                            id,
+                            ShapeKind::Line {
+                                start: new_start,
+                                end: new_end,
+                                style,
+                                start_connection,
+                                end_connection,
+                                label,
+                                color,
+                            },
+                        )?;
                         updated.push(id);
                     }
                 }
-                ShapeKind::Arrow { start, end, style, start_connection, end_connection, label, color } => {
+                ShapeKind::Arrow {
+                    start,
+                    end,
+                    style,
+                    start_connection,
+                    end_connection,
+                    label,
+                    color,
+                } => {
                     let mut changed = false;
                     let mut new_start = start;
                     let mut new_end = end;
@@ -1095,15 +1135,18 @@ impl Document {
                     }
 
                     if changed {
-                        self.update_shape(id, ShapeKind::Arrow {
-                            start: new_start,
-                            end: new_end,
-                            style,
-                            start_connection,
-                            end_connection,
-                            label,
-                            color,
-                        })?;
+                        self.update_shape(
+                            id,
+                            ShapeKind::Arrow {
+                                start: new_start,
+                                end: new_end,
+                                style,
+                                start_connection,
+                                end_connection,
+                                label,
+                                color,
+                            },
+                        )?;
                         updated.push(id);
                     }
                 }
@@ -1116,7 +1159,12 @@ impl Document {
     /// Update connected lines when a shape is resized
     /// This handles the case where different snap points move by different amounts
     /// Returns the IDs of shapes that were modified
-    pub fn update_connections_for_resize(&mut self, resized_id: ShapeId, old_kind: &ShapeKind, new_kind: &ShapeKind) -> Result<Vec<ShapeId>> {
+    pub fn update_connections_for_resize(
+        &mut self,
+        resized_id: ShapeId,
+        old_kind: &ShapeKind,
+        new_kind: &ShapeKind,
+    ) -> Result<Vec<ShapeId>> {
         let old_snaps = old_kind.snap_points();
         let new_snaps = new_kind.snap_points();
 
@@ -1131,14 +1179,24 @@ impl Document {
 
         for (id, kind) in all_shapes {
             match kind {
-                ShapeKind::Line { start, end, style, start_connection, end_connection, label, color } => {
+                ShapeKind::Line {
+                    start,
+                    end,
+                    style,
+                    start_connection,
+                    end_connection,
+                    label,
+                    color,
+                } => {
                     let mut changed = false;
                     let mut new_start = start;
                     let mut new_end = end;
 
                     // If start is connected to the resized shape, find which snap point it was at
                     if start_connection == Some(resized_conn_id) {
-                        if let Some(new_pos) = find_corresponding_snap(&start, &old_snaps, &new_snaps) {
+                        if let Some(new_pos) =
+                            find_corresponding_snap(&start, &old_snaps, &new_snaps)
+                        {
                             new_start = new_pos;
                             changed = true;
                         }
@@ -1146,54 +1204,72 @@ impl Document {
 
                     // If end is connected to the resized shape, find which snap point it was at
                     if end_connection == Some(resized_conn_id) {
-                        if let Some(new_pos) = find_corresponding_snap(&end, &old_snaps, &new_snaps) {
+                        if let Some(new_pos) = find_corresponding_snap(&end, &old_snaps, &new_snaps)
+                        {
                             new_end = new_pos;
                             changed = true;
                         }
                     }
 
                     if changed {
-                        self.update_shape(id, ShapeKind::Line {
-                            start: new_start,
-                            end: new_end,
-                            style,
-                            start_connection,
-                            end_connection,
-                            label,
-                            color,
-                        })?;
+                        self.update_shape(
+                            id,
+                            ShapeKind::Line {
+                                start: new_start,
+                                end: new_end,
+                                style,
+                                start_connection,
+                                end_connection,
+                                label,
+                                color,
+                            },
+                        )?;
                         updated.push(id);
                     }
                 }
-                ShapeKind::Arrow { start, end, style, start_connection, end_connection, label, color } => {
+                ShapeKind::Arrow {
+                    start,
+                    end,
+                    style,
+                    start_connection,
+                    end_connection,
+                    label,
+                    color,
+                } => {
                     let mut changed = false;
                     let mut new_start = start;
                     let mut new_end = end;
 
                     if start_connection == Some(resized_conn_id) {
-                        if let Some(new_pos) = find_corresponding_snap(&start, &old_snaps, &new_snaps) {
+                        if let Some(new_pos) =
+                            find_corresponding_snap(&start, &old_snaps, &new_snaps)
+                        {
                             new_start = new_pos;
                             changed = true;
                         }
                     }
 
                     if end_connection == Some(resized_conn_id) {
-                        if let Some(new_pos) = find_corresponding_snap(&end, &old_snaps, &new_snaps) {
+                        if let Some(new_pos) = find_corresponding_snap(&end, &old_snaps, &new_snaps)
+                        {
                             new_end = new_pos;
                             changed = true;
                         }
                     }
 
                     if changed {
-                        self.update_shape(id, ShapeKind::Arrow {
-                            start: new_start,
-                            end: new_end,
-                            style,
-                            start_connection,
-                            end_connection,
-                            label,
-                            color,
-                        })?;
+                        self.update_shape(
+                            id,
+                            ShapeKind::Arrow {
+                                start: new_start,
+                                end: new_end,
+                                style,
+                                start_connection,
+                                end_connection,
+                                label,
+                                color,
+                            },
+                        )?;
                         updated.push(id);
                     }
                 }
@@ -1280,9 +1356,10 @@ impl Document {
 
         // Get the last undo snapshot
         let prev_snapshot: Vec<u8> = match self.doc.get(&undo_stack, undo_len - 1)? {
-            Some((automerge::Value::Scalar(s), _)) => {
-                s.to_bytes().map(|b| b.to_vec()).ok_or_else(|| anyhow!("Invalid undo snapshot"))?
-            }
+            Some((automerge::Value::Scalar(s), _)) => s
+                .to_bytes()
+                .map(|b| b.to_vec())
+                .ok_or_else(|| anyhow!("Invalid undo snapshot"))?,
             _ => return Err(anyhow!("Invalid undo snapshot")),
         };
 
@@ -1345,9 +1422,10 @@ impl Document {
 
         // Get the last redo snapshot
         let next_snapshot: Vec<u8> = match self.doc.get(&redo_stack, redo_len - 1)? {
-            Some((automerge::Value::Scalar(s), _)) => {
-                s.to_bytes().map(|b| b.to_vec()).ok_or_else(|| anyhow!("Invalid redo snapshot"))?
-            }
+            Some((automerge::Value::Scalar(s), _)) => s
+                .to_bytes()
+                .map(|b| b.to_vec())
+                .ok_or_else(|| anyhow!("Invalid redo snapshot"))?,
             _ => return Err(anyhow!("Invalid redo snapshot")),
         };
 
@@ -1490,7 +1568,12 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
                 tx.put(obj, "label", l.as_str())?;
             }
         }
-        ShapeKind::Rectangle { start, end, label, color } => {
+        ShapeKind::Rectangle {
+            start,
+            end,
+            label,
+            color,
+        } => {
             tx.put(obj, "kind", "Rectangle")?;
             tx.put(obj, "start_x", start.x as i64)?;
             tx.put(obj, "start_y", start.y as i64)?;
@@ -1501,7 +1584,12 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
                 tx.put(obj, "label", l.as_str())?;
             }
         }
-        ShapeKind::DoubleBox { start, end, label, color } => {
+        ShapeKind::DoubleBox {
+            start,
+            end,
+            label,
+            color,
+        } => {
             tx.put(obj, "kind", "DoubleBox")?;
             tx.put(obj, "start_x", start.x as i64)?;
             tx.put(obj, "start_y", start.y as i64)?;
@@ -1546,7 +1634,12 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
                 tx.put(obj, "label", l.as_str())?;
             }
         }
-        ShapeKind::Freehand { points, char, label, color } => {
+        ShapeKind::Freehand {
+            points,
+            char,
+            label,
+            color,
+        } => {
             tx.put(obj, "kind", "Freehand")?;
             tx.put(obj, "char", char.to_string())?;
             tx.put(obj, "color", shape_color_to_str(*color))?;
@@ -1560,14 +1653,24 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
                 tx.put(&point_obj, "y", point.y as i64)?;
             }
         }
-        ShapeKind::Text { pos, content, color } => {
+        ShapeKind::Text {
+            pos,
+            content,
+            color,
+        } => {
             tx.put(obj, "kind", "Text")?;
             tx.put(obj, "pos_x", pos.x as i64)?;
             tx.put(obj, "pos_y", pos.y as i64)?;
             tx.put(obj, "content", content.as_str())?;
             tx.put(obj, "color", shape_color_to_str(*color))?;
         }
-        ShapeKind::Triangle { p1, p2, p3, label, color } => {
+        ShapeKind::Triangle {
+            p1,
+            p2,
+            p3,
+            label,
+            color,
+        } => {
             tx.put(obj, "kind", "Triangle")?;
             tx.put(obj, "p1_x", p1.x as i64)?;
             tx.put(obj, "p1_y", p1.y as i64)?;
@@ -1580,7 +1683,12 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
                 tx.put(obj, "label", l.as_str())?;
             }
         }
-        ShapeKind::Parallelogram { start, end, label, color } => {
+        ShapeKind::Parallelogram {
+            start,
+            end,
+            label,
+            color,
+        } => {
             tx.put(obj, "kind", "Parallelogram")?;
             tx.put(obj, "start_x", start.x as i64)?;
             tx.put(obj, "start_y", start.y as i64)?;
@@ -1591,7 +1699,13 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
                 tx.put(obj, "label", l.as_str())?;
             }
         }
-        ShapeKind::Hexagon { center, radius_x, radius_y, label, color } => {
+        ShapeKind::Hexagon {
+            center,
+            radius_x,
+            radius_y,
+            label,
+            color,
+        } => {
             tx.put(obj, "kind", "Hexagon")?;
             tx.put(obj, "center_x", center.x as i64)?;
             tx.put(obj, "center_y", center.y as i64)?;
@@ -1602,7 +1716,12 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
                 tx.put(obj, "label", l.as_str())?;
             }
         }
-        ShapeKind::Trapezoid { start, end, label, color } => {
+        ShapeKind::Trapezoid {
+            start,
+            end,
+            label,
+            color,
+        } => {
             tx.put(obj, "kind", "Trapezoid")?;
             tx.put(obj, "start_x", start.x as i64)?;
             tx.put(obj, "start_y", start.y as i64)?;
@@ -1613,7 +1732,12 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
                 tx.put(obj, "label", l.as_str())?;
             }
         }
-        ShapeKind::RoundedRect { start, end, label, color } => {
+        ShapeKind::RoundedRect {
+            start,
+            end,
+            label,
+            color,
+        } => {
             tx.put(obj, "kind", "RoundedRect")?;
             tx.put(obj, "start_x", start.x as i64)?;
             tx.put(obj, "start_y", start.y as i64)?;
@@ -1624,7 +1748,12 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
                 tx.put(obj, "label", l.as_str())?;
             }
         }
-        ShapeKind::Cylinder { start, end, label, color } => {
+        ShapeKind::Cylinder {
+            start,
+            end,
+            label,
+            color,
+        } => {
             tx.put(obj, "kind", "Cylinder")?;
             tx.put(obj, "start_x", start.x as i64)?;
             tx.put(obj, "start_y", start.y as i64)?;
@@ -1635,7 +1764,12 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
                 tx.put(obj, "label", l.as_str())?;
             }
         }
-        ShapeKind::Cloud { start, end, label, color } => {
+        ShapeKind::Cloud {
+            start,
+            end,
+            label,
+            color,
+        } => {
             tx.put(obj, "kind", "Cloud")?;
             tx.put(obj, "start_x", start.x as i64)?;
             tx.put(obj, "start_y", start.y as i64)?;
@@ -1646,7 +1780,13 @@ fn write_shape_kind<T: Transactable>(tx: &mut T, obj: &ObjId, kind: &ShapeKind) 
                 tx.put(obj, "label", l.as_str())?;
             }
         }
-        ShapeKind::Star { center, outer_radius, inner_radius, label, color } => {
+        ShapeKind::Star {
+            center,
+            outer_radius,
+            inner_radius,
+            label,
+            color,
+        } => {
             tx.put(obj, "kind", "Star")?;
             tx.put(obj, "center_x", center.x as i64)?;
             tx.put(obj, "center_y", center.y as i64)?;
@@ -1669,7 +1809,7 @@ fn read_shape_kind(doc: &Automerge, obj: &ObjId) -> Result<Option<ShapeKind>> {
             // to_string() includes quotes, so trim them
             let s = s.to_string();
             s.trim_matches('"').to_string()
-        },
+        }
         _ => return Ok(None),
     };
 
@@ -1705,14 +1845,20 @@ fn read_shape_kind(doc: &Automerge, obj: &ObjId) -> Result<Option<ShapeKind>> {
             color: get_shape_color(doc, obj)?,
         },
         "Diamond" => ShapeKind::Diamond {
-            center: Position::new(get_i32(doc, obj, "center_x")?, get_i32(doc, obj, "center_y")?),
+            center: Position::new(
+                get_i32(doc, obj, "center_x")?,
+                get_i32(doc, obj, "center_y")?,
+            ),
             half_width: get_i32(doc, obj, "half_width")?,
             half_height: get_i32(doc, obj, "half_height")?,
             label: get_opt_string(doc, obj, "label")?,
             color: get_shape_color(doc, obj)?,
         },
         "Ellipse" => ShapeKind::Ellipse {
-            center: Position::new(get_i32(doc, obj, "center_x")?, get_i32(doc, obj, "center_y")?),
+            center: Position::new(
+                get_i32(doc, obj, "center_x")?,
+                get_i32(doc, obj, "center_y")?,
+            ),
             radius_x: get_i32(doc, obj, "radius_x")?,
             radius_y: get_i32(doc, obj, "radius_y")?,
             label: get_opt_string(doc, obj, "label")?,
@@ -1738,7 +1884,12 @@ fn read_shape_kind(doc: &Automerge, obj: &ObjId) -> Result<Option<ShapeKind>> {
                 None => Vec::new(),
             };
 
-            ShapeKind::Freehand { points, char: ch, label: get_opt_string(doc, obj, "label")?, color: get_shape_color(doc, obj)? }
+            ShapeKind::Freehand {
+                points,
+                char: ch,
+                label: get_opt_string(doc, obj, "label")?,
+                color: get_shape_color(doc, obj)?,
+            }
         }
         "Text" => ShapeKind::Text {
             pos: Position::new(get_i32(doc, obj, "pos_x")?, get_i32(doc, obj, "pos_y")?),
@@ -1759,7 +1910,10 @@ fn read_shape_kind(doc: &Automerge, obj: &ObjId) -> Result<Option<ShapeKind>> {
             color: get_shape_color(doc, obj)?,
         },
         "Hexagon" => ShapeKind::Hexagon {
-            center: Position::new(get_i32(doc, obj, "center_x")?, get_i32(doc, obj, "center_y")?),
+            center: Position::new(
+                get_i32(doc, obj, "center_x")?,
+                get_i32(doc, obj, "center_y")?,
+            ),
             radius_x: get_i32(doc, obj, "radius_x")?,
             radius_y: get_i32(doc, obj, "radius_y")?,
             label: get_opt_string(doc, obj, "label")?,
@@ -1790,7 +1944,10 @@ fn read_shape_kind(doc: &Automerge, obj: &ObjId) -> Result<Option<ShapeKind>> {
             color: get_shape_color(doc, obj)?,
         },
         "Star" => ShapeKind::Star {
-            center: Position::new(get_i32(doc, obj, "center_x")?, get_i32(doc, obj, "center_y")?),
+            center: Position::new(
+                get_i32(doc, obj, "center_x")?,
+                get_i32(doc, obj, "center_y")?,
+            ),
             outer_radius: get_i32(doc, obj, "outer_radius")?,
             inner_radius: get_i32(doc, obj, "inner_radius")?,
             label: get_opt_string(doc, obj, "label")?,
@@ -1824,7 +1981,9 @@ fn get_string(doc: &Automerge, obj: &ObjId, key: &str) -> Result<String> {
 
 fn get_opt_string(doc: &Automerge, obj: &ObjId, key: &str) -> Result<Option<String>> {
     match doc.get(obj, key)? {
-        Some((automerge::Value::Scalar(s), _)) => Ok(Some(s.to_string().trim_matches('"').to_string())),
+        Some((automerge::Value::Scalar(s), _)) => {
+            Ok(Some(s.to_string().trim_matches('"').to_string()))
+        }
         _ => Ok(None),
     }
 }
@@ -1847,7 +2006,7 @@ fn get_line_style(doc: &Automerge, obj: &ObjId) -> Result<LineStyle> {
         Some((automerge::Value::Scalar(s), _)) => {
             let style_str = s.to_string();
             Ok(str_to_line_style(style_str.trim_matches('"')))
-        },
+        }
         _ => Ok(LineStyle::default()),
     }
 }
@@ -1917,13 +2076,17 @@ fn get_shape_color(doc: &Automerge, obj: &ObjId) -> Result<ShapeColor> {
         Some((automerge::Value::Scalar(s), _)) => {
             let color_str = s.to_string();
             Ok(str_to_shape_color(color_str.trim_matches('"')))
-        },
+        }
         _ => Ok(ShapeColor::default()),
     }
 }
 
 /// Find which old snap point a position matches and return the corresponding new snap point
-fn find_corresponding_snap(pos: &Position, old_snaps: &[Position], new_snaps: &[Position]) -> Option<Position> {
+fn find_corresponding_snap(
+    pos: &Position,
+    old_snaps: &[Position],
+    new_snaps: &[Position],
+) -> Option<Position> {
     // Find the closest old snap point to this position
     let mut best_idx = None;
     let mut best_dist = i32::MAX;
@@ -2380,8 +2543,16 @@ mod tests {
 
     #[test]
     fn find_corresponding_snap_basic() {
-        let old_snaps = vec![Position::new(0, 0), Position::new(10, 0), Position::new(5, 5)];
-        let new_snaps = vec![Position::new(2, 2), Position::new(12, 2), Position::new(7, 7)];
+        let old_snaps = vec![
+            Position::new(0, 0),
+            Position::new(10, 0),
+            Position::new(5, 5),
+        ];
+        let new_snaps = vec![
+            Position::new(2, 2),
+            Position::new(12, 2),
+            Position::new(7, 7),
+        ];
 
         // Position closest to old_snaps[0] should map to new_snaps[0]
         let result = find_corresponding_snap(&Position::new(1, 1), &old_snaps, &new_snaps);

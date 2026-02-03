@@ -19,7 +19,7 @@ use irohscii::layers::LayerId;
 use irohscii::presence::{CursorActivity, PeerId, PeerPresence};
 use irohscii::shapes::{ShapeColor, ShapeKind};
 use irohscii::sync::{
-    decode_ticket, start_sync_thread, SyncCommand, SyncConfig, SyncEvent, SyncHandle, SyncMode,
+    SyncCommand, SyncConfig, SyncEvent, SyncHandle, SyncMode, decode_ticket, start_sync_thread,
 };
 
 // Mutex to ensure tests run serially (avoid port conflicts)
@@ -54,15 +54,15 @@ where
 
 /// Wait for SyncEvent::Ready and return (endpoint_id, local_peer_id)
 fn wait_for_ready(handle: &SyncHandle, timeout: Duration) -> Option<(String, PeerId)> {
-    wait_for_event(handle, timeout, |e| matches!(e, SyncEvent::Ready { .. })).and_then(|e| {
-        match e {
+    wait_for_event(handle, timeout, |e| matches!(e, SyncEvent::Ready { .. })).and_then(
+        |e| match e {
             SyncEvent::Ready {
                 endpoint_id,
                 local_peer_id,
             } => Some((endpoint_id, local_peer_id)),
             _ => None,
-        }
-    })
+        },
+    )
 }
 
 /// Wait for SyncEvent::RemoteChanges and return the Automerge document
@@ -110,7 +110,13 @@ fn make_test_rect(x: i32, y: i32, w: i32, h: i32) -> ShapeKind {
 
 /// Create a test presence
 fn make_test_presence(peer_id: PeerId, x: i32, y: i32) -> PeerPresence {
-    PeerPresence::new(peer_id, Position::new(x, y), CursorActivity::Idle, None, None)
+    PeerPresence::new(
+        peer_id,
+        Position::new(x, y),
+        CursorActivity::Idle,
+        None,
+        None,
+    )
 }
 
 /// Setup a host peer (no join ticket) with discovery disabled for test isolation
@@ -510,18 +516,14 @@ fn test_invalid_ticket_rejected() {
     let invalid_tickets = vec![
         "",
         "not_a_ticket",
-        "irohscii1",                        // Empty data
-        "irohscii1!!!INVALID_BASE32!!!",    // Invalid base32
-        "irohscii1AAAA",                    // Too short
+        "irohscii1",                     // Empty data
+        "irohscii1!!!INVALID_BASE32!!!", // Invalid base32
+        "irohscii1AAAA",                 // Too short
     ];
 
     for ticket in invalid_tickets {
         let result = decode_ticket(ticket);
-        assert!(
-            result.is_err(),
-            "Ticket '{}' should be rejected",
-            ticket
-        );
+        assert!(result.is_err(), "Ticket '{}' should be rejected", ticket);
     }
 }
 
@@ -712,7 +714,10 @@ fn test_rapid_layer_switching_presence() {
     }
 
     // Should have received at least some updates (network may coalesce some)
-    assert!(received_count > 0, "Should have received at least one presence update");
+    assert!(
+        received_count > 0,
+        "Should have received at least one presence update"
+    );
 
     // All received layer IDs should be from our set
     for layer_id in &received_layer_ids {
@@ -813,7 +818,10 @@ fn test_layer_id_serialization_roundtrip() {
     // Verify the LayerId survived serialization/deserialization
     assert!(received.active_layer_id.is_some());
     let received_layer_id = received.active_layer_id.unwrap();
-    assert_eq!(received_layer_id.0, original_uuid, "LayerId UUID should be preserved through serialization");
+    assert_eq!(
+        received_layer_id.0, original_uuid,
+        "LayerId UUID should be preserved through serialization"
+    );
 
     cleanup_peers(vec![handle_a, handle_b]);
 }
@@ -842,8 +850,8 @@ fn test_layer_switching_updates_presence() {
         .send_command(SyncCommand::BroadcastPresence(presence_1))
         .expect("Failed to broadcast");
 
-    let received_1 = wait_for_presence_update(&handle_b, SYNC_TIMEOUT)
-        .expect("Should receive first presence");
+    let received_1 =
+        wait_for_presence_update(&handle_b, SYNC_TIMEOUT).expect("Should receive first presence");
     assert_eq!(received_1.active_layer_id, Some(layer_1));
 
     // Switch to layer 2
@@ -858,8 +866,8 @@ fn test_layer_switching_updates_presence() {
         .send_command(SyncCommand::BroadcastPresence(presence_2))
         .expect("Failed to broadcast");
 
-    let received_2 = wait_for_presence_update(&handle_b, SYNC_TIMEOUT)
-        .expect("Should receive second presence");
+    let received_2 =
+        wait_for_presence_update(&handle_b, SYNC_TIMEOUT).expect("Should receive second presence");
     assert_eq!(received_2.active_layer_id, Some(layer_2));
 
     // Switch back to layer 1
@@ -874,8 +882,8 @@ fn test_layer_switching_updates_presence() {
         .send_command(SyncCommand::BroadcastPresence(presence_3))
         .expect("Failed to broadcast");
 
-    let received_3 = wait_for_presence_update(&handle_b, SYNC_TIMEOUT)
-        .expect("Should receive third presence");
+    let received_3 =
+        wait_for_presence_update(&handle_b, SYNC_TIMEOUT).expect("Should receive third presence");
     assert_eq!(received_3.active_layer_id, Some(layer_1));
 
     cleanup_peers(vec![handle_a, handle_b]);

@@ -238,7 +238,11 @@ fn straight_line_points(from: Position, to: Position) -> Vec<(Position, char)> {
 
     // Pure horizontal
     if dy == 0 {
-        let (start_x, end_x) = if dx > 0 { (from.x, to.x) } else { (to.x, from.x) };
+        let (start_x, end_x) = if dx > 0 {
+            (from.x, to.x)
+        } else {
+            (to.x, from.x)
+        };
         return (start_x..=end_x)
             .map(|x| (Position::new(x, from.y), '─'))
             .collect();
@@ -246,7 +250,11 @@ fn straight_line_points(from: Position, to: Position) -> Vec<(Position, char)> {
 
     // Pure vertical
     if dx == 0 {
-        let (start_y, end_y) = if dy > 0 { (from.y, to.y) } else { (to.y, from.y) };
+        let (start_y, end_y) = if dy > 0 {
+            (from.y, to.y)
+        } else {
+            (to.y, from.y)
+        };
         return (start_y..=end_y)
             .map(|y| (Position::new(from.x, y), '│'))
             .collect();
@@ -303,7 +311,11 @@ fn straight_line_points(from: Position, to: Position) -> Vec<(Position, char)> {
 }
 
 /// Generate an orthogonal line (L-shaped) with corner
-fn orthogonal_line_points(from: Position, to: Position, horizontal_first: bool) -> Vec<(Position, char)> {
+fn orthogonal_line_points(
+    from: Position,
+    to: Position,
+    horizontal_first: bool,
+) -> Vec<(Position, char)> {
     let mut result = Vec::new();
 
     // Single point
@@ -334,9 +346,9 @@ fn orthogonal_line_points(from: Position, to: Position, horizontal_first: bool) 
         (false, true, true) => '┌',  // left then down
         (false, false, true) => '└', // left then up
         // Vertical first (corner at from.x, to.y)
-        (true, true, false) => '└',  // down then right
-        (true, false, false) => '┌', // up then right
-        (false, true, false) => '┘', // down then left
+        (true, true, false) => '└',   // down then right
+        (true, false, false) => '┌',  // up then right
+        (false, true, false) => '┘',  // down then left
         (false, false, false) => '┐', // up then left
     };
 
@@ -392,7 +404,11 @@ fn orthogonal_line_points(from: Position, to: Position, horizontal_first: bool) 
 }
 
 /// Generate arrow points (line with arrowhead at end)
-pub fn arrow_points_styled(from: Position, to: Position, style: LineStyle) -> Vec<(Position, char)> {
+pub fn arrow_points_styled(
+    from: Position,
+    to: Position,
+    style: LineStyle,
+) -> Vec<(Position, char)> {
     let mut points = line_points_styled(from, to, style);
 
     // Replace the last character with an arrowhead
@@ -474,7 +490,11 @@ pub fn double_rect_points(from: Position, to: Position) -> Vec<(Position, char)>
 }
 
 /// Generate diamond outline points
-pub fn diamond_points(center: Position, half_width: i32, half_height: i32) -> Vec<(Position, char)> {
+pub fn diamond_points(
+    center: Position,
+    half_width: i32,
+    half_height: i32,
+) -> Vec<(Position, char)> {
     let mut points = Vec::new();
 
     let hw = half_width.abs().max(1);
@@ -1101,7 +1121,11 @@ pub fn cloud_points(from: Position, to: Position) -> Vec<(Position, char)> {
 }
 
 /// Generate star outline points - 5-pointed star
-pub fn star_points(center: Position, outer_radius: i32, _inner_radius: i32) -> Vec<(Position, char)> {
+pub fn star_points(
+    center: Position,
+    outer_radius: i32,
+    _inner_radius: i32,
+) -> Vec<(Position, char)> {
     let mut points = Vec::new();
 
     let r = outer_radius.abs().max(2);
@@ -1436,10 +1460,26 @@ mod tests {
     fn rect_points_full_rect() {
         let points = rect_points(Position::new(0, 0), Position::new(5, 3));
         // Check corners exist
-        assert!(points.iter().any(|&(p, c)| p == Position::new(0, 0) && c == '┌'));
-        assert!(points.iter().any(|&(p, c)| p == Position::new(5, 0) && c == '┐'));
-        assert!(points.iter().any(|&(p, c)| p == Position::new(0, 3) && c == '└'));
-        assert!(points.iter().any(|&(p, c)| p == Position::new(5, 3) && c == '┘'));
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(0, 0) && c == '┌')
+        );
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(5, 0) && c == '┐')
+        );
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(0, 3) && c == '└')
+        );
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(5, 3) && c == '┘')
+        );
     }
 
     #[test]
@@ -1461,10 +1501,26 @@ mod tests {
     fn diamond_points_has_tips() {
         let points = diamond_points(Position::new(10, 10), 5, 3);
         // Check tips
-        assert!(points.iter().any(|&(p, c)| p == Position::new(10, 7) && c == '^'));
-        assert!(points.iter().any(|&(p, c)| p == Position::new(10, 13) && c == 'v'));
-        assert!(points.iter().any(|&(p, c)| p == Position::new(5, 10) && c == '<'));
-        assert!(points.iter().any(|&(p, c)| p == Position::new(15, 10) && c == '>'));
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(10, 7) && c == '^')
+        );
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(10, 13) && c == 'v')
+        );
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(5, 10) && c == '<')
+        );
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(15, 10) && c == '>')
+        );
     }
 
     // ========== ellipse_points tests ==========
@@ -1479,8 +1535,16 @@ mod tests {
     fn ellipse_points_has_sides() {
         let points = ellipse_points(Position::new(10, 10), 5, 3);
         // Check left and right parentheses
-        assert!(points.iter().any(|&(p, c)| p == Position::new(5, 10) && c == '('));
-        assert!(points.iter().any(|&(p, c)| p == Position::new(15, 10) && c == ')'));
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(5, 10) && c == '(')
+        );
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(15, 10) && c == ')')
+        );
     }
 
     // ========== LineStyle tests ==========
@@ -1508,51 +1572,83 @@ mod tests {
 
     #[test]
     fn line_points_styled_straight_horizontal() {
-        let points = line_points_styled(Position::new(0, 0), Position::new(5, 0), LineStyle::Straight);
+        let points = line_points_styled(
+            Position::new(0, 0),
+            Position::new(5, 0),
+            LineStyle::Straight,
+        );
         assert_eq!(points.len(), 6);
         assert!(points.iter().all(|&(_, c)| c == '─'));
     }
 
     #[test]
     fn line_points_styled_straight_vertical() {
-        let points = line_points_styled(Position::new(0, 0), Position::new(0, 5), LineStyle::Straight);
+        let points = line_points_styled(
+            Position::new(0, 0),
+            Position::new(0, 5),
+            LineStyle::Straight,
+        );
         assert_eq!(points.len(), 6);
         assert!(points.iter().all(|&(_, c)| c == '│'));
     }
 
     #[test]
     fn line_points_styled_orthogonal_hv() {
-        let points = line_points_styled(Position::new(0, 0), Position::new(5, 3), LineStyle::OrthogonalHV);
+        let points = line_points_styled(
+            Position::new(0, 0),
+            Position::new(5, 3),
+            LineStyle::OrthogonalHV,
+        );
         // Should have a corner character
-        assert!(points.iter().any(|&(_, c)| c == '┐' || c == '┘' || c == '┌' || c == '└'));
+        assert!(
+            points
+                .iter()
+                .any(|&(_, c)| c == '┐' || c == '┘' || c == '┌' || c == '└')
+        );
     }
 
     // ========== arrow_points_styled tests ==========
 
     #[test]
     fn arrow_points_has_arrowhead() {
-        let points = arrow_points_styled(Position::new(0, 0), Position::new(5, 0), LineStyle::Straight);
+        let points = arrow_points_styled(
+            Position::new(0, 0),
+            Position::new(5, 0),
+            LineStyle::Straight,
+        );
         let (_, last_char) = points.last().unwrap();
         assert_eq!(*last_char, '→');
     }
 
     #[test]
     fn arrow_points_up() {
-        let points = arrow_points_styled(Position::new(0, 5), Position::new(0, 0), LineStyle::Straight);
+        let points = arrow_points_styled(
+            Position::new(0, 5),
+            Position::new(0, 0),
+            LineStyle::Straight,
+        );
         let (_, last_char) = points.last().unwrap();
         assert_eq!(*last_char, '↑');
     }
 
     #[test]
     fn arrow_points_down() {
-        let points = arrow_points_styled(Position::new(0, 0), Position::new(0, 5), LineStyle::Straight);
+        let points = arrow_points_styled(
+            Position::new(0, 0),
+            Position::new(0, 5),
+            LineStyle::Straight,
+        );
         let (_, last_char) = points.last().unwrap();
         assert_eq!(*last_char, '↓');
     }
 
     #[test]
     fn arrow_points_left() {
-        let points = arrow_points_styled(Position::new(5, 0), Position::new(0, 0), LineStyle::Straight);
+        let points = arrow_points_styled(
+            Position::new(5, 0),
+            Position::new(0, 0),
+            LineStyle::Straight,
+        );
         let (_, last_char) = points.last().unwrap();
         assert_eq!(*last_char, '←');
     }
@@ -1621,18 +1717,42 @@ mod tests {
     fn rounded_rect_points_full() {
         let points = rounded_rect_points(Position::new(0, 0), Position::new(5, 3));
         // Check rounded corners
-        assert!(points.iter().any(|&(p, c)| p == Position::new(0, 0) && c == '╭'));
-        assert!(points.iter().any(|&(p, c)| p == Position::new(5, 0) && c == '╮'));
-        assert!(points.iter().any(|&(p, c)| p == Position::new(0, 3) && c == '╰'));
-        assert!(points.iter().any(|&(p, c)| p == Position::new(5, 3) && c == '╯'));
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(0, 0) && c == '╭')
+        );
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(5, 0) && c == '╮')
+        );
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(0, 3) && c == '╰')
+        );
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(5, 3) && c == '╯')
+        );
     }
 
     #[test]
     fn double_rect_points_full() {
         let points = double_rect_points(Position::new(0, 0), Position::new(5, 3));
         // Check double-line corners
-        assert!(points.iter().any(|&(p, c)| p == Position::new(0, 0) && c == '╔'));
-        assert!(points.iter().any(|&(p, c)| p == Position::new(5, 0) && c == '╗'));
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(0, 0) && c == '╔')
+        );
+        assert!(
+            points
+                .iter()
+                .any(|&(p, c)| p == Position::new(5, 0) && c == '╗')
+        );
     }
 
     #[test]

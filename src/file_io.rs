@@ -5,14 +5,18 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::canvas::{
-    arrow_points_styled, cloud_points, cylinder_points, diamond_points, double_rect_points,
-    ellipse_points, hexagon_points, line_points_styled, parallelogram_points, rect_points,
-    rounded_rect_points, star_points, trapezoid_points, triangle_points, Position,
+    Position, arrow_points_styled, cloud_points, cylinder_points, diamond_points,
+    double_rect_points, ellipse_points, hexagon_points, line_points_styled, parallelogram_points,
+    rect_points, rounded_rect_points, star_points, trapezoid_points, triangle_points,
 };
 use crate::shapes::{ShapeColor, ShapeKind, ShapeView};
 
 /// Render a label centered inside a shape's bounds
-fn render_label_to_grid(grid: &mut HashMap<Position, char>, bounds: (i32, i32, i32, i32), text: &str) {
+fn render_label_to_grid(
+    grid: &mut HashMap<Position, char>,
+    bounds: (i32, i32, i32, i32),
+    text: &str,
+) {
     let (min_x, min_y, max_x, max_y) = bounds;
     let center_y = (min_y + max_y) / 2;
     let shape_width = (max_x - min_x + 1) as usize;
@@ -42,17 +46,23 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
 
     for shape in shapes.iter() {
         match &shape.kind {
-            ShapeKind::Line { start, end, style, .. } => {
+            ShapeKind::Line {
+                start, end, style, ..
+            } => {
                 for (pos, ch) in line_points_styled(*start, *end, *style) {
                     grid.insert(pos, ch);
                 }
             }
-            ShapeKind::Arrow { start, end, style, .. } => {
+            ShapeKind::Arrow {
+                start, end, style, ..
+            } => {
                 for (pos, ch) in arrow_points_styled(*start, *end, *style) {
                     grid.insert(pos, ch);
                 }
             }
-            ShapeKind::Rectangle { start, end, label, .. } => {
+            ShapeKind::Rectangle {
+                start, end, label, ..
+            } => {
                 for (pos, ch) in rect_points(*start, *end) {
                     grid.insert(pos, ch);
                 }
@@ -60,7 +70,9 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     render_label_to_grid(&mut grid, shape.bounds(), text);
                 }
             }
-            ShapeKind::DoubleBox { start, end, label, .. } => {
+            ShapeKind::DoubleBox {
+                start, end, label, ..
+            } => {
                 for (pos, ch) in double_rect_points(*start, *end) {
                     grid.insert(pos, ch);
                 }
@@ -68,7 +80,13 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     render_label_to_grid(&mut grid, shape.bounds(), text);
                 }
             }
-            ShapeKind::Diamond { center, half_width, half_height, label, .. } => {
+            ShapeKind::Diamond {
+                center,
+                half_width,
+                half_height,
+                label,
+                ..
+            } => {
                 for (pos, ch) in diamond_points(*center, *half_width, *half_height) {
                     grid.insert(pos, ch);
                 }
@@ -76,7 +94,13 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     render_label_to_grid(&mut grid, shape.bounds(), text);
                 }
             }
-            ShapeKind::Ellipse { center, radius_x, radius_y, label, .. } => {
+            ShapeKind::Ellipse {
+                center,
+                radius_x,
+                radius_y,
+                label,
+                ..
+            } => {
                 for (pos, ch) in ellipse_points(*center, *radius_x, *radius_y) {
                     grid.insert(pos, ch);
                 }
@@ -94,7 +118,9 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     grid.insert(Position::new(pos.x + i as i32, pos.y), ch);
                 }
             }
-            ShapeKind::Triangle { p1, p2, p3, label, .. } => {
+            ShapeKind::Triangle {
+                p1, p2, p3, label, ..
+            } => {
                 for (pos, ch) in triangle_points(*p1, *p2, *p3) {
                     grid.insert(pos, ch);
                 }
@@ -102,7 +128,9 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     render_label_to_grid(&mut grid, shape.bounds(), text);
                 }
             }
-            ShapeKind::Parallelogram { start, end, label, .. } => {
+            ShapeKind::Parallelogram {
+                start, end, label, ..
+            } => {
                 for (pos, ch) in parallelogram_points(*start, *end) {
                     grid.insert(pos, ch);
                 }
@@ -110,7 +138,13 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     render_label_to_grid(&mut grid, shape.bounds(), text);
                 }
             }
-            ShapeKind::Hexagon { center, radius_x, radius_y, label, .. } => {
+            ShapeKind::Hexagon {
+                center,
+                radius_x,
+                radius_y,
+                label,
+                ..
+            } => {
                 for (pos, ch) in hexagon_points(*center, *radius_x, *radius_y) {
                     grid.insert(pos, ch);
                 }
@@ -118,7 +152,9 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     render_label_to_grid(&mut grid, shape.bounds(), text);
                 }
             }
-            ShapeKind::Trapezoid { start, end, label, .. } => {
+            ShapeKind::Trapezoid {
+                start, end, label, ..
+            } => {
                 for (pos, ch) in trapezoid_points(*start, *end) {
                     grid.insert(pos, ch);
                 }
@@ -126,7 +162,9 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     render_label_to_grid(&mut grid, shape.bounds(), text);
                 }
             }
-            ShapeKind::RoundedRect { start, end, label, .. } => {
+            ShapeKind::RoundedRect {
+                start, end, label, ..
+            } => {
                 for (pos, ch) in rounded_rect_points(*start, *end) {
                     grid.insert(pos, ch);
                 }
@@ -134,7 +172,9 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     render_label_to_grid(&mut grid, shape.bounds(), text);
                 }
             }
-            ShapeKind::Cylinder { start, end, label, .. } => {
+            ShapeKind::Cylinder {
+                start, end, label, ..
+            } => {
                 for (pos, ch) in cylinder_points(*start, *end) {
                     grid.insert(pos, ch);
                 }
@@ -142,7 +182,9 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     render_label_to_grid(&mut grid, shape.bounds(), text);
                 }
             }
-            ShapeKind::Cloud { start, end, label, .. } => {
+            ShapeKind::Cloud {
+                start, end, label, ..
+            } => {
                 for (pos, ch) in cloud_points(*start, *end) {
                     grid.insert(pos, ch);
                 }
@@ -150,7 +192,13 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
                     render_label_to_grid(&mut grid, shape.bounds(), text);
                 }
             }
-            ShapeKind::Star { center, outer_radius, inner_radius, label, .. } => {
+            ShapeKind::Star {
+                center,
+                outer_radius,
+                inner_radius,
+                label,
+                ..
+            } => {
                 for (pos, ch) in star_points(*center, *outer_radius, *inner_radius) {
                     grid.insert(pos, ch);
                 }

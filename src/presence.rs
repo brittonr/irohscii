@@ -154,11 +154,7 @@ impl PeerPresence {
 
     /// Get a short display name from the peer ID (first 4 hex chars)
     pub fn display_name(&self) -> String {
-        format!(
-            "Peer-{:02x}{:02x}",
-            self.peer_id.0[0],
-            self.peer_id.0[1]
-        )
+        format!("Peer-{:02x}{:02x}", self.peer_id.0[0], self.peer_id.0[1])
     }
 }
 
@@ -204,7 +200,8 @@ impl PresenceManager {
     pub fn update_peer(&mut self, presence: PeerPresence) {
         // Don't store our own presence
         if presence.peer_id != self.local_peer_id {
-            self.peers.insert(presence.peer_id, (presence, Instant::now()));
+            self.peers
+                .insert(presence.peer_id, (presence, Instant::now()));
         }
     }
 
@@ -216,9 +213,8 @@ impl PresenceManager {
     /// Remove stale peers (not updated recently)
     pub fn prune_stale(&mut self) {
         let now = Instant::now();
-        self.peers.retain(|_, (_, last_update)| {
-            now.duration_since(*last_update) < STALE_THRESHOLD
-        });
+        self.peers
+            .retain(|_, (_, last_update)| now.duration_since(*last_update) < STALE_THRESHOLD);
     }
 
     /// Get all active peer presences for rendering
@@ -233,7 +229,10 @@ impl PresenceManager {
 
     /// Find a peer who is currently dragging the specified shape
     /// Returns the peer presence if found
-    pub fn get_dragger_for_shape(&self, shape_id: crate::document::ShapeId) -> Option<&PeerPresence> {
+    pub fn get_dragger_for_shape(
+        &self,
+        shape_id: crate::document::ShapeId,
+    ) -> Option<&PeerPresence> {
         self.peers.values()
             .map(|(p, _)| p)
             .find(|p| matches!(p.activity, CursorActivity::Dragging { shape_id: sid, .. } if sid == shape_id))
@@ -241,7 +240,11 @@ impl PresenceManager {
 
     /// Check if any remote peer started dragging a shape before the given timestamp
     /// Used for soft lock - first dragger wins priority
-    pub fn has_earlier_dragger(&self, shape_id: crate::document::ShapeId, our_start_ms: u64) -> Option<&PeerPresence> {
+    pub fn has_earlier_dragger(
+        &self,
+        shape_id: crate::document::ShapeId,
+        our_start_ms: u64,
+    ) -> Option<&PeerPresence> {
         self.peers.values()
             .map(|(p, _)| p)
             .filter(|p| matches!(p.activity, CursorActivity::Dragging { shape_id: sid, .. } if sid == shape_id))
@@ -250,14 +253,16 @@ impl PresenceManager {
 
     /// Get all peers currently dragging any shape (for ghost rendering)
     pub fn peers_dragging(&self) -> impl Iterator<Item = &PeerPresence> {
-        self.peers.values()
+        self.peers
+            .values()
             .map(|(p, _)| p)
             .filter(|p| matches!(p.activity, CursorActivity::Dragging { .. }))
     }
 
     /// Get all peers currently resizing any shape (for ghost rendering)
     pub fn peers_resizing(&self) -> impl Iterator<Item = &PeerPresence> {
-        self.peers.values()
+        self.peers
+            .values()
             .map(|(p, _)| p)
             .filter(|p| matches!(p.activity, CursorActivity::Resizing { .. }))
     }
@@ -319,11 +324,18 @@ mod tests {
     #[test]
     fn peer_presence_display_name_format() {
         // Test that display name is always well-formed
-        let peer_id = PeerId([0xAB, 0xCD, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                              0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                              0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                              0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
-        let presence = PeerPresence::new(peer_id, Position::new(0, 0), CursorActivity::Idle, None, None);
+        let peer_id = PeerId([
+            0xAB, 0xCD, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+        ]);
+        let presence = PeerPresence::new(
+            peer_id,
+            Position::new(0, 0),
+            CursorActivity::Idle,
+            None,
+            None,
+        );
 
         assert_eq!(presence.display_name(), "Peer-abcd");
         assert!(!presence.display_name().is_empty());
@@ -333,8 +345,20 @@ mod tests {
     fn peer_presence_color_index_deterministic() {
         // Same peer_id should always get same color
         let peer_id = PeerId([42u8; 32]);
-        let presence1 = PeerPresence::new(peer_id, Position::new(0, 0), CursorActivity::Idle, None, None);
-        let presence2 = PeerPresence::new(peer_id, Position::new(100, 100), CursorActivity::Idle, None, None);
+        let presence1 = PeerPresence::new(
+            peer_id,
+            Position::new(0, 0),
+            CursorActivity::Idle,
+            None,
+            None,
+        );
+        let presence2 = PeerPresence::new(
+            peer_id,
+            Position::new(100, 100),
+            CursorActivity::Idle,
+            None,
+            None,
+        );
 
         assert_eq!(presence1.color_index, presence2.color_index);
     }
@@ -344,7 +368,13 @@ mod tests {
         // Color index should always be within PEER_COLORS bounds
         for i in 0u8..=255 {
             let peer_id = PeerId([i; 32]);
-            let presence = PeerPresence::new(peer_id, Position::new(0, 0), CursorActivity::Idle, None, None);
+            let presence = PeerPresence::new(
+                peer_id,
+                Position::new(0, 0),
+                CursorActivity::Idle,
+                None,
+                None,
+            );
             assert!((presence.color_index as usize) < PEER_COLORS.len());
         }
     }
@@ -357,7 +387,13 @@ mod tests {
 
         let mut manager = PresenceManager::new(local_id);
 
-        let presence = PeerPresence::new(remote_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_id), None);
+        let presence = PeerPresence::new(
+            remote_id,
+            Position::new(10, 20),
+            CursorActivity::Idle,
+            Some(layer_id),
+            None,
+        );
         manager.update_peer(presence.clone());
 
         assert_eq!(manager.peer_count(), 1);
@@ -373,7 +409,13 @@ mod tests {
         let mut manager = PresenceManager::new(local_id);
 
         // Try to add our own presence (should be ignored)
-        let presence = PeerPresence::new(local_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_id), None);
+        let presence = PeerPresence::new(
+            local_id,
+            Position::new(10, 20),
+            CursorActivity::Idle,
+            Some(layer_id),
+            None,
+        );
         manager.update_peer(presence);
 
         assert_eq!(manager.peer_count(), 0);
@@ -389,11 +431,23 @@ mod tests {
         let mut manager = PresenceManager::new(local_id);
 
         // Add peer on layer 1
-        let presence1 = PeerPresence::new(remote_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_1), None);
+        let presence1 = PeerPresence::new(
+            remote_id,
+            Position::new(10, 20),
+            CursorActivity::Idle,
+            Some(layer_1),
+            None,
+        );
         manager.update_peer(presence1);
 
         // Update peer to layer 2
-        let presence2 = PeerPresence::new(remote_id, Position::new(30, 40), CursorActivity::Idle, Some(layer_2), None);
+        let presence2 = PeerPresence::new(
+            remote_id,
+            Position::new(30, 40),
+            CursorActivity::Idle,
+            Some(layer_2),
+            None,
+        );
         manager.update_peer(presence2);
 
         // Should still be only 1 peer, with updated layer
@@ -407,7 +461,13 @@ mod tests {
     fn presence_message_serialization() {
         let peer_id = PeerId([1u8; 32]);
         let layer_id = LayerId::new();
-        let presence = PeerPresence::new(peer_id, Position::new(10, 20), CursorActivity::Idle, Some(layer_id), None);
+        let presence = PeerPresence::new(
+            peer_id,
+            Position::new(10, 20),
+            CursorActivity::Idle,
+            Some(layer_id),
+            None,
+        );
 
         let msg = PresenceMessage::Update(presence.clone());
         let bytes = rmp_serde::to_vec(&msg).unwrap();
@@ -424,14 +484,44 @@ mod tests {
     fn activity_labels_are_not_empty() {
         // All activity labels should be meaningful strings
         assert!(!CursorActivity::Idle.label().is_empty());
-        assert!(!CursorActivity::Drawing {
-            tool: ToolKind::Rectangle,
-            start: Position::new(0, 0),
-            current: Position::new(10, 10)
-        }.label().is_empty());
-        assert!(!CursorActivity::Selected { shape_id: crate::document::ShapeId::new() }.label().is_empty());
-        assert!(!CursorActivity::Dragging { shape_id: crate::document::ShapeId::new(), delta: (0, 0) }.label().is_empty());
-        assert!(!CursorActivity::Resizing { shape_id: crate::document::ShapeId::new(), preview_bounds: None }.label().is_empty());
-        assert!(!CursorActivity::Typing { position: Position::new(0, 0) }.label().is_empty());
+        assert!(
+            !CursorActivity::Drawing {
+                tool: ToolKind::Rectangle,
+                start: Position::new(0, 0),
+                current: Position::new(10, 10)
+            }
+            .label()
+            .is_empty()
+        );
+        assert!(
+            !CursorActivity::Selected {
+                shape_id: crate::document::ShapeId::new()
+            }
+            .label()
+            .is_empty()
+        );
+        assert!(
+            !CursorActivity::Dragging {
+                shape_id: crate::document::ShapeId::new(),
+                delta: (0, 0)
+            }
+            .label()
+            .is_empty()
+        );
+        assert!(
+            !CursorActivity::Resizing {
+                shape_id: crate::document::ShapeId::new(),
+                preview_bounds: None
+            }
+            .label()
+            .is_empty()
+        );
+        assert!(
+            !CursorActivity::Typing {
+                position: Position::new(0, 0)
+            }
+            .label()
+            .is_empty()
+        );
     }
 }

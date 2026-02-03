@@ -10,7 +10,7 @@ use anyhow::Result;
 use iroh::endpoint::Connection;
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{RwLock, broadcast, mpsc};
 
 use crate::presence::{PeerId, PeerPresence, PresenceMessage};
 
@@ -45,10 +45,7 @@ impl PresenceProtocol {
     pub const ALPN: &'static [u8] = PRESENCE_ALPN;
 
     /// Create a new presence protocol handler
-    pub fn new(
-        local_peer_id: PeerId,
-        incoming_tx: mpsc::Sender<PresenceMessage>,
-    ) -> Self {
+    pub fn new(local_peer_id: PeerId, incoming_tx: mpsc::Sender<PresenceMessage>) -> Self {
         let (outgoing_tx, _) = broadcast::channel(64);
         Self {
             inner: Arc::new(PresenceInner {
@@ -72,7 +69,10 @@ impl PresenceProtocol {
             *guard = Some(presence.clone());
         }
         // Broadcast to all peer connections
-        let _ = self.inner.outgoing_tx.send(PresenceMessage::Update(presence));
+        let _ = self
+            .inner
+            .outgoing_tx
+            .send(PresenceMessage::Update(presence));
     }
 
     /// Notify peers we're leaving
@@ -148,9 +148,9 @@ impl ProtocolHandler for PresenceProtocol {
     fn accept(&self, conn: Connection) -> impl Future<Output = Result<(), AcceptError>> + Send {
         let this = self.clone();
         async move {
-            this.handle_peer(conn).await.map_err(|e| {
-                AcceptError::from_err(std::io::Error::other(e.to_string()))
-            })
+            this.handle_peer(conn)
+                .await
+                .map_err(|e| AcceptError::from_err(std::io::Error::other(e.to_string())))
         }
     }
 }
@@ -169,9 +169,7 @@ async fn send_presence_msg<W: AsyncWriteExt + Unpin>(
 }
 
 /// Receive a presence message
-async fn recv_presence_msg<R: AsyncReadExt + Unpin>(
-    reader: &mut R,
-) -> Result<PresenceMessage> {
+async fn recv_presence_msg<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<PresenceMessage> {
     let mut len_bytes = [0u8; 4];
     reader.read_exact(&mut len_bytes).await?;
     let len = u32::from_le_bytes(len_bytes) as usize;

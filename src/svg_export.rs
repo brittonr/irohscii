@@ -103,23 +103,83 @@ fn calculate_bounds(shapes: &ShapeView) -> (i32, i32, i32, i32) {
 fn render_shape(output: &mut String, shape: &CachedShape, offset_x: i32, offset_y: i32) {
     let color = shape.kind.color().to_css();
     match &shape.kind {
-        ShapeKind::Line { start, end, style, .. } => {
-            render_line(output, *start, *end, *style, false, color, offset_x, offset_y);
+        ShapeKind::Line {
+            start, end, style, ..
+        } => {
+            render_line(
+                output, *start, *end, *style, false, color, offset_x, offset_y,
+            );
         }
-        ShapeKind::Arrow { start, end, style, .. } => {
-            render_line(output, *start, *end, *style, true, color, offset_x, offset_y);
+        ShapeKind::Arrow {
+            start, end, style, ..
+        } => {
+            render_line(
+                output, *start, *end, *style, true, color, offset_x, offset_y,
+            );
         }
-        ShapeKind::Rectangle { start, end, label, .. } => {
-            render_rectangle(output, *start, *end, label.as_deref(), false, color, offset_x, offset_y);
+        ShapeKind::Rectangle {
+            start, end, label, ..
+        } => {
+            render_rectangle(
+                output,
+                *start,
+                *end,
+                label.as_deref(),
+                false,
+                color,
+                offset_x,
+                offset_y,
+            );
         }
-        ShapeKind::DoubleBox { start, end, label, .. } => {
-            render_rectangle(output, *start, *end, label.as_deref(), true, color, offset_x, offset_y);
+        ShapeKind::DoubleBox {
+            start, end, label, ..
+        } => {
+            render_rectangle(
+                output,
+                *start,
+                *end,
+                label.as_deref(),
+                true,
+                color,
+                offset_x,
+                offset_y,
+            );
         }
-        ShapeKind::Diamond { center, half_width, half_height, label, .. } => {
-            render_diamond(output, *center, *half_width, *half_height, label.as_deref(), color, offset_x, offset_y);
+        ShapeKind::Diamond {
+            center,
+            half_width,
+            half_height,
+            label,
+            ..
+        } => {
+            render_diamond(
+                output,
+                *center,
+                *half_width,
+                *half_height,
+                label.as_deref(),
+                color,
+                offset_x,
+                offset_y,
+            );
         }
-        ShapeKind::Ellipse { center, radius_x, radius_y, label, .. } => {
-            render_ellipse(output, *center, *radius_x, *radius_y, label.as_deref(), color, offset_x, offset_y);
+        ShapeKind::Ellipse {
+            center,
+            radius_x,
+            radius_y,
+            label,
+            ..
+        } => {
+            render_ellipse(
+                output,
+                *center,
+                *radius_x,
+                *radius_y,
+                label.as_deref(),
+                color,
+                offset_x,
+                offset_y,
+            );
         }
         ShapeKind::Freehand { points, .. } => {
             render_freehand(output, points, color, offset_x, offset_y);
@@ -127,29 +187,120 @@ fn render_shape(output: &mut String, shape: &CachedShape, offset_x: i32, offset_
         ShapeKind::Text { pos, content, .. } => {
             render_text(output, *pos, content, color, offset_x, offset_y);
         }
-        ShapeKind::Triangle { p1, p2, p3, label, .. } => {
-            render_triangle(output, *p1, *p2, *p3, label.as_deref(), color, offset_x, offset_y);
+        ShapeKind::Triangle {
+            p1, p2, p3, label, ..
+        } => {
+            render_triangle(
+                output,
+                *p1,
+                *p2,
+                *p3,
+                label.as_deref(),
+                color,
+                offset_x,
+                offset_y,
+            );
         }
-        ShapeKind::Parallelogram { start, end, label, .. } => {
-            render_parallelogram(output, *start, *end, label.as_deref(), color, offset_x, offset_y);
+        ShapeKind::Parallelogram {
+            start, end, label, ..
+        } => {
+            render_parallelogram(
+                output,
+                *start,
+                *end,
+                label.as_deref(),
+                color,
+                offset_x,
+                offset_y,
+            );
         }
-        ShapeKind::Hexagon { center, radius_x, radius_y, label, .. } => {
-            render_hexagon(output, *center, *radius_x, *radius_y, label.as_deref(), color, offset_x, offset_y);
+        ShapeKind::Hexagon {
+            center,
+            radius_x,
+            radius_y,
+            label,
+            ..
+        } => {
+            render_hexagon(
+                output,
+                *center,
+                *radius_x,
+                *radius_y,
+                label.as_deref(),
+                color,
+                offset_x,
+                offset_y,
+            );
         }
-        ShapeKind::Trapezoid { start, end, label, .. } => {
-            render_trapezoid(output, *start, *end, label.as_deref(), color, offset_x, offset_y);
+        ShapeKind::Trapezoid {
+            start, end, label, ..
+        } => {
+            render_trapezoid(
+                output,
+                *start,
+                *end,
+                label.as_deref(),
+                color,
+                offset_x,
+                offset_y,
+            );
         }
-        ShapeKind::RoundedRect { start, end, label, .. } => {
-            render_rounded_rect(output, *start, *end, label.as_deref(), color, offset_x, offset_y);
+        ShapeKind::RoundedRect {
+            start, end, label, ..
+        } => {
+            render_rounded_rect(
+                output,
+                *start,
+                *end,
+                label.as_deref(),
+                color,
+                offset_x,
+                offset_y,
+            );
         }
-        ShapeKind::Cylinder { start, end, label, .. } => {
-            render_cylinder(output, *start, *end, label.as_deref(), color, offset_x, offset_y);
+        ShapeKind::Cylinder {
+            start, end, label, ..
+        } => {
+            render_cylinder(
+                output,
+                *start,
+                *end,
+                label.as_deref(),
+                color,
+                offset_x,
+                offset_y,
+            );
         }
-        ShapeKind::Cloud { start, end, label, .. } => {
-            render_cloud(output, *start, *end, label.as_deref(), color, offset_x, offset_y);
+        ShapeKind::Cloud {
+            start, end, label, ..
+        } => {
+            render_cloud(
+                output,
+                *start,
+                *end,
+                label.as_deref(),
+                color,
+                offset_x,
+                offset_y,
+            );
         }
-        ShapeKind::Star { center, outer_radius, inner_radius, label, .. } => {
-            render_star(output, *center, *outer_radius, *inner_radius, label.as_deref(), color, offset_x, offset_y);
+        ShapeKind::Star {
+            center,
+            outer_radius,
+            inner_radius,
+            label,
+            ..
+        } => {
+            render_star(
+                output,
+                *center,
+                *outer_radius,
+                *inner_radius,
+                label.as_deref(),
+                color,
+                offset_x,
+                offset_y,
+            );
         }
     }
 }
@@ -273,10 +424,14 @@ fn render_diamond(
     // Diamond is a rotated square - 4 points
     let points = format!(
         "{},{} {},{} {},{} {},{}",
-        cx, cy - hh,       // top
-        cx + hw, cy,       // right
-        cx, cy + hh,       // bottom
-        cx - hw, cy        // left
+        cx,
+        cy - hh, // top
+        cx + hw,
+        cy, // right
+        cx,
+        cy + hh, // bottom
+        cx - hw,
+        cy // left
     );
 
     writeln!(
@@ -332,7 +487,13 @@ fn render_ellipse(
 }
 
 /// Render freehand strokes as a path
-fn render_freehand(output: &mut String, points: &[Position], color: &str, offset_x: i32, offset_y: i32) {
+fn render_freehand(
+    output: &mut String,
+    points: &[Position],
+    color: &str,
+    offset_x: i32,
+    offset_y: i32,
+) {
     if points.is_empty() {
         return;
     }
@@ -352,7 +513,14 @@ fn render_freehand(output: &mut String, points: &[Position], color: &str, offset
 }
 
 /// Render text
-fn render_text(output: &mut String, pos: Position, content: &str, color: &str, offset_x: i32, offset_y: i32) {
+fn render_text(
+    output: &mut String,
+    pos: Position,
+    content: &str,
+    color: &str,
+    offset_x: i32,
+    offset_y: i32,
+) {
     let pos = Position::new(pos.x + offset_x, pos.y + offset_y);
     let (x, y) = to_svg_coords(pos);
 
@@ -473,12 +641,18 @@ fn render_hexagon(
 
     let points = format!(
         "{},{} {},{} {},{} {},{} {},{} {},{}",
-        cx - edge_width, cy - ry,  // top left
-        cx + edge_width, cy - ry,  // top right
-        cx + rx, cy,               // right
-        cx + edge_width, cy + ry,  // bottom right
-        cx - edge_width, cy + ry,  // bottom left
-        cx - rx, cy                // left
+        cx - edge_width,
+        cy - ry, // top left
+        cx + edge_width,
+        cy - ry, // top right
+        cx + rx,
+        cy, // right
+        cx + edge_width,
+        cy + ry, // bottom right
+        cx - edge_width,
+        cy + ry, // bottom left
+        cx - rx,
+        cy // left
     );
 
     writeln!(
@@ -604,7 +778,11 @@ fn render_cylinder(
     writeln!(
         output,
         r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
-        x + width / 2, y + ellipse_height / 2, width / 2, ellipse_height / 2, color
+        x + width / 2,
+        y + ellipse_height / 2,
+        width / 2,
+        ellipse_height / 2,
+        color
     )
     .unwrap();
 
@@ -612,7 +790,10 @@ fn render_cylinder(
     writeln!(
         output,
         r#"  <rect x="{}" y="{}" width="{}" height="{}" stroke="none" fill="white"/>"#,
-        x, y + ellipse_height / 2, width, height - ellipse_height
+        x,
+        y + ellipse_height / 2,
+        width,
+        height - ellipse_height
     )
     .unwrap();
 
@@ -620,7 +801,11 @@ fn render_cylinder(
     writeln!(
         output,
         r#"  <line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="1"/>"#,
-        x, y + ellipse_height / 2, x, y + height - ellipse_height / 2, color
+        x,
+        y + ellipse_height / 2,
+        x,
+        y + height - ellipse_height / 2,
+        color
     )
     .unwrap();
 
@@ -628,7 +813,11 @@ fn render_cylinder(
     writeln!(
         output,
         r#"  <line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="1"/>"#,
-        x + width, y + ellipse_height / 2, x + width, y + height - ellipse_height / 2, color
+        x + width,
+        y + ellipse_height / 2,
+        x + width,
+        y + height - ellipse_height / 2,
+        color
     )
     .unwrap();
 
@@ -636,7 +825,11 @@ fn render_cylinder(
     writeln!(
         output,
         r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
-        x + width / 2, y + height - ellipse_height / 2, width / 2, ellipse_height / 2, color
+        x + width / 2,
+        y + height - ellipse_height / 2,
+        width / 2,
+        ellipse_height / 2,
+        color
     )
     .unwrap();
 
@@ -674,25 +867,41 @@ fn render_cloud(
     writeln!(
         output,
         r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
-        x + r, y + height / 2, r, r, color
+        x + r,
+        y + height / 2,
+        r,
+        r,
+        color
     )
     .unwrap();
     writeln!(
         output,
         r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
-        x + width / 2, y + r, r * 3 / 2, r, color
+        x + width / 2,
+        y + r,
+        r * 3 / 2,
+        r,
+        color
     )
     .unwrap();
     writeln!(
         output,
         r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
-        x + width - r, y + height / 2, r, r, color
+        x + width - r,
+        y + height / 2,
+        r,
+        r,
+        color
     )
     .unwrap();
     writeln!(
         output,
         r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
-        x + width / 2, y + height - r, r * 3 / 2, r, color
+        x + width / 2,
+        y + height - r,
+        r * 3 / 2,
+        r,
+        color
     )
     .unwrap();
 
@@ -873,10 +1082,7 @@ mod tests {
 
     #[test]
     fn calculate_bounds_multiple_shapes() {
-        let view = build_shape_view(vec![
-            make_rect(0, 0, 5, 5),
-            make_rect(20, 20, 5, 5),
-        ]);
+        let view = build_shape_view(vec![make_rect(0, 0, 5, 5), make_rect(20, 20, 5, 5)]);
         let (min_x, min_y, max_x, max_y) = calculate_bounds(&view);
         assert!(min_x <= 0);
         assert!(min_y <= 0);
