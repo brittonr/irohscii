@@ -2959,6 +2959,122 @@ impl App {
     pub fn current_session_name(&self) -> Option<&str> {
         self.current_session_meta.as_ref().map(|m| m.name.as_str())
     }
+
+    // =========================================================================
+    // File Operation Methods (used by modes/path_input.rs)
+    // =========================================================================
+
+    /// Execute file save (ASCII export)
+    pub fn execute_file_save(&mut self, path: &str) {
+        use crate::file_io;
+        let path_buf = std::path::PathBuf::from(path);
+        match file_io::save_ascii(&self.shape_view, &path_buf) {
+            Ok(()) => {
+                self.recent_files.add(path_buf.clone());
+                self.file_path = Some(path_buf);
+                self.set_status("Exported!");
+            }
+            Err(e) => {
+                self.set_error(format!("Export error: {}", e));
+            }
+        }
+    }
+
+    /// Execute file open (ASCII import)
+    pub fn execute_file_open(&mut self, path: &str) {
+        use crate::file_io;
+        let path_buf = std::path::PathBuf::from(path);
+        match file_io::load_ascii(&path_buf) {
+            Ok(shapes) => {
+                // Create new document and add shapes
+                self.doc = Document::new();
+                for kind in shapes {
+                    let _ = self.doc.add_shape(kind);
+                }
+                // Rebuild view
+                if let Err(e) = self.shape_view.rebuild(&self.doc) {
+                    self.set_error(format!("Error rebuilding view: {}", e));
+                } else {
+                    self.recent_files.add(path_buf.clone());
+                    self.file_path = Some(path_buf);
+                    self.set_status("Imported!");
+                }
+            }
+            Err(e) => {
+                self.set_error(format!("Import error: {}", e));
+            }
+        }
+    }
+
+    /// Execute document save (native format)
+    pub fn execute_doc_save(&mut self, path: &str) {
+        let path_buf = std::path::PathBuf::from(path);
+        match self.doc.save_to(&path_buf) {
+            Ok(()) => {
+                self.set_status(format!("Document saved to {}", path_buf.display()));
+            }
+            Err(e) => {
+                self.set_error(format!("Failed to save: {}", e));
+            }
+        }
+    }
+
+    /// Execute document open (native format)
+    pub fn execute_doc_open(&mut self, path: &str) {
+        let path_buf = std::path::PathBuf::from(path);
+        match Document::load(&path_buf) {
+            Ok(doc) => {
+                self.doc = doc;
+                if let Err(e) = self.shape_view.rebuild(&self.doc) {
+                    self.set_error(format!("Error rebuilding view: {}", e));
+                } else {
+                    self.set_status(format!("Document loaded from {}", path_buf.display()));
+                }
+            }
+            Err(e) => {
+                self.set_error(format!("Failed to load: {}", e));
+            }
+        }
+    }
+
+    /// Execute SVG export
+    pub fn execute_svg_export(&mut self, path: &str) {
+        use crate::svg_export;
+        let path_buf = std::path::PathBuf::from(path);
+        match svg_export::save_svg(&self.shape_view, &path_buf) {
+            Ok(()) => {
+                self.set_status(format!("Exported to {}", path_buf.display()));
+            }
+            Err(e) => {
+                self.set_error(format!("SVG export error: {}", e));
+            }
+        }
+    }
+
+    /// Open a file from the recent files list by index
+    pub fn open_recent_file(&mut self, index: usize) {
+        use crate::file_io;
+        if let Some(file) = self.recent_files.get(index) {
+            let path = file.path.clone();
+            match file_io::load_ascii(&path) {
+                Ok(shapes) => {
+                    self.doc = Document::new();
+                    for kind in shapes {
+                        let _ = self.doc.add_shape(kind);
+                    }
+                    if let Err(e) = self.shape_view.rebuild(&self.doc) {
+                        self.set_error(format!("Error rebuilding view: {}", e));
+                    } else {
+                        self.file_path = Some(path);
+                        self.set_status("Loaded!");
+                    }
+                }
+                Err(e) => {
+                    self.set_error(format!("Load error: {}", e));
+                }
+            }
+        }
+    }
 }
 
 /// Snap a position to the nearest grid point

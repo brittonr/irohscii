@@ -1,4 +1,5 @@
 mod app;
+mod modes;
 mod recent_files;
 mod tools;
 mod ui;
@@ -14,20 +15,20 @@ mod canvas {
     pub use irohscii_geometry::*;
 }
 mod document {
-    pub use irohscii_core::{default_storage_path, Document, GroupId, ShapeId};
+    pub use irohscii_core::{Document, GroupId, ShapeId, default_storage_path};
 }
 mod layers {
     pub use irohscii_core::{Layer, LayerId};
 }
 mod shapes {
     pub use irohscii_core::{
-        flip_horizontal, flip_vertical, resize_shape, rotate_90_ccw, rotate_90_cw, ResizeHandle,
-        ShapeColor, ShapeKind, ShapeView, SnapPoint,
+        ResizeHandle, ShapeColor, ShapeKind, ShapeView, SnapPoint, flip_horizontal, flip_vertical,
+        resize_shape, rotate_90_ccw, rotate_90_cw,
     };
 }
 mod presence {
     pub use irohscii_sync::{
-        peer_color, CursorActivity, PeerId, PeerPresence, PresenceManager, ToolKind,
+        CursorActivity, PeerId, PeerPresence, PresenceManager, ToolKind, peer_color,
     };
 }
 mod file_io {
