@@ -133,7 +133,7 @@ impl Document {
 
             // Create default layer
             let layer_obj = tx
-                .put_object(&layers_obj, &default_layer_id.to_string(), ObjType::Map)
+                .put_object(&layers_obj, default_layer_id.to_string(), ObjType::Map)
                 .unwrap();
             tx.put(&layer_obj, "name", "Layer 1").unwrap();
             tx.put(&layer_obj, "visible", true).unwrap();
@@ -267,7 +267,7 @@ impl Document {
             None => tx.put_object(ROOT, "shapes", ObjType::Map)?,
         };
 
-        let shape_obj = tx.put_object(&shapes_obj, &id.to_string(), ObjType::Map)?;
+        let shape_obj = tx.put_object(&shapes_obj, id.to_string(), ObjType::Map)?;
         write_shape_kind(&mut tx, &shape_obj, &kind)?;
 
         // Append to shape_order list (new shapes go on top)
@@ -290,8 +290,8 @@ impl Document {
 
         // Delete old shape object and create new one with updated data
         let mut tx = self.doc.transaction();
-        tx.delete(&shapes_obj, &id.to_string())?;
-        let shape_obj = tx.put_object(&shapes_obj, &id.to_string(), ObjType::Map)?;
+        tx.delete(&shapes_obj, id.to_string())?;
+        let shape_obj = tx.put_object(&shapes_obj, id.to_string(), ObjType::Map)?;
         write_shape_kind(&mut tx, &shape_obj, &kind)?;
         tx.commit();
 
@@ -304,18 +304,18 @@ impl Document {
         let shapes_obj = self.get_shapes_map()?;
 
         let mut tx = self.doc.transaction();
-        tx.delete(&shapes_obj, &id.to_string())?;
+        tx.delete(&shapes_obj, id.to_string())?;
 
         // Remove from shape_order list
         if let Some((_, order_obj)) = tx.get(ROOT, "shape_order")? {
             let id_str = id.to_string();
             let len = tx.length(&order_obj);
             for i in (0..len).rev() {
-                if let Some((automerge::Value::Scalar(s), _)) = tx.get(&order_obj, i)? {
-                    if s.to_string().trim_matches('"') == id_str {
-                        tx.delete(&order_obj, i)?;
-                        break;
-                    }
+                if let Some((automerge::Value::Scalar(s), _)) = tx.get(&order_obj, i)?
+                    && s.to_string().trim_matches('"') == id_str
+                {
+                    tx.delete(&order_obj, i)?;
+                    break;
                 }
             }
         }
@@ -329,7 +329,7 @@ impl Document {
     /// Read a single shape
     pub fn read_shape(&self, id: ShapeId) -> Result<Option<ShapeKind>> {
         let shapes_obj = self.get_shapes_map()?;
-        if let Some((_, shape_obj)) = self.doc.get(&shapes_obj, &id.to_string())? {
+        if let Some((_, shape_obj)) = self.doc.get(&shapes_obj, id.to_string())? {
             read_shape_kind(&self.doc, &shape_obj)
         } else {
             Ok(None)
@@ -347,10 +347,10 @@ impl Document {
 
         for key in self.doc.keys(&shapes_obj) {
             let id = ShapeId(Uuid::parse_str(&key)?);
-            if let Some((_, shape_obj)) = self.doc.get(&shapes_obj, &key)? {
-                if let Some(kind) = read_shape_kind(&self.doc, &shape_obj)? {
-                    shapes.push((id, kind));
-                }
+            if let Some((_, shape_obj)) = self.doc.get(&shapes_obj, &key)?
+                && let Some(kind) = read_shape_kind(&self.doc, &shape_obj)?
+            {
+                shapes.push((id, kind));
             }
         }
         Ok(shapes)
@@ -526,7 +526,7 @@ impl Document {
         };
 
         // Create the group object
-        let group_obj = tx.put_object(&groups_obj, &id.to_string(), ObjType::Map)?;
+        let group_obj = tx.put_object(&groups_obj, id.to_string(), ObjType::Map)?;
 
         // Add members list
         let members_obj = tx.put_object(&group_obj, "members", ObjType::List)?;
@@ -563,7 +563,7 @@ impl Document {
         let groups_obj = self.get_groups_map()?;
 
         let mut tx = self.doc.transaction();
-        tx.delete(&groups_obj, &id.to_string())?;
+        tx.delete(&groups_obj, id.to_string())?;
         tx.commit();
 
         self.dirty = true;
@@ -577,7 +577,7 @@ impl Document {
             None => return Ok(None),
         };
 
-        match self.doc.get(&groups_obj, &id.to_string())? {
+        match self.doc.get(&groups_obj, id.to_string())? {
             Some((_, group_obj)) => {
                 // Read members
                 let members = match self.doc.get(&group_obj, "members")? {
@@ -641,7 +641,7 @@ impl Document {
     pub fn get_shape_group(&self, id: ShapeId) -> Result<Option<GroupId>> {
         let shapes_obj = self.get_shapes_map()?;
 
-        match self.doc.get(&shapes_obj, &id.to_string())? {
+        match self.doc.get(&shapes_obj, id.to_string())? {
             Some((_, shape_obj)) => match self.doc.get(&shape_obj, "group_id")? {
                 Some((automerge::Value::Scalar(s), _)) => {
                     let id_str = s.to_string().trim_matches('"').to_string();
@@ -659,7 +659,7 @@ impl Document {
 
         let mut tx = self.doc.transaction();
 
-        if let Some((_, shape_obj)) = tx.get(&shapes_obj, &id.to_string())? {
+        if let Some((_, shape_obj)) = tx.get(&shapes_obj, id.to_string())? {
             match group_id {
                 Some(gid) => {
                     tx.put(&shape_obj, "group_id", gid.to_string())?;
@@ -778,7 +778,7 @@ impl Document {
         };
 
         // Create the layer object
-        let layer_obj = tx.put_object(&layers_obj, &id.to_string(), ObjType::Map)?;
+        let layer_obj = tx.put_object(&layers_obj, id.to_string(), ObjType::Map)?;
         tx.put(&layer_obj, "name", name)?;
         tx.put(&layer_obj, "visible", true)?;
         tx.put(&layer_obj, "locked", false)?;
@@ -815,10 +815,10 @@ impl Document {
         // Move all shapes on this layer to the default layer
         let all_shapes = self.read_all_shapes()?;
         for (shape_id, _) in &all_shapes {
-            if let Ok(Some(layer_id)) = self.get_shape_layer(*shape_id) {
-                if layer_id == id {
-                    self.set_shape_layer(*shape_id, default_layer)?;
-                }
+            if let Ok(Some(layer_id)) = self.get_shape_layer(*shape_id)
+                && layer_id == id
+            {
+                self.set_shape_layer(*shape_id, default_layer)?;
             }
         }
 
@@ -826,18 +826,18 @@ impl Document {
         let layers_obj = self.get_layers_map()?;
 
         let mut tx = self.doc.transaction();
-        tx.delete(&layers_obj, &id.to_string())?;
+        tx.delete(&layers_obj, id.to_string())?;
 
         // Remove from layer order
         if let Some((_, order_obj)) = tx.get(ROOT, "layer_order")? {
             let id_str = id.to_string();
             let len = tx.length(&order_obj);
             for i in (0..len).rev() {
-                if let Some((automerge::Value::Scalar(s), _)) = tx.get(&order_obj, i)? {
-                    if s.to_string().trim_matches('"') == id_str {
-                        tx.delete(&order_obj, i)?;
-                        break;
-                    }
+                if let Some((automerge::Value::Scalar(s), _)) = tx.get(&order_obj, i)?
+                    && s.to_string().trim_matches('"') == id_str
+                {
+                    tx.delete(&order_obj, i)?;
+                    break;
                 }
             }
         }
@@ -854,7 +854,7 @@ impl Document {
             None => return Ok(None),
         };
 
-        match self.doc.get(&layers_obj, &id.to_string())? {
+        match self.doc.get(&layers_obj, id.to_string())? {
             Some((_, layer_obj)) => {
                 let name = match self.doc.get(&layer_obj, "name")? {
                     Some((automerge::Value::Scalar(s), _)) => {
@@ -904,7 +904,7 @@ impl Document {
 
         let mut tx = self.doc.transaction();
 
-        if let Some((_, layer_obj)) = tx.get(&layers_obj, &id.to_string())? {
+        if let Some((_, layer_obj)) = tx.get(&layers_obj, id.to_string())? {
             tx.put(&layer_obj, "name", name)?;
         }
 
@@ -919,7 +919,7 @@ impl Document {
 
         let mut tx = self.doc.transaction();
 
-        if let Some((_, layer_obj)) = tx.get(&layers_obj, &id.to_string())? {
+        if let Some((_, layer_obj)) = tx.get(&layers_obj, id.to_string())? {
             tx.put(&layer_obj, "visible", visible)?;
         }
 
@@ -934,7 +934,7 @@ impl Document {
 
         let mut tx = self.doc.transaction();
 
-        if let Some((_, layer_obj)) = tx.get(&layers_obj, &id.to_string())? {
+        if let Some((_, layer_obj)) = tx.get(&layers_obj, id.to_string())? {
             tx.put(&layer_obj, "locked", locked)?;
         }
 
@@ -947,7 +947,7 @@ impl Document {
     pub fn get_shape_layer(&self, id: ShapeId) -> Result<Option<LayerId>> {
         let shapes_obj = self.get_shapes_map()?;
 
-        match self.doc.get(&shapes_obj, &id.to_string())? {
+        match self.doc.get(&shapes_obj, id.to_string())? {
             Some((_, shape_obj)) => match self.doc.get(&shape_obj, "layer_id")? {
                 Some((automerge::Value::Scalar(s), _)) => {
                     let id_str = s.to_string().trim_matches('"').to_string();
@@ -965,7 +965,7 @@ impl Document {
 
         let mut tx = self.doc.transaction();
 
-        if let Some((_, shape_obj)) = tx.get(&shapes_obj, &id.to_string())? {
+        if let Some((_, shape_obj)) = tx.get(&shapes_obj, id.to_string())? {
             tx.put(&shape_obj, "layer_id", layer_id.to_string())?;
         }
 
@@ -1159,22 +1159,20 @@ impl Document {
                     let mut new_end = end;
 
                     // If start is connected to the resized shape, find which snap point it was at
-                    if start_connection == Some(resized_conn_id) {
-                        if let Some(new_pos) =
+                    if start_connection == Some(resized_conn_id)
+                        && let Some(new_pos) =
                             find_corresponding_snap(&start, &old_snaps, &new_snaps)
-                        {
-                            new_start = new_pos;
-                            changed = true;
-                        }
+                    {
+                        new_start = new_pos;
+                        changed = true;
                     }
 
                     // If end is connected to the resized shape, find which snap point it was at
-                    if end_connection == Some(resized_conn_id) {
-                        if let Some(new_pos) = find_corresponding_snap(&end, &old_snaps, &new_snaps)
-                        {
-                            new_end = new_pos;
-                            changed = true;
-                        }
+                    if end_connection == Some(resized_conn_id)
+                        && let Some(new_pos) = find_corresponding_snap(&end, &old_snaps, &new_snaps)
+                    {
+                        new_end = new_pos;
+                        changed = true;
                     }
 
                     if changed {
@@ -1206,21 +1204,19 @@ impl Document {
                     let mut new_start = start;
                     let mut new_end = end;
 
-                    if start_connection == Some(resized_conn_id) {
-                        if let Some(new_pos) =
+                    if start_connection == Some(resized_conn_id)
+                        && let Some(new_pos) =
                             find_corresponding_snap(&start, &old_snaps, &new_snaps)
-                        {
-                            new_start = new_pos;
-                            changed = true;
-                        }
+                    {
+                        new_start = new_pos;
+                        changed = true;
                     }
 
-                    if end_connection == Some(resized_conn_id) {
-                        if let Some(new_pos) = find_corresponding_snap(&end, &old_snaps, &new_snaps)
-                        {
-                            new_end = new_pos;
-                            changed = true;
-                        }
+                    if end_connection == Some(resized_conn_id)
+                        && let Some(new_pos) = find_corresponding_snap(&end, &old_snaps, &new_snaps)
+                    {
+                        new_end = new_pos;
+                        changed = true;
                     }
 
                     if changed {
@@ -1368,7 +1364,7 @@ impl Document {
 
         // Restore previous shapes
         for (id, kind) in prev_shapes {
-            let shape_obj = tx.put_object(&shapes_obj, &id.to_string(), ObjType::Map)?;
+            let shape_obj = tx.put_object(&shapes_obj, id.to_string(), ObjType::Map)?;
             write_shape_kind(&mut tx, &shape_obj, &kind)?;
         }
 
@@ -1434,7 +1430,7 @@ impl Document {
 
         // Restore next shapes
         for (id, kind) in next_shapes {
-            let shape_obj = tx.put_object(&shapes_obj, &id.to_string(), ObjType::Map)?;
+            let shape_obj = tx.put_object(&shapes_obj, id.to_string(), ObjType::Map)?;
             write_shape_kind(&mut tx, &shape_obj, &kind)?;
         }
 

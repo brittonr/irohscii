@@ -128,11 +128,10 @@ impl PresenceProtocol {
                     match result {
                         Ok(msg) => {
                             // Handle RequestAll by sending our current presence
-                            if matches!(msg, PresenceMessage::RequestAll) {
-                                if let Some(presence) = self.inner.local_presence.read().await.as_ref() {
+                            if matches!(msg, PresenceMessage::RequestAll)
+                                && let Some(presence) = self.inner.local_presence.read().await.as_ref() {
                                     send_presence_msg(send, &PresenceMessage::Update(presence.clone())).await?;
                                 }
-                            }
                             // Forward to main thread
                             let _ = self.inner.incoming_tx.send(msg).await;
                         }

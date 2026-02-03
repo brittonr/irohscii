@@ -250,7 +250,7 @@ impl PresenceManager {
         self.peers.values()
             .map(|(p, _)| p)
             .filter(|p| matches!(p.activity, CursorActivity::Dragging { shape_id: sid, .. } if sid == shape_id))
-            .find(|p| p.drag_start_ms.map_or(false, |t| t < our_start_ms))
+            .find(|p| p.drag_start_ms.is_some_and(|t| t < our_start_ms))
     }
 
     /// Get all peers currently dragging any shape (for ghost rendering)

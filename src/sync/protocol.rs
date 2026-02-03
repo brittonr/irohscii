@@ -62,7 +62,7 @@ impl IrohAutomergeProtocol {
             doc.merge(&mut other_clone)?;
         }
         // Increment counter to signal change (watch never loses updates)
-        let _ = self.inner.change_tx.send_modify(|v| *v += 1);
+        self.inner.change_tx.send_modify(|v| *v += 1);
         Ok(())
     }
 

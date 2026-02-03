@@ -1116,17 +1116,17 @@ impl ShapeKind {
                 let mut new_end = *end;
                 let mut changed = false;
 
-                if *start_connection == Some(resized_id) {
-                    if let Some(new_pos) = find_corresponding_snap(start, old_snaps, new_snaps) {
-                        new_start = new_pos;
-                        changed = true;
-                    }
+                if *start_connection == Some(resized_id)
+                    && let Some(new_pos) = find_corresponding_snap(start, old_snaps, new_snaps)
+                {
+                    new_start = new_pos;
+                    changed = true;
                 }
-                if *end_connection == Some(resized_id) {
-                    if let Some(new_pos) = find_corresponding_snap(end, old_snaps, new_snaps) {
-                        new_end = new_pos;
-                        changed = true;
-                    }
+                if *end_connection == Some(resized_id)
+                    && let Some(new_pos) = find_corresponding_snap(end, old_snaps, new_snaps)
+                {
+                    new_end = new_pos;
+                    changed = true;
                 }
 
                 if changed {
@@ -1156,17 +1156,17 @@ impl ShapeKind {
                 let mut new_end = *end;
                 let mut changed = false;
 
-                if *start_connection == Some(resized_id) {
-                    if let Some(new_pos) = find_corresponding_snap(start, old_snaps, new_snaps) {
-                        new_start = new_pos;
-                        changed = true;
-                    }
+                if *start_connection == Some(resized_id)
+                    && let Some(new_pos) = find_corresponding_snap(start, old_snaps, new_snaps)
+                {
+                    new_start = new_pos;
+                    changed = true;
                 }
-                if *end_connection == Some(resized_id) {
-                    if let Some(new_pos) = find_corresponding_snap(end, old_snaps, new_snaps) {
-                        new_end = new_pos;
-                        changed = true;
-                    }
+                if *end_connection == Some(resized_id)
+                    && let Some(new_pos) = find_corresponding_snap(end, old_snaps, new_snaps)
+                {
+                    new_end = new_pos;
+                    changed = true;
                 }
 
                 if changed {
@@ -1247,10 +1247,10 @@ impl ShapeKind {
                 if let Some(first) = points.first() {
                     snaps.push(*first);
                 }
-                if let Some(last) = points.last() {
-                    if points.len() > 1 {
-                        snaps.push(*last);
-                    }
+                if let Some(last) = points.last()
+                    && points.len() > 1
+                {
+                    snaps.push(*last);
                 }
                 snaps
             }
@@ -1568,10 +1568,10 @@ impl CachedShape {
                 if let Some(first) = points.first() {
                     snaps.push(*first);
                 }
-                if let Some(last) = points.last() {
-                    if points.len() > 1 {
-                        snaps.push(*last);
-                    }
+                if let Some(last) = points.last()
+                    && points.len() > 1
+                {
+                    snaps.push(*last);
                 }
                 snaps
             }
@@ -1970,16 +1970,14 @@ impl ShapeView {
         for shape in &self.shapes {
             for &snap_pos in shape.snap_points() {
                 let dist = (pos.x - snap_pos.x).abs() + (pos.y - snap_pos.y).abs();
-                if dist <= threshold {
-                    if best.is_none() || dist < best.as_ref().unwrap().1 {
-                        best = Some((
-                            SnapPoint {
-                                pos: snap_pos,
-                                shape_id: shape.id,
-                            },
-                            dist,
-                        ));
-                    }
+                if dist <= threshold && (best.is_none() || dist < best.as_ref().unwrap().1) {
+                    best = Some((
+                        SnapPoint {
+                            pos: snap_pos,
+                            shape_id: shape.id,
+                        },
+                        dist,
+                    ));
                 }
             }
         }
@@ -2018,10 +2016,10 @@ impl ShapeView {
     #[allow(dead_code)]
     pub fn update_shapes(&mut self, doc: &Document, ids: &[ShapeId]) {
         for &id in ids {
-            if let Some(&idx) = self.by_id.get(&id) {
-                if let Ok(Some(kind)) = doc.read_shape(id) {
-                    self.shapes[idx].update(kind);
-                }
+            if let Some(&idx) = self.by_id.get(&id)
+                && let Ok(Some(kind)) = doc.read_shape(id)
+            {
+                self.shapes[idx].update(kind);
             }
         }
     }

@@ -276,7 +276,7 @@ async fn run_sync(
                     _ = tokio::time::sleep(Duration::from_millis(50)) => {
                         match command_rx.try_recv() {
                             Ok(SyncCommand::SyncDoc { doc }) => {
-                                if let Err(e) = protocol.merge_and_notify(&*doc).await {
+                                if let Err(e) = protocol.merge_and_notify(&doc).await {
                                     let _ = event_tx.send(SyncEvent::Error(e.to_string()));
                                 }
                             }
