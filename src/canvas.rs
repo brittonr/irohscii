@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
 
 /// A position on the canvas (can be negative for infinite canvas feel)
@@ -12,137 +10,6 @@ pub struct Position {
 impl Position {
     pub fn new(x: i32, y: i32) -> Self {
         Self { x, y }
-    }
-}
-
-/// The drawing canvas - sparse representation for efficiency
-#[derive(Debug, Clone)]
-pub struct Canvas {
-    cells: HashMap<Position, char>,
-}
-
-impl Default for Canvas {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Canvas {
-    pub fn new() -> Self {
-        Self {
-            cells: HashMap::new(),
-        }
-    }
-
-    /// Get the character at a position, returns space if empty
-    pub fn get(&self, pos: Position) -> char {
-        *self.cells.get(&pos).unwrap_or(&' ')
-    }
-
-    /// Set a character at a position
-    pub fn set(&mut self, pos: Position, ch: char) {
-        if ch == ' ' {
-            self.cells.remove(&pos);
-        } else {
-            self.cells.insert(pos, ch);
-        }
-    }
-
-    /// Get the bounding box of all content (min_x, min_y, max_x, max_y)
-    pub fn bounds(&self) -> Option<(i32, i32, i32, i32)> {
-        if self.cells.is_empty() {
-            return None;
-        }
-
-        let mut min_x = i32::MAX;
-        let mut min_y = i32::MAX;
-        let mut max_x = i32::MIN;
-        let mut max_y = i32::MIN;
-
-        for pos in self.cells.keys() {
-            min_x = min_x.min(pos.x);
-            min_y = min_y.min(pos.y);
-            max_x = max_x.max(pos.x);
-            max_y = max_y.max(pos.y);
-        }
-
-        Some((min_x, min_y, max_x, max_y))
-    }
-
-    /// Clear the entire canvas
-    pub fn clear(&mut self) {
-        self.cells.clear();
-    }
-
-    /// Export canvas to string (for saving)
-    pub fn to_string_content(&self) -> String {
-        let Some((min_x, min_y, max_x, max_y)) = self.bounds() else {
-            return String::new();
-        };
-
-        let mut lines = Vec::new();
-        for y in min_y..=max_y {
-            let mut line = String::new();
-            for x in min_x..=max_x {
-                line.push(self.get(Position::new(x, y)));
-            }
-            // Trim trailing spaces from each line
-            let trimmed = line.trim_end();
-            lines.push(trimmed.to_string());
-        }
-
-        // Remove trailing empty lines
-        while lines.last().is_some_and(|l| l.is_empty()) {
-            lines.pop();
-        }
-
-        lines.join("\n")
-    }
-
-    /// Load canvas from string
-    pub fn from_string(content: &str) -> Self {
-        let mut canvas = Self::new();
-        for (y, line) in content.lines().enumerate() {
-            for (x, ch) in line.chars().enumerate() {
-                if ch != ' ' {
-                    canvas.set(Position::new(x as i32, y as i32), ch);
-                }
-            }
-        }
-        canvas
-    }
-
-    /// Draw a line between two points using Bresenham's algorithm
-    pub fn draw_line(&mut self, from: Position, to: Position, ch: char) {
-        for pos in line_points(from, to) {
-            self.set(pos, ch);
-        }
-    }
-
-    /// Draw a rectangle (box) with Unicode box-drawing characters
-    pub fn draw_rect(&mut self, from: Position, to: Position) {
-        let min_x = from.x.min(to.x);
-        let max_x = from.x.max(to.x);
-        let min_y = from.y.min(to.y);
-        let max_y = from.y.max(to.y);
-
-        // Corners
-        self.set(Position::new(min_x, min_y), '┌');
-        self.set(Position::new(max_x, min_y), '┐');
-        self.set(Position::new(min_x, max_y), '└');
-        self.set(Position::new(max_x, max_y), '┘');
-
-        // Horizontal lines
-        for x in (min_x + 1)..max_x {
-            self.set(Position::new(x, min_y), '─');
-            self.set(Position::new(x, max_y), '─');
-        }
-
-        // Vertical lines
-        for y in (min_y + 1)..max_y {
-            self.set(Position::new(min_x, y), '│');
-            self.set(Position::new(max_x, y), '│');
-        }
     }
 }
 
@@ -1059,14 +926,14 @@ pub fn cloud_points(from: Position, to: Position) -> Vec<(Position, char)> {
 
     // Calculate number of bumps based on width
     let bump_width = 4;
-    let num_bumps = ((width - 2) / bump_width).max(2).min(5);
+    let num_bumps = ((width - 2) / bump_width).clamp(2, 5);
     let total_bump_space = num_bumps * 3; // each bump takes ~3 chars: _( )
-    let start_offset = (width as i32 - total_bump_space as i32) / 2;
+    let start_offset = (width - total_bump_space) / 2;
 
     // Top bumps - row 0: _ between bumps
     // Row 1: ( ) for each bump
     for i in 0..num_bumps {
-        let bump_center = min_x + start_offset as i32 + 1 + (i as i32 * 3);
+        let bump_center = min_x + start_offset + 1 + (i * 3);
         // Underscore on top
         points.push((Position::new(bump_center, min_y), '_'));
         // Parentheses on second row
@@ -1079,7 +946,7 @@ pub fn cloud_points(from: Position, to: Position) -> Vec<(Position, char)> {
     }
 
     // Left edge underscore before first bump
-    let first_bump_x = min_x + start_offset as i32;
+    let first_bump_x = min_x + start_offset;
     if first_bump_x > min_x + 1 {
         for x in (min_x + 1)..first_bump_x {
             points.push((Position::new(x, min_y + 1), '_'));
@@ -1088,7 +955,7 @@ pub fn cloud_points(from: Position, to: Position) -> Vec<(Position, char)> {
     points.push((Position::new(min_x, min_y + 1), '_'));
 
     // Right edge underscore after last bump
-    let last_bump_x = min_x + start_offset as i32 + 2 + ((num_bumps - 1) as i32 * 3);
+    let last_bump_x = min_x + start_offset + 2 + ((num_bumps - 1) * 3);
     if last_bump_x < max_x - 1 {
         for x in (last_bump_x + 1)..max_x {
             points.push((Position::new(x, min_y + 1), '_'));
@@ -1266,111 +1133,6 @@ mod tests {
         set.insert(Position::new(1, 2)); // duplicate
         set.insert(Position::new(3, 4));
         assert_eq!(set.len(), 2);
-    }
-
-    // ========== Canvas tests ==========
-
-    #[test]
-    fn canvas_new_is_empty() {
-        let canvas = Canvas::new();
-        assert_eq!(canvas.get(Position::new(0, 0)), ' ');
-        assert!(canvas.bounds().is_none());
-    }
-
-    #[test]
-    fn canvas_default() {
-        let canvas = Canvas::default();
-        assert_eq!(canvas.get(Position::new(0, 0)), ' ');
-    }
-
-    #[test]
-    fn canvas_set_and_get() {
-        let mut canvas = Canvas::new();
-        canvas.set(Position::new(5, 5), 'X');
-        assert_eq!(canvas.get(Position::new(5, 5)), 'X');
-        assert_eq!(canvas.get(Position::new(0, 0)), ' ');
-    }
-
-    #[test]
-    fn canvas_set_space_removes() {
-        let mut canvas = Canvas::new();
-        canvas.set(Position::new(5, 5), 'X');
-        assert_eq!(canvas.get(Position::new(5, 5)), 'X');
-        canvas.set(Position::new(5, 5), ' ');
-        assert_eq!(canvas.get(Position::new(5, 5)), ' ');
-    }
-
-    #[test]
-    fn canvas_bounds_empty() {
-        let canvas = Canvas::new();
-        assert!(canvas.bounds().is_none());
-    }
-
-    #[test]
-    fn canvas_bounds_single_char() {
-        let mut canvas = Canvas::new();
-        canvas.set(Position::new(5, 10), 'X');
-        assert_eq!(canvas.bounds(), Some((5, 10, 5, 10)));
-    }
-
-    #[test]
-    fn canvas_bounds_multiple_chars() {
-        let mut canvas = Canvas::new();
-        canvas.set(Position::new(0, 0), 'A');
-        canvas.set(Position::new(10, 5), 'B');
-        canvas.set(Position::new(-3, 8), 'C');
-        assert_eq!(canvas.bounds(), Some((-3, 0, 10, 8)));
-    }
-
-    #[test]
-    fn canvas_clear() {
-        let mut canvas = Canvas::new();
-        canvas.set(Position::new(1, 1), 'X');
-        canvas.set(Position::new(2, 2), 'Y');
-        canvas.clear();
-        assert!(canvas.bounds().is_none());
-        assert_eq!(canvas.get(Position::new(1, 1)), ' ');
-    }
-
-    #[test]
-    fn canvas_to_string_and_from_string() {
-        let mut canvas = Canvas::new();
-        canvas.set(Position::new(0, 0), 'H');
-        canvas.set(Position::new(1, 0), 'i');
-        let content = canvas.to_string_content();
-        let loaded = Canvas::from_string(&content);
-        assert_eq!(loaded.get(Position::new(0, 0)), 'H');
-        assert_eq!(loaded.get(Position::new(1, 0)), 'i');
-    }
-
-    #[test]
-    fn canvas_to_string_empty() {
-        let canvas = Canvas::new();
-        assert_eq!(canvas.to_string_content(), "");
-    }
-
-    #[test]
-    fn canvas_draw_line() {
-        let mut canvas = Canvas::new();
-        canvas.draw_line(Position::new(0, 0), Position::new(3, 0), '-');
-        assert_eq!(canvas.get(Position::new(0, 0)), '-');
-        assert_eq!(canvas.get(Position::new(1, 0)), '-');
-        assert_eq!(canvas.get(Position::new(2, 0)), '-');
-        assert_eq!(canvas.get(Position::new(3, 0)), '-');
-    }
-
-    #[test]
-    fn canvas_draw_rect() {
-        let mut canvas = Canvas::new();
-        canvas.draw_rect(Position::new(0, 0), Position::new(3, 2));
-        // Check corners
-        assert_eq!(canvas.get(Position::new(0, 0)), '┌');
-        assert_eq!(canvas.get(Position::new(3, 0)), '┐');
-        assert_eq!(canvas.get(Position::new(0, 2)), '└');
-        assert_eq!(canvas.get(Position::new(3, 2)), '┘');
-        // Check edges
-        assert_eq!(canvas.get(Position::new(1, 0)), '─');
-        assert_eq!(canvas.get(Position::new(0, 1)), '│');
     }
 
     // ========== line_points tests (Bresenham) ==========

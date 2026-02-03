@@ -9,6 +9,7 @@ use automerge::Automerge;
 use crate::document::Document;
 
 /// Manages undo/redo with document snapshots
+#[allow(dead_code)]
 pub struct UndoManager {
     /// Stack of document states (serialized for memory efficiency)
     undo_stack: Vec<Vec<u8>>,
@@ -18,6 +19,7 @@ pub struct UndoManager {
     max_history: usize,
 }
 
+#[allow(dead_code)]
 impl UndoManager {
     /// Create a new undo manager
     pub fn new(max_history: usize) -> Self {

@@ -58,6 +58,7 @@ impl PresenceProtocol {
     }
 
     /// Get our local peer ID
+    #[allow(dead_code)]
     pub fn local_peer_id(&self) -> PeerId {
         self.inner.local_peer_id
     }

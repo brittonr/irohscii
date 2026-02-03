@@ -50,6 +50,7 @@ impl SessionId {
     }
 
     /// Get the raw slug string
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -133,6 +134,7 @@ impl SessionMeta {
     }
 
     /// Add or update a collaborator
+    #[allow(dead_code)]
     pub fn add_collaborator(&mut self, peer_id: PeerId, display_name: Option<String>) {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -231,6 +233,7 @@ impl SessionManager {
     }
 
     /// Get the sessions directory path
+    #[allow(dead_code)]
     pub fn sessions_dir(&self) -> &PathBuf {
         &self.sessions_dir
     }
@@ -392,6 +395,7 @@ impl SessionManager {
     }
 
     /// Rename a session
+    #[allow(dead_code)]
     pub fn rename_session(&mut self, id: &SessionId, new_name: &str) -> Result<SessionMeta> {
         let mut meta = self.load_meta(id)?;
         meta.name = new_name.to_string();
@@ -463,6 +467,7 @@ impl SessionManager {
     }
 
     /// Filter sessions by a search query (fuzzy matching)
+    #[allow(dead_code)]
     pub fn filter_sessions(&self, query: &str) -> Result<Vec<SessionMeta>> {
         let sessions = self.list_sessions()?;
 
@@ -505,6 +510,7 @@ impl SessionManager {
 
 /// Simple fuzzy matching score (higher is better)
 /// Returns None if no match
+#[allow(dead_code)]
 fn fuzzy_score(text: &str, query_chars: &[char]) -> Option<i32> {
     if query_chars.is_empty() {
         return Some(0);

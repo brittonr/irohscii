@@ -102,6 +102,7 @@ impl ShapeColor {
     }
 
     /// Cycle to next color
+    #[allow(dead_code)]
     pub fn next(self) -> Self {
         match self {
             ShapeColor::White => ShapeColor::Red,
@@ -992,6 +993,7 @@ impl ShapeKind {
     }
 
     /// Get connection IDs for this shape (start_connection, end_connection)
+    #[allow(dead_code)]
     pub fn connections(&self) -> (Option<u64>, Option<u64>) {
         match self {
             ShapeKind::Line {
@@ -1345,6 +1347,7 @@ pub struct CachedShape {
 
 impl CachedShape {
     /// Create a cached shape from id and kind
+    #[allow(dead_code)]
     pub fn new(id: ShapeId, kind: ShapeKind) -> Self {
         let bounds = Self::compute_bounds(&kind);
         let snap_points = Self::compute_snap_points(&kind);
@@ -1907,6 +1910,7 @@ impl ShapeView {
     }
 
     /// Check if a layer is visible
+    #[allow(dead_code)]
     pub fn is_layer_visible(&self, layer_id: LayerId) -> bool {
         !self.hidden_layers.contains(&layer_id)
     }
@@ -2005,11 +2009,13 @@ impl ShapeView {
     }
 
     /// Get shape count
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.shapes.len()
     }
 
     /// Update only specific shapes in the cache (for incremental updates during drag)
+    #[allow(dead_code)]
     pub fn update_shapes(&mut self, doc: &Document, ids: &[ShapeId]) {
         for &id in ids {
             if let Some(&idx) = self.by_id.get(&id) {

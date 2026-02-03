@@ -106,8 +106,6 @@ pub struct Group {
 pub struct Document {
     /// The automerge document
     doc: Automerge,
-    /// Unique document ID (for sync/persistence)
-    id: DocumentId,
     /// Path where document is persisted (if any)
     storage_path: Option<PathBuf>,
     /// Whether there are unsaved changes
@@ -150,17 +148,16 @@ impl Document {
 
         Self {
             doc,
-            id,
             storage_path: None,
             dirty: false,
         }
     }
 
     /// Create from an existing automerge document
-    pub fn from_automerge(doc: Automerge, id: DocumentId) -> Self {
+    #[allow(dead_code)]
+    pub fn from_automerge(doc: Automerge) -> Self {
         Self {
             doc,
-            id,
             storage_path: None,
             dirty: false,
         }
@@ -171,16 +168,8 @@ impl Document {
         let bytes = std::fs::read(path)?;
         let doc = Automerge::load(&bytes)?;
 
-        // Extract document ID
-        let id_str: String = doc
-            .get(ROOT, "id")?
-            .map(|(v, _)| v.to_string())
-            .unwrap_or_default();
-        let id = DocumentId(Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4()));
-
         Ok(Self {
             doc,
-            id,
             storage_path: Some(path.clone()),
             dirty: false,
         })
@@ -214,11 +203,13 @@ impl Document {
     }
 
     /// Get the underlying automerge document (for sync)
+    #[allow(dead_code)]
     pub fn automerge(&self) -> &Automerge {
         &self.doc
     }
 
     /// Get mutable reference (for merging remote changes)
+    #[allow(dead_code)]
     pub fn automerge_mut(&mut self) -> &mut Automerge {
         &mut self.doc
     }
@@ -233,11 +224,6 @@ impl Document {
         self.doc.merge(other)?;
         self.dirty = true;
         Ok(())
-    }
-
-    /// Get document ID
-    pub fn id(&self) -> DocumentId {
-        self.id
     }
 
     /// Check if dirty
@@ -691,6 +677,7 @@ impl Document {
     }
 
     /// Get the root group of a group (traverse up the parent chain)
+    #[allow(dead_code)]
     pub fn get_root_group(&self, id: GroupId) -> Result<GroupId> {
         let mut current = id;
         let mut seen = std::collections::HashSet::new();
@@ -988,6 +975,7 @@ impl Document {
     }
 
     /// Move layer in the order (toward top = higher index)
+    #[allow(dead_code)]
     pub fn move_layer(&mut self, id: LayerId, new_index: usize) -> Result<()> {
         let mut order = self.read_layer_order()?;
 
@@ -1039,6 +1027,7 @@ impl Document {
 
     /// Update connected lines when a shape moves
     /// Returns the IDs of shapes that were modified
+    #[allow(dead_code)]
     pub fn update_connections_for_shape(
         &mut self,
         moved_id: ShapeId,
@@ -1135,6 +1124,7 @@ impl Document {
     /// Update connected lines when a shape is resized
     /// This handles the case where different snap points move by different amounts
     /// Returns the IDs of shapes that were modified
+    #[allow(dead_code)]
     pub fn update_connections_for_resize(
         &mut self,
         resized_id: ShapeId,
@@ -2058,6 +2048,7 @@ fn get_shape_color(doc: &Automerge, obj: &ObjId) -> Result<ShapeColor> {
 }
 
 /// Find which old snap point a position matches and return the corresponding new snap point
+#[allow(dead_code)]
 fn find_corresponding_snap(
     pos: &Position,
     old_snaps: &[Position],

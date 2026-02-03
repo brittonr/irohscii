@@ -192,6 +192,7 @@ impl PresenceManager {
     }
 
     /// Get our local peer ID
+    #[allow(dead_code)]
     pub fn local_peer_id(&self) -> PeerId {
         self.local_peer_id
     }
@@ -240,6 +241,7 @@ impl PresenceManager {
 
     /// Check if any remote peer started dragging a shape before the given timestamp
     /// Used for soft lock - first dragger wins priority
+    #[allow(dead_code)]
     pub fn has_earlier_dragger(
         &self,
         shape_id: crate::document::ShapeId,
@@ -252,6 +254,7 @@ impl PresenceManager {
     }
 
     /// Get all peers currently dragging any shape (for ghost rendering)
+    #[allow(dead_code)]
     pub fn peers_dragging(&self) -> impl Iterator<Item = &PeerPresence> {
         self.peers
             .values()
@@ -260,6 +263,7 @@ impl PresenceManager {
     }
 
     /// Get all peers currently resizing any shape (for ghost rendering)
+    #[allow(dead_code)]
     pub fn peers_resizing(&self) -> impl Iterator<Item = &PeerPresence> {
         self.peers
             .values()

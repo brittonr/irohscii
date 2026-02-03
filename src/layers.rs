@@ -47,6 +47,7 @@ impl Layer {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_id(id: LayerId, name: impl Into<String>) -> Self {
         Self {
             id,

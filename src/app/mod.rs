@@ -1,3 +1,8 @@
+mod alignment;
+mod clipboard;
+mod transform;
+mod zorder;
+
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -276,13 +281,6 @@ pub struct SnapGuide {
     pub end: i32,      // end of line extent
 }
 
-/// Mouse button state
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct MouseState {
-    pub pressed: bool,
-    pub last_pos: Option<Position>,
-}
-
 /// Freehand drawing state
 #[derive(Debug, Clone, Default)]
 pub struct FreehandState {
@@ -312,7 +310,6 @@ pub struct App {
     pub current_color: ShapeColor,
     pub running: bool,
     pub file_path: Option<PathBuf>,
-    pub mouse: MouseState,
     pub shape_state: Option<ShapeState>,
     pub drag_state: Option<DragState>,
     pub resize_state: Option<ResizeState>,
@@ -375,7 +372,6 @@ impl App {
             current_color: ShapeColor::default(),
             running: true,
             file_path: None,
-            mouse: MouseState::default(),
             shape_state: None,
             drag_state: None,
             resize_state: None,
@@ -515,54 +511,6 @@ impl App {
         ))
     }
 
-    /// Copy sync ticket to system clipboard
-    pub fn copy_ticket_to_clipboard(&mut self) {
-        if let Some(ref ticket) = self.sync_ticket {
-            use std::io::Write;
-            use std::process::{Command, Stdio};
-
-            // Try wl-copy (Wayland) first - spawn and forget
-            if let Ok(mut child) = Command::new("wl-copy")
-                .arg(ticket)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-            {
-                // Don't wait, just detach
-                std::thread::spawn(move || {
-                    let _ = child.wait();
-                });
-                self.set_status(format!("Copied: {}", ticket));
-                return;
-            }
-
-            // Fall back to xsel
-            if let Ok(mut child) = Command::new("xsel")
-                .args(["--clipboard", "--input"])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-            {
-                if let Some(mut stdin) = child.stdin.take() {
-                    let ticket_clone = ticket.clone();
-                    std::thread::spawn(move || {
-                        let _ = stdin.write_all(ticket_clone.as_bytes());
-                        drop(stdin);
-                        let _ = child.wait();
-                    });
-                    self.set_status(format!("Copied: {}", ticket));
-                    return;
-                }
-            }
-
-            self.set_status("Install wl-copy or xsel for clipboard");
-        } else {
-            self.set_status("No sync session active");
-        }
-    }
-
     /// Rebuild shape view from document (call after mutations)
     fn rebuild_view(&mut self) {
         if let Err(e) = self.shape_view.rebuild(&self.doc) {
@@ -609,6 +557,7 @@ impl App {
     }
 
     /// Dismiss any status message (including persistent ones)
+    #[allow(dead_code)]
     pub fn dismiss_status(&mut self) {
         self.status_message = None;
     }
@@ -652,25 +601,6 @@ impl App {
         }
     }
 
-    /// Copy selected shapes to clipboard
-    pub fn yank(&mut self) {
-        if self.selected.is_empty() {
-            return;
-        }
-        self.clipboard.clear();
-        for &id in &self.selected {
-            if let Some(shape) = self.shape_view.get(id) {
-                self.clipboard.push(shape.kind.clone());
-            }
-        }
-        let count = self.clipboard.len();
-        self.set_status(format!(
-            "Yanked {} shape{}",
-            count,
-            if count == 1 { "" } else { "s" }
-        ));
-    }
-
     /// Add a shape and assign it to the active layer
     /// Returns None if the active layer is locked
     fn add_shape_to_active_layer(&mut self, kind: ShapeKind) -> anyhow::Result<ShapeId> {
@@ -687,29 +617,6 @@ impl App {
             let _ = self.doc.set_shape_layer(id, layer_id);
         }
         Ok(id)
-    }
-
-    /// Paste shapes from clipboard
-    pub fn paste(&mut self) {
-        if self.clipboard.is_empty() {
-            return;
-        }
-        self.save_undo_state();
-        self.selected.clear();
-        for kind in self.clipboard.clone() {
-            let new_kind = kind.translated(2, 1);
-            if let Ok(id) = self.add_shape_to_active_layer(new_kind) {
-                self.selected.insert(id);
-            }
-        }
-        self.rebuild_view();
-        self.doc.mark_dirty();
-        let count = self.selected.len();
-        self.set_status(format!(
-            "Pasted {} shape{}",
-            count,
-            if count == 1 { "" } else { "s" }
-        ));
     }
 
     /// Switch to a different tool
@@ -1030,6 +937,7 @@ impl App {
     }
 
     /// Clear hover snap
+    #[allow(dead_code)]
     pub fn clear_hover_snap(&mut self) {
         self.hover_snap = None;
         self.hover_grid_snap = None;
@@ -1127,6 +1035,7 @@ impl App {
     }
 
     /// Try to select a shape at position (replaces selection)
+    #[allow(dead_code)]
     pub fn try_select(&mut self, pos: Position) -> bool {
         if let Some(id) = self.shape_view.shape_at(pos) {
             self.select_single(id);
@@ -1135,68 +1044,6 @@ impl App {
             self.clear_selection();
             false
         }
-    }
-
-    // ========== Z-Order Methods ==========
-
-    /// Bring selected shapes to front (top of z-order)
-    pub fn bring_to_front(&mut self) {
-        if self.selected.is_empty() {
-            return;
-        }
-        self.save_undo_state();
-        let ids: Vec<ShapeId> = self.selected.iter().copied().collect();
-        if let Err(e) = self.doc.bring_to_front(&ids) {
-            self.set_status(format!("Error: {}", e));
-            return;
-        }
-        self.rebuild_view();
-        self.set_status("Brought to front");
-    }
-
-    /// Send selected shapes to back (bottom of z-order)
-    pub fn send_to_back(&mut self) {
-        if self.selected.is_empty() {
-            return;
-        }
-        self.save_undo_state();
-        let ids: Vec<ShapeId> = self.selected.iter().copied().collect();
-        if let Err(e) = self.doc.send_to_back(&ids) {
-            self.set_status(format!("Error: {}", e));
-            return;
-        }
-        self.rebuild_view();
-        self.set_status("Sent to back");
-    }
-
-    /// Bring selected shapes forward one level
-    pub fn bring_forward(&mut self) {
-        if self.selected.is_empty() {
-            return;
-        }
-        self.save_undo_state();
-        let ids: Vec<ShapeId> = self.selected.iter().copied().collect();
-        if let Err(e) = self.doc.bring_forward(&ids) {
-            self.set_status(format!("Error: {}", e));
-            return;
-        }
-        self.rebuild_view();
-        self.set_status("Brought forward");
-    }
-
-    /// Send selected shapes backward one level
-    pub fn send_backward(&mut self) {
-        if self.selected.is_empty() {
-            return;
-        }
-        self.save_undo_state();
-        let ids: Vec<ShapeId> = self.selected.iter().copied().collect();
-        if let Err(e) = self.doc.send_backward(&ids) {
-            self.set_status(format!("Error: {}", e));
-            return;
-        }
-        self.rebuild_view();
-        self.set_status("Sent backward");
     }
 
     // ========== Alignment Methods ==========
@@ -1221,234 +1068,6 @@ impl App {
             }
         }
         Some((min_x, min_y, max_x, max_y))
-    }
-
-    /// Align selected shapes to left edge
-    pub fn align_left(&mut self) {
-        if self.selected.len() < 2 {
-            self.set_status("Select at least 2 shapes to align");
-            return;
-        }
-        let Some((target_x, _, _, _)) = self.get_selection_bounds() else {
-            return;
-        };
-        self.save_undo_state();
-        for &id in self.selected.clone().iter() {
-            if let Some(shape) = self.shape_view.get(id) {
-                let (sx_min, _, _, _) = shape.bounds();
-                let dx = target_x - sx_min;
-                if dx != 0 {
-                    let _ = self.doc.translate_shape(id, dx, 0);
-                }
-            }
-        }
-        self.rebuild_view();
-        self.set_status("Aligned left");
-    }
-
-    /// Align selected shapes to right edge
-    pub fn align_right(&mut self) {
-        if self.selected.len() < 2 {
-            self.set_status("Select at least 2 shapes to align");
-            return;
-        }
-        let Some((_, _, target_x, _)) = self.get_selection_bounds() else {
-            return;
-        };
-        self.save_undo_state();
-        for &id in self.selected.clone().iter() {
-            if let Some(shape) = self.shape_view.get(id) {
-                let (_, _, sx_max, _) = shape.bounds();
-                let dx = target_x - sx_max;
-                if dx != 0 {
-                    let _ = self.doc.translate_shape(id, dx, 0);
-                }
-            }
-        }
-        self.rebuild_view();
-        self.set_status("Aligned right");
-    }
-
-    /// Align selected shapes to top edge
-    pub fn align_top(&mut self) {
-        if self.selected.len() < 2 {
-            self.set_status("Select at least 2 shapes to align");
-            return;
-        }
-        let Some((_, target_y, _, _)) = self.get_selection_bounds() else {
-            return;
-        };
-        self.save_undo_state();
-        for &id in self.selected.clone().iter() {
-            if let Some(shape) = self.shape_view.get(id) {
-                let (_, sy_min, _, _) = shape.bounds();
-                let dy = target_y - sy_min;
-                if dy != 0 {
-                    let _ = self.doc.translate_shape(id, 0, dy);
-                }
-            }
-        }
-        self.rebuild_view();
-        self.set_status("Aligned top");
-    }
-
-    /// Align selected shapes to bottom edge
-    pub fn align_bottom(&mut self) {
-        if self.selected.len() < 2 {
-            self.set_status("Select at least 2 shapes to align");
-            return;
-        }
-        let Some((_, _, _, target_y)) = self.get_selection_bounds() else {
-            return;
-        };
-        self.save_undo_state();
-        for &id in self.selected.clone().iter() {
-            if let Some(shape) = self.shape_view.get(id) {
-                let (_, _, _, sy_max) = shape.bounds();
-                let dy = target_y - sy_max;
-                if dy != 0 {
-                    let _ = self.doc.translate_shape(id, 0, dy);
-                }
-            }
-        }
-        self.rebuild_view();
-        self.set_status("Aligned bottom");
-    }
-
-    /// Align selected shapes to horizontal center
-    pub fn align_center_h(&mut self) {
-        if self.selected.len() < 2 {
-            self.set_status("Select at least 2 shapes to align");
-            return;
-        }
-        let Some((min_x, _, max_x, _)) = self.get_selection_bounds() else {
-            return;
-        };
-        let target_center = (min_x + max_x) / 2;
-        self.save_undo_state();
-        for &id in self.selected.clone().iter() {
-            if let Some(shape) = self.shape_view.get(id) {
-                let (sx_min, _, sx_max, _) = shape.bounds();
-                let shape_center = (sx_min + sx_max) / 2;
-                let dx = target_center - shape_center;
-                if dx != 0 {
-                    let _ = self.doc.translate_shape(id, dx, 0);
-                }
-            }
-        }
-        self.rebuild_view();
-        self.set_status("Aligned center (horizontal)");
-    }
-
-    /// Align selected shapes to vertical center
-    pub fn align_center_v(&mut self) {
-        if self.selected.len() < 2 {
-            self.set_status("Select at least 2 shapes to align");
-            return;
-        }
-        let Some((_, min_y, _, max_y)) = self.get_selection_bounds() else {
-            return;
-        };
-        let target_center = (min_y + max_y) / 2;
-        self.save_undo_state();
-        for &id in self.selected.clone().iter() {
-            if let Some(shape) = self.shape_view.get(id) {
-                let (_, sy_min, _, sy_max) = shape.bounds();
-                let shape_center = (sy_min + sy_max) / 2;
-                let dy = target_center - shape_center;
-                if dy != 0 {
-                    let _ = self.doc.translate_shape(id, 0, dy);
-                }
-            }
-        }
-        self.rebuild_view();
-        self.set_status("Aligned center (vertical)");
-    }
-
-    // ========== Transform Methods ==========
-
-    /// Flip selected shapes horizontally (mirror across vertical axis)
-    pub fn flip_horizontal(&mut self) {
-        if self.selected.is_empty() {
-            self.set_status("Select shapes to flip");
-            return;
-        }
-        let Some((min_x, _, max_x, _)) = self.get_selection_bounds() else {
-            return;
-        };
-        let center_x = (min_x + max_x) / 2;
-        self.save_undo_state();
-        for &id in self.selected.clone().iter() {
-            if let Ok(Some(kind)) = self.doc.read_shape(id) {
-                let flipped = crate::shapes::flip_horizontal(&kind, center_x);
-                let _ = self.doc.update_shape(id, flipped);
-            }
-        }
-        self.rebuild_view();
-        self.set_status("Flipped horizontal");
-    }
-
-    /// Flip selected shapes vertically (mirror across horizontal axis)
-    pub fn flip_vertical(&mut self) {
-        if self.selected.is_empty() {
-            self.set_status("Select shapes to flip");
-            return;
-        }
-        let Some((_, min_y, _, max_y)) = self.get_selection_bounds() else {
-            return;
-        };
-        let center_y = (min_y + max_y) / 2;
-        self.save_undo_state();
-        for &id in self.selected.clone().iter() {
-            if let Ok(Some(kind)) = self.doc.read_shape(id) {
-                let flipped = crate::shapes::flip_vertical(&kind, center_y);
-                let _ = self.doc.update_shape(id, flipped);
-            }
-        }
-        self.rebuild_view();
-        self.set_status("Flipped vertical");
-    }
-
-    /// Rotate selected shapes 90 degrees clockwise
-    pub fn rotate_90_cw(&mut self) {
-        if self.selected.is_empty() {
-            self.set_status("Select shapes to rotate");
-            return;
-        }
-        let Some((min_x, min_y, max_x, max_y)) = self.get_selection_bounds() else {
-            return;
-        };
-        let center = Position::new((min_x + max_x) / 2, (min_y + max_y) / 2);
-        self.save_undo_state();
-        for &id in self.selected.clone().iter() {
-            if let Ok(Some(kind)) = self.doc.read_shape(id) {
-                let rotated = crate::shapes::rotate_90_cw(&kind, center);
-                let _ = self.doc.update_shape(id, rotated);
-            }
-        }
-        self.rebuild_view();
-        self.set_status("Rotated 90 CW");
-    }
-
-    /// Rotate selected shapes 90 degrees counter-clockwise
-    pub fn rotate_90_ccw(&mut self) {
-        if self.selected.is_empty() {
-            self.set_status("Select shapes to rotate");
-            return;
-        }
-        let Some((min_x, min_y, max_x, max_y)) = self.get_selection_bounds() else {
-            return;
-        };
-        let center = Position::new((min_x + max_x) / 2, (min_y + max_y) / 2);
-        self.save_undo_state();
-        for &id in self.selected.clone().iter() {
-            if let Ok(Some(kind)) = self.doc.read_shape(id) {
-                let rotated = crate::shapes::rotate_90_ccw(&kind, center);
-                let _ = self.doc.update_shape(id, rotated);
-            }
-        }
-        self.rebuild_view();
-        self.set_status("Rotated 90 CCW");
     }
 
     // ========== Group Methods ==========
@@ -1512,6 +1131,7 @@ impl App {
     }
 
     /// Expand selection to include all shapes in the same groups
+    #[allow(dead_code)]
     pub fn expand_selection_to_groups(&mut self) {
         let mut expanded = self.selected.clone();
 
@@ -1530,6 +1150,7 @@ impl App {
     }
 
     /// Get groups containing any of the selected shapes
+    #[allow(dead_code)]
     pub fn get_selected_groups(&self) -> Vec<GroupId> {
         let mut groups = HashSet::new();
         for shape_id in &self.selected {
@@ -1541,6 +1162,7 @@ impl App {
     }
 
     /// Check if a shape is part of any group
+    #[allow(dead_code)]
     pub fn is_grouped(&self, id: ShapeId) -> bool {
         matches!(self.doc.get_shape_group(id), Ok(Some(_)))
     }
@@ -2419,27 +2041,10 @@ impl App {
         }
     }
 
-    /// Cycle through brush characters
-    pub fn cycle_brush(&mut self) {
-        let current_idx = BRUSHES.iter().position(|&c| c == self.brush_char);
-        let next_idx = match current_idx {
-            Some(i) => (i + 1) % BRUSHES.len(),
-            None => 0,
-        };
-        self.brush_char = BRUSHES[next_idx];
-        self.set_status(format!("Brush: '{}'", self.brush_char));
-    }
-
     /// Cycle through line styles
     pub fn cycle_line_style(&mut self) {
         self.line_style = self.line_style.next();
         self.set_status(format!("Line style: {}", self.line_style.name()));
-    }
-
-    /// Cycle through colors
-    pub fn cycle_color(&mut self) {
-        self.current_color = self.current_color.next();
-        self.set_status(format!("Color: {}", self.current_color.name()));
     }
 
     /// Start label input for the selected shape (only works with single selection)
@@ -2560,6 +2165,7 @@ impl App {
     }
 
     /// Get the automerge document for syncing
+    #[allow(dead_code)]
     pub fn automerge(&self) -> &automerge::Automerge {
         self.doc.automerge()
     }
@@ -3110,6 +2716,7 @@ impl App {
     }
 
     /// Get the current session name for display
+    #[allow(dead_code)]
     pub fn current_session_name(&self) -> Option<&str> {
         self.current_session_meta.as_ref().map(|m| m.name.as_str())
     }
@@ -3120,5 +2727,641 @@ fn snap_to_grid(pos: Position) -> Position {
     Position {
         x: ((pos.x as f32 / GRID_SIZE as f32).round() as i32) * GRID_SIZE,
         y: ((pos.y as f32 / GRID_SIZE as f32).round() as i32) * GRID_SIZE,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_app() -> App {
+        App::new(80, 24)
+    }
+
+    // ========== Tool Selection Tests ==========
+
+    #[test]
+    fn app_new_defaults() {
+        let app = create_test_app();
+        assert_eq!(app.current_tool, Tool::Select);
+        assert!(matches!(app.mode, Mode::Normal));
+        assert!(app.running);
+        assert!(app.selected.is_empty());
+        assert_eq!(app.brush_char, '*');
+        assert!(!app.grid_enabled);
+    }
+
+    #[test]
+    fn app_set_tool_changes_current_tool() {
+        let mut app = create_test_app();
+        assert_eq!(app.current_tool, Tool::Select);
+
+        app.set_tool(Tool::Rectangle);
+        assert_eq!(app.current_tool, Tool::Rectangle);
+
+        app.set_tool(Tool::Line);
+        assert_eq!(app.current_tool, Tool::Line);
+
+        app.set_tool(Tool::Freehand);
+        assert_eq!(app.current_tool, Tool::Freehand);
+    }
+
+    #[test]
+    fn app_set_tool_clears_shape_state() {
+        let mut app = create_test_app();
+        app.shape_state = Some(ShapeState {
+            start: Position::new(0, 0),
+            current: Position::new(10, 10),
+            start_snap: None,
+            current_snap: None,
+            start_snap_id: None,
+            current_snap_id: None,
+        });
+
+        app.set_tool(Tool::Rectangle);
+        assert!(app.shape_state.is_none());
+    }
+
+    // ========== Selection Tests ==========
+
+    #[test]
+    fn app_select_single() {
+        let mut app = create_test_app();
+        let id = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 0),
+                end: Position::new(10, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        app.rebuild_view();
+
+        app.select_single(id);
+        assert!(app.selected.contains(&id));
+        assert_eq!(app.selected.len(), 1);
+    }
+
+    #[test]
+    fn app_clear_selection() {
+        let mut app = create_test_app();
+        let id = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 0),
+                end: Position::new(10, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        app.rebuild_view();
+        app.select_single(id);
+
+        app.clear_selection();
+        assert!(app.selected.is_empty());
+    }
+
+    #[test]
+    fn app_toggle_selection() {
+        let mut app = create_test_app();
+        let id = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 0),
+                end: Position::new(10, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        app.rebuild_view();
+
+        assert!(!app.selected.contains(&id));
+        app.toggle_selection(id);
+        assert!(app.selected.contains(&id));
+        app.toggle_selection(id);
+        assert!(!app.selected.contains(&id));
+    }
+
+    #[test]
+    fn app_select_all() {
+        let mut app = create_test_app();
+        let _id1 = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 0),
+                end: Position::new(10, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        let _id2 = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(20, 20),
+                end: Position::new(30, 30),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        app.rebuild_view();
+
+        app.select_all();
+        assert_eq!(app.selected.len(), 2);
+    }
+
+    #[test]
+    fn app_is_selected() {
+        let mut app = create_test_app();
+        let id = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 0),
+                end: Position::new(10, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        app.rebuild_view();
+
+        assert!(!app.is_selected(id));
+        app.select_single(id);
+        assert!(app.is_selected(id));
+    }
+
+    // ========== Status Message Tests ==========
+
+    #[test]
+    fn app_set_status() {
+        let mut app = create_test_app();
+        app.set_status("Test message");
+        assert!(app.status_message.is_some());
+        let (msg, severity) = app.status_message.as_ref().unwrap();
+        assert_eq!(msg, "Test message");
+        assert!(matches!(severity, MessageSeverity::Info));
+    }
+
+    #[test]
+    fn app_set_warning() {
+        let mut app = create_test_app();
+        app.set_warning("Warning message");
+        assert!(app.status_message.is_some());
+        let (msg, severity) = app.status_message.as_ref().unwrap();
+        assert_eq!(msg, "Warning message");
+        assert!(matches!(severity, MessageSeverity::Warning));
+    }
+
+    #[test]
+    fn app_set_error() {
+        let mut app = create_test_app();
+        app.set_error("Error message");
+        assert!(app.status_message.is_some());
+        let (msg, severity) = app.status_message.as_ref().unwrap();
+        assert_eq!(msg, "Error message");
+        assert!(matches!(severity, MessageSeverity::Error));
+    }
+
+    #[test]
+    fn app_clear_status() {
+        let mut app = create_test_app();
+        app.set_status("Test message");
+        app.clear_status();
+        assert!(app.status_message.is_none());
+    }
+
+    #[test]
+    fn app_clear_status_does_not_clear_persistent() {
+        let mut app = create_test_app();
+        app.set_error("Persistent error");
+        app.clear_status();
+        // Error messages are persistent
+        assert!(app.status_message.is_some());
+    }
+
+    // ========== Grid Toggle Tests ==========
+
+    #[test]
+    fn app_toggle_grid() {
+        let mut app = create_test_app();
+        assert!(!app.grid_enabled);
+        app.toggle_grid();
+        assert!(app.grid_enabled);
+        app.toggle_grid();
+        assert!(!app.grid_enabled);
+    }
+
+    // ========== Line Style Tests ==========
+
+    #[test]
+    fn app_cycle_line_style() {
+        let mut app = create_test_app();
+        let initial = app.line_style;
+        app.cycle_line_style();
+        assert_ne!(app.line_style, initial);
+    }
+
+    // ========== Undo/Redo Tests ==========
+
+    #[test]
+    fn app_undo_with_no_history() {
+        let mut app = create_test_app();
+        app.undo(); // Should not panic
+        assert!(app.status_message.is_some());
+    }
+
+    #[test]
+    fn app_redo_with_no_history() {
+        let mut app = create_test_app();
+        app.redo(); // Should not panic
+        assert!(app.status_message.is_some());
+    }
+
+    // ========== Clipboard Tests ==========
+
+    #[test]
+    fn app_yank_with_no_selection() {
+        let mut app = create_test_app();
+        app.yank();
+        // Should do nothing (no selection)
+    }
+
+    #[test]
+    fn app_yank_copies_selected_shape() {
+        let mut app = create_test_app();
+        let id = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 0),
+                end: Position::new(10, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        app.rebuild_view();
+        app.select_single(id);
+
+        app.yank();
+        assert!(app.status_message.is_some());
+        // Clipboard is private, but the status message confirms yank
+    }
+
+    #[test]
+    fn app_paste_with_empty_clipboard() {
+        let mut app = create_test_app();
+        let initial_count = app.shape_view.shape_count();
+        app.paste();
+        // Paste does nothing with empty clipboard
+        assert_eq!(app.shape_view.shape_count(), initial_count);
+    }
+
+    // ========== Delete Tests ==========
+
+    #[test]
+    fn app_delete_with_no_selection() {
+        let mut app = create_test_app();
+        app.delete_selected(); // Should not panic
+    }
+
+    #[test]
+    fn app_delete_removes_selected_shape() {
+        let mut app = create_test_app();
+        let id = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 0),
+                end: Position::new(10, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        app.rebuild_view();
+        app.select_single(id);
+
+        let initial_count = app.shape_view.shape_count();
+        app.delete_selected();
+        assert_eq!(app.shape_view.shape_count(), initial_count - 1);
+        assert!(app.selected.is_empty());
+    }
+
+    // ========== Mode Tests ==========
+
+    #[test]
+    fn app_enter_and_exit_mode() {
+        let mut app = create_test_app();
+        assert!(matches!(app.mode, Mode::Normal));
+
+        // Enter help screen mode
+        app.mode = Mode::HelpScreen { scroll: 0 };
+        assert!(matches!(app.mode, Mode::HelpScreen { .. }));
+
+        // Exit back to normal
+        app.mode = Mode::Normal;
+        assert!(matches!(app.mode, Mode::Normal));
+    }
+
+    // ========== Viewport Tests ==========
+
+    #[test]
+    fn app_viewport_resize() {
+        let mut app = create_test_app();
+        app.viewport.resize(100, 50);
+        assert_eq!(app.viewport.width, 100);
+        assert_eq!(app.viewport.height, 50);
+    }
+
+    // ========== Brush/Color Selection Tests ==========
+
+    #[test]
+    fn app_brush_char_assignment() {
+        let mut app = create_test_app();
+        app.brush_char = '#';
+        assert_eq!(app.brush_char, '#');
+    }
+
+    #[test]
+    fn app_current_color_assignment() {
+        let mut app = create_test_app();
+        app.current_color = ShapeColor::Red;
+        assert_eq!(app.current_color, ShapeColor::Red);
+    }
+
+    // ========== Grid Snap Tests ==========
+
+    #[test]
+    fn snap_to_grid_rounds_correctly() {
+        // Test grid snapping (GRID_SIZE is 5)
+        // 5/5 = 1.0 rounds to 1.0, * 5 = 5
+        // 7/5 = 1.4 rounds to 1.0, * 5 = 5
+        let pos = Position::new(5, 7);
+        let snapped = snap_to_grid(pos);
+        assert_eq!(snapped.x, 5);
+        assert_eq!(snapped.y, 5);
+    }
+
+    #[test]
+    fn snap_to_grid_at_boundary() {
+        // 8/5 = 1.6 rounds to 2.0, * 5 = 10
+        let pos = Position::new(8, 8);
+        let snapped = snap_to_grid(pos);
+        assert_eq!(snapped.x, 10);
+        assert_eq!(snapped.y, 10);
+    }
+
+    #[test]
+    fn snap_to_grid_negative() {
+        // -5/5 = -1.0 rounds to -1.0, * 5 = -5
+        // -7/5 = -1.4 rounds to -1.0, * 5 = -5
+        let pos = Position::new(-5, -7);
+        let snapped = snap_to_grid(pos);
+        assert_eq!(snapped.x, -5);
+        assert_eq!(snapped.y, -5);
+    }
+
+    // ========== New Document Tests ==========
+
+    #[test]
+    fn app_new_document_clears_state() {
+        let mut app = create_test_app();
+
+        // Add a shape
+        let _id = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 0),
+                end: Position::new(10, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        app.rebuild_view();
+        app.select_all();
+
+        // Create new document
+        app.new_document();
+
+        assert!(app.selected.is_empty());
+        assert_eq!(app.shape_view.shape_count(), 0);
+    }
+
+    // ========== Duplicate Selection Tests ==========
+
+    #[test]
+    fn app_duplicate_with_no_selection() {
+        let mut app = create_test_app();
+        app.duplicate_selection();
+        // Should show status message
+        assert!(app.status_message.is_some());
+    }
+
+    #[test]
+    fn app_duplicate_creates_new_shape() {
+        let mut app = create_test_app();
+        let id = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 0),
+                end: Position::new(10, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        app.rebuild_view();
+        app.select_single(id);
+
+        let initial_count = app.shape_view.shape_count();
+        app.duplicate_selection();
+
+        // Should have one more shape
+        assert_eq!(app.shape_view.shape_count(), initial_count + 1);
+        // Selection should now be the new shape (not the original)
+        assert_eq!(app.selected.len(), 1);
+        assert!(!app.selected.contains(&id));
+    }
+
+    #[test]
+    fn app_duplicate_multiple_shapes() {
+        let mut app = create_test_app();
+        let _id1 = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 0),
+                end: Position::new(10, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        let _id2 = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(20, 20),
+                end: Position::new(30, 30),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        app.rebuild_view();
+        app.select_all();
+
+        let initial_count = app.shape_view.shape_count();
+        app.duplicate_selection();
+
+        // Should have doubled the shapes
+        assert_eq!(app.shape_view.shape_count(), initial_count * 2);
+        // Selection should be the 2 new shapes
+        assert_eq!(app.selected.len(), 2);
+    }
+
+    // ========== Distribution Tests ==========
+
+    #[test]
+    fn app_distribute_horizontal_needs_three_shapes() {
+        let mut app = create_test_app();
+        // Only 2 shapes - should show message
+        let _id1 = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 0),
+                end: Position::new(10, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        let _id2 = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(50, 0),
+                end: Position::new(60, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        app.rebuild_view();
+        app.select_all();
+
+        app.distribute_horizontal();
+        // Should show status message about needing 3 shapes
+        assert!(app.status_message.is_some());
+    }
+
+    #[test]
+    fn app_distribute_vertical_needs_three_shapes() {
+        let mut app = create_test_app();
+        // Only 2 shapes - should show message
+        let _id1 = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 0),
+                end: Position::new(10, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        let _id2 = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 50),
+                end: Position::new(10, 60),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        app.rebuild_view();
+        app.select_all();
+
+        app.distribute_vertical();
+        // Should show status message about needing 3 shapes
+        assert!(app.status_message.is_some());
+    }
+
+    #[test]
+    fn app_distribute_horizontal_three_shapes() {
+        let mut app = create_test_app();
+        // Create 3 shapes with uneven horizontal spacing
+        let _id1 = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 0),
+                end: Position::new(10, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        let id2 = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(15, 0), // Middle shape, not centered
+                end: Position::new(25, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        let _id3 = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(50, 0),
+                end: Position::new(60, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        app.rebuild_view();
+        app.select_all();
+
+        app.distribute_horizontal();
+
+        // Middle shape should be moved to be evenly spaced
+        app.rebuild_view();
+        if let Some(shape) = app.shape_view.get(id2) {
+            let (min_x, _, max_x, _) = shape.bounds();
+            let center_x = (min_x + max_x) / 2;
+            // First center is at 5, last is at 55, so middle should be at 30
+            assert_eq!(center_x, 30);
+        }
+    }
+
+    #[test]
+    fn app_distribute_vertical_three_shapes() {
+        let mut app = create_test_app();
+        // Create 3 shapes with uneven vertical spacing
+        let _id1 = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 0),
+                end: Position::new(10, 10),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        let id2 = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 15), // Middle shape, not centered
+                end: Position::new(10, 25),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        let _id3 = app
+            .doc
+            .add_shape(ShapeKind::Rectangle {
+                start: Position::new(0, 50),
+                end: Position::new(10, 60),
+                label: None,
+                color: ShapeColor::default(),
+            })
+            .unwrap();
+        app.rebuild_view();
+        app.select_all();
+
+        app.distribute_vertical();
+
+        // Middle shape should be moved to be evenly spaced
+        app.rebuild_view();
+        if let Some(shape) = app.shape_view.get(id2) {
+            let (_, min_y, _, max_y) = shape.bounds();
+            let center_y = (min_y + max_y) / 2;
+            // First center is at 5, last is at 55, so middle should be at 30
+            assert_eq!(center_y, 30);
+        }
     }
 }

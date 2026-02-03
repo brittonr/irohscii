@@ -685,7 +685,9 @@ fn handle_normal_mode(
         KeyCode::Char('b') if !key.modifiers.contains(KeyModifiers::ALT) => {
             app.set_tool(Tool::DoubleBox)
         }
-        KeyCode::Char('d') => app.set_tool(Tool::Diamond),
+        KeyCode::Char('d') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.set_tool(Tool::Diamond)
+        }
         KeyCode::Char('e') => app.set_tool(Tool::Ellipse),
 
         // Line style cycling (c and C are now popup triggers for brush/color)
@@ -700,8 +702,8 @@ fn handle_normal_mode(
         KeyCode::Char('p') => app.paste(),
 
         // Z-order control
-        KeyCode::Char(']') => app.bring_forward(),
-        KeyCode::Char('[') => app.send_backward(),
+        KeyCode::Char(']') if !key.modifiers.contains(KeyModifiers::ALT) => app.bring_forward(),
+        KeyCode::Char('[') if !key.modifiers.contains(KeyModifiers::ALT) => app.send_backward(),
         KeyCode::Char('}') => app.bring_to_front(),
         KeyCode::Char('{') => app.send_to_back(),
 
@@ -763,6 +765,11 @@ fn handle_normal_mode(
         // Select all (Ctrl+A)
         KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => app.select_all(),
 
+        // Duplicate selection (Ctrl+D)
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.duplicate_selection()
+        }
+
         // Alignment shortcuts (Alt + key)
         KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::ALT) => app.align_left(),
         KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::ALT) => app.align_right(),
@@ -776,6 +783,14 @@ fn handle_normal_mode(
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::ALT) => app.flip_vertical(),
         KeyCode::Char('.') if key.modifiers.contains(KeyModifiers::ALT) => app.rotate_90_cw(),
         KeyCode::Char(',') if key.modifiers.contains(KeyModifiers::ALT) => app.rotate_90_ccw(),
+
+        // Distribution shortcuts (Alt + bracket)
+        KeyCode::Char('[') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.distribute_horizontal()
+        }
+        KeyCode::Char(']') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.distribute_vertical()
+        }
 
         // Delete selected shape
         KeyCode::Delete | KeyCode::Backspace => {
