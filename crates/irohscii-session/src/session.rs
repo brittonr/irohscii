@@ -10,8 +10,13 @@ use std::time::SystemTime;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
-use crate::document::Document;
-use crate::presence::PeerId;
+use irohscii_core::Document;
+
+// We define a simplified PeerId here instead of depending on irohscii-sync
+// to avoid circular dependencies
+/// Peer ID bytes (same format as sync crate)
+#[derive(Debug, Clone, Copy)]
+pub struct PeerId(pub [u8; 32]);
 
 /// Maximum number of recent sessions to track in the registry
 const MAX_RECENT_SESSIONS: usize = 50;
@@ -600,11 +605,11 @@ mod tests {
         assert_eq!(meta.name, "Test Session");
 
         // Modify and save
-        let _ = doc.add_shape(crate::shapes::ShapeKind::Rectangle {
-            start: crate::canvas::Position::new(0, 0),
-            end: crate::canvas::Position::new(10, 10),
+        let _ = doc.add_shape(irohscii_core::ShapeKind::Rectangle {
+            start: irohscii_core::Position::new(0, 0),
+            end: irohscii_core::Position::new(10, 10),
             label: None,
-            color: crate::shapes::ShapeColor::White,
+            color: irohscii_core::ShapeColor::White,
         });
 
         manager.save_session(&created.id, &mut doc, &meta).unwrap();

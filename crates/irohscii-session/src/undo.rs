@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use automerge::Automerge;
 
-use crate::document::Document;
+use irohscii_core::Document;
 
 /// How many snapshots to keep in memory cache for disk-backed mode
 const MEMORY_CACHE_SIZE: usize = 20;

@@ -1,17 +1,44 @@
 mod app;
-mod canvas;
-mod document;
-mod file_io;
-mod layers;
-mod presence;
 mod recent_files;
-mod session;
-mod shapes;
-mod svg_export;
-mod sync;
 mod tools;
 mod ui;
-mod undo;
+
+// Import workspace crates
+use irohscii_sync as sync;
+
+// Re-export commonly used types (only what main.rs actually uses)
+use sync::{SyncConfig, SyncHandle, SyncMode};
+
+// Module aliases for backwards compatibility with internal code
+mod canvas {
+    pub use irohscii_geometry::*;
+}
+mod document {
+    pub use irohscii_core::{default_storage_path, Document, GroupId, ShapeId};
+}
+mod layers {
+    pub use irohscii_core::{Layer, LayerId};
+}
+mod shapes {
+    pub use irohscii_core::{
+        flip_horizontal, flip_vertical, resize_shape, rotate_90_ccw, rotate_90_cw, ResizeHandle,
+        ShapeColor, ShapeKind, ShapeView, SnapPoint,
+    };
+}
+mod presence {
+    pub use irohscii_sync::{
+        peer_color, CursorActivity, PeerId, PeerPresence, PresenceManager, ToolKind,
+    };
+}
+mod file_io {
+    pub use irohscii_export::{load_ascii, save_ascii};
+}
+mod svg_export {
+    pub use irohscii_export::save_svg;
+}
+mod session {
+    pub use irohscii_session::{SessionId, SessionManager, SessionMeta};
+}
 
 use std::io::stdout;
 use std::path::PathBuf;
@@ -30,7 +57,6 @@ use crossterm::{
 use ratatui::prelude::*;
 
 use app::{App, Mode, Tool};
-use sync::{SyncConfig, SyncHandle, SyncMode};
 
 /// ASCII art drawing tool with real-time collaboration
 #[derive(Parser, Debug)]

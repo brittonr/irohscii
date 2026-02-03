@@ -1,0 +1,13 @@
+[package]
+name = "irohscii-geometry"
+description = "ASCII art geometry algorithms - line drawing, shape rendering, viewport management"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

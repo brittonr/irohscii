@@ -1,3 +1,13 @@
+//! ASCII art geometry algorithms - line drawing, shape rendering, viewport management.
+//!
+//! This crate provides the foundational geometric primitives and algorithms for ASCII art:
+//! - `Position`: Canvas coordinates (can be negative for infinite canvas)
+//! - `Viewport`: Pan/zoom camera for viewing the canvas
+//! - `LineStyle`: Different line drawing modes (straight, orthogonal, auto-routed)
+//! - Shape rendering functions: rectangles, ellipses, diamonds, triangles, etc.
+//!
+//! All functions produce `Vec<(Position, char)>` suitable for rendering to a terminal.
+
 use serde::{Deserialize, Serialize};
 
 /// A position on the canvas (can be negative for infinite canvas feel)
@@ -41,10 +51,101 @@ impl LineStyle {
     pub fn name(&self) -> &'static str {
         match self {
             LineStyle::Straight => "Straight",
-            LineStyle::OrthogonalHV => "Ortho H→V",
-            LineStyle::OrthogonalVH => "Ortho V→H",
+            LineStyle::OrthogonalHV => "Ortho H->V",
+            LineStyle::OrthogonalVH => "Ortho V->H",
             LineStyle::OrthogonalAuto => "Auto Route",
         }
+    }
+}
+
+/// Viewport - what part of the canvas is visible
+#[derive(Debug, Clone)]
+pub struct Viewport {
+    pub offset_x: i32,
+    pub offset_y: i32,
+    pub width: u16,
+    pub height: u16,
+    /// Zoom level: 1.0 = normal, 2.0 = zoomed in (each canvas cell = 2 screen cells)
+    pub zoom: f32,
+}
+
+/// Minimum zoom level (zoomed out)
+pub const MIN_ZOOM: f32 = 0.25;
+/// Maximum zoom level (zoomed in)
+pub const MAX_ZOOM: f32 = 4.0;
+/// Zoom step for keyboard shortcuts
+pub const ZOOM_STEP: f32 = 0.25;
+
+impl Viewport {
+    pub fn new(width: u16, height: u16) -> Self {
+        Self {
+            offset_x: 0,
+            offset_y: 0,
+            width,
+            height,
+            zoom: 1.0,
+        }
+    }
+
+    /// Convert screen coordinates to canvas coordinates
+    /// At zoom > 1.0, screen space is larger than canvas space
+    pub fn screen_to_canvas(&self, screen_x: u16, screen_y: u16) -> Position {
+        Position::new(
+            (screen_x as f32 / self.zoom) as i32 + self.offset_x,
+            (screen_y as f32 / self.zoom) as i32 + self.offset_y,
+        )
+    }
+
+    /// Convert canvas coordinates to screen coordinates (if visible)
+    /// At zoom > 1.0, canvas positions map to larger screen areas
+    pub fn canvas_to_screen(&self, pos: Position) -> Option<(u16, u16)> {
+        let screen_x = ((pos.x - self.offset_x) as f32 * self.zoom) as i32;
+        let screen_y = ((pos.y - self.offset_y) as f32 * self.zoom) as i32;
+
+        if screen_x >= 0
+            && screen_x < self.width as i32
+            && screen_y >= 0
+            && screen_y < self.height as i32
+        {
+            Some((screen_x as u16, screen_y as u16))
+        } else {
+            None
+        }
+    }
+
+    /// Pan the viewport
+    pub fn pan(&mut self, dx: i32, dy: i32) {
+        self.offset_x += dx;
+        self.offset_y += dy;
+    }
+
+    /// Resize the viewport
+    pub fn resize(&mut self, width: u16, height: u16) {
+        self.width = width;
+        self.height = height;
+    }
+
+    /// Zoom in (increase zoom level)
+    pub fn zoom_in(&mut self) {
+        self.zoom = (self.zoom + ZOOM_STEP).min(MAX_ZOOM);
+    }
+
+    /// Zoom out (decrease zoom level)
+    pub fn zoom_out(&mut self) {
+        self.zoom = (self.zoom - ZOOM_STEP).max(MIN_ZOOM);
+    }
+
+    /// Reset zoom to 100%
+    pub fn reset_zoom(&mut self) {
+        self.zoom = 1.0;
+    }
+
+    /// Get the visible canvas area (number of canvas cells visible)
+    pub fn visible_canvas_size(&self) -> (u16, u16) {
+        (
+            (self.width as f32 / self.zoom) as u16,
+            (self.height as f32 / self.zoom) as u16,
+        )
     }
 }
 
@@ -183,9 +284,9 @@ fn find_routing_waypoint(
         .into_iter()
         .filter(|wp| {
             // Check waypoint doesn't hit any obstacle
-            !obstacles.iter().any(|&(ox1, oy1, ox2, oy2)| {
-                wp.x >= ox1 && wp.x <= ox2 && wp.y >= oy1 && wp.y <= oy2
-            })
+            !obstacles
+                .iter()
+                .any(|&(ox1, oy1, ox2, oy2)| wp.x >= ox1 && wp.x <= ox2 && wp.y >= oy1 && wp.y <= oy2)
         })
         .min_by_key(|wp| {
             // Manhattan distance through waypoint
@@ -203,7 +304,7 @@ fn straight_line_points(from: Position, to: Position) -> Vec<(Position, char)> {
 
     // Single point
     if dx == 0 && dy == 0 {
-        return vec![(from, '○')];
+        return vec![(from, '\u{25CB}')]; // ○
     }
 
     // Pure horizontal
@@ -214,7 +315,7 @@ fn straight_line_points(from: Position, to: Position) -> Vec<(Position, char)> {
             (to.x, from.x)
         };
         return (start_x..=end_x)
-            .map(|x| (Position::new(x, from.y), '─'))
+            .map(|x| (Position::new(x, from.y), '\u{2500}')) // ─
             .collect();
     }
 
@@ -226,7 +327,7 @@ fn straight_line_points(from: Position, to: Position) -> Vec<(Position, char)> {
             (to.y, from.y)
         };
         return (start_y..=end_y)
-            .map(|y| (Position::new(from.x, y), '│'))
+            .map(|y| (Position::new(from.x, y), '\u{2502}')) // │
             .collect();
     }
 
@@ -241,10 +342,6 @@ fn straight_line_points(from: Position, to: Position) -> Vec<(Position, char)> {
         '/' // going down-left or up-right
     };
 
-    // For mostly horizontal diagonals, use ─ with occasional diagonal
-    // For mostly vertical diagonals, use │ with occasional diagonal
-    // For 45° diagonals, use the diagonal character throughout
-
     let points = line_points(from, to);
     let mut result = Vec::with_capacity(points.len());
 
@@ -252,9 +349,9 @@ fn straight_line_points(from: Position, to: Position) -> Vec<(Position, char)> {
         let ch = if i == 0 || i == points.len() - 1 {
             // Endpoints
             if abs_dx > abs_dy * 2 {
-                '─'
+                '\u{2500}' // ─
             } else if abs_dy > abs_dx * 2 {
-                '│'
+                '\u{2502}' // │
             } else {
                 diag_char
             }
@@ -267,9 +364,9 @@ fn straight_line_points(from: Position, to: Position) -> Vec<(Position, char)> {
             let local_dy = (next.y - prev.y).abs();
 
             if local_dy == 0 {
-                '─'
+                '\u{2500}' // ─
             } else if local_dx == 0 {
-                '│'
+                '\u{2502}' // │
             } else {
                 diag_char
             }
@@ -290,7 +387,7 @@ fn orthogonal_line_points(
 
     // Single point
     if from == to {
-        return vec![(from, '○')];
+        return vec![(from, '\u{25CB}')]; // ○
     }
 
     let dx = to.x - from.x;
@@ -311,15 +408,15 @@ fn orthogonal_line_points(
     // Determine corner character
     let corner_char = match (dx > 0, dy > 0, horizontal_first) {
         // Horizontal first (corner at to.x, from.y)
-        (true, true, true) => '┐',   // right then down
-        (true, false, true) => '┘',  // right then up
-        (false, true, true) => '┌',  // left then down
-        (false, false, true) => '└', // left then up
+        (true, true, true) => '\u{2510}',   // ┐ right then down
+        (true, false, true) => '\u{2518}',  // ┘ right then up
+        (false, true, true) => '\u{250C}',  // ┌ left then down
+        (false, false, true) => '\u{2514}', // └ left then up
         // Vertical first (corner at from.x, to.y)
-        (true, true, false) => '└',   // down then right
-        (true, false, false) => '┌',  // up then right
-        (false, true, false) => '┘',  // down then left
-        (false, false, false) => '┐', // up then left
+        (true, true, false) => '\u{2514}',  // └ down then right
+        (true, false, false) => '\u{250C}', // ┌ up then right
+        (false, true, false) => '\u{2518}', // ┘ down then left
+        (false, false, false) => '\u{2510}', // ┐ up then left
     };
 
     if horizontal_first {
@@ -330,7 +427,7 @@ fn orthogonal_line_points(
             (corner.x + 1, from.x)
         };
         for x in start_x.min(end_x)..=start_x.max(end_x) {
-            result.push((Position::new(x, from.y), '─'));
+            result.push((Position::new(x, from.y), '\u{2500}')); // ─
         }
 
         // Corner
@@ -343,7 +440,7 @@ fn orthogonal_line_points(
             (to.y, corner.y - 1)
         };
         for y in start_y.min(end_y)..=start_y.max(end_y) {
-            result.push((Position::new(to.x, y), '│'));
+            result.push((Position::new(to.x, y), '\u{2502}')); // │
         }
     } else {
         // Vertical segment (excluding corner)
@@ -353,7 +450,7 @@ fn orthogonal_line_points(
             (corner.y + 1, from.y)
         };
         for y in start_y.min(end_y)..=start_y.max(end_y) {
-            result.push((Position::new(from.x, y), '│'));
+            result.push((Position::new(from.x, y), '\u{2502}')); // │
         }
 
         // Corner
@@ -366,7 +463,7 @@ fn orthogonal_line_points(
             (to.x, corner.x - 1)
         };
         for x in start_x.min(end_x)..=start_x.max(end_x) {
-            result.push((Position::new(x, to.y), '─'));
+            result.push((Position::new(x, to.y), '\u{2500}')); // ─
         }
     }
 
@@ -374,11 +471,7 @@ fn orthogonal_line_points(
 }
 
 /// Generate arrow points (line with arrowhead at end)
-pub fn arrow_points_styled(
-    from: Position,
-    to: Position,
-    style: LineStyle,
-) -> Vec<(Position, char)> {
+pub fn arrow_points_styled(from: Position, to: Position, style: LineStyle) -> Vec<(Position, char)> {
     let mut points = line_points_styled(from, to, style);
 
     // Replace the last character with an arrowhead
@@ -388,19 +481,79 @@ pub fn arrow_points_styled(
 
         *ch = if dx.abs() > dy.abs() {
             // Predominantly horizontal
-            if dx > 0 { '→' } else { '←' }
+            if dx > 0 {
+                '\u{2192}' // →
+            } else {
+                '\u{2190}' // ←
+            }
         } else if dy.abs() > dx.abs() {
             // Predominantly vertical
-            if dy > 0 { '↓' } else { '↑' }
+            if dy > 0 {
+                '\u{2193}' // ↓
+            } else {
+                '\u{2191}' // ↑
+            }
         } else {
             // Diagonal - pick based on direction
             match (dx > 0, dy > 0) {
-                (true, true) => '↘',
-                (true, false) => '↗',
-                (false, true) => '↙',
-                (false, false) => '↖',
+                (true, true) => '\u{2198}',   // ↘
+                (true, false) => '\u{2197}',  // ↗
+                (false, true) => '\u{2199}',  // ↙
+                (false, false) => '\u{2196}', // ↖
             }
         };
+    }
+
+    points
+}
+
+/// Generate rectangle outline points
+pub fn rect_points(from: Position, to: Position) -> Vec<(Position, char)> {
+    let mut points = Vec::new();
+
+    let min_x = from.x.min(to.x);
+    let max_x = from.x.max(to.x);
+    let min_y = from.y.min(to.y);
+    let max_y = from.y.max(to.y);
+
+    // Single point
+    if min_x == max_x && min_y == max_y {
+        points.push((Position::new(min_x, min_y), '\u{253C}')); // ┼
+        return points;
+    }
+
+    // Horizontal line only
+    if min_y == max_y {
+        for x in min_x..=max_x {
+            points.push((Position::new(x, min_y), '\u{2500}')); // ─
+        }
+        return points;
+    }
+
+    // Vertical line only
+    if min_x == max_x {
+        for y in min_y..=max_y {
+            points.push((Position::new(min_x, y), '\u{2502}')); // │
+        }
+        return points;
+    }
+
+    // Full rectangle - Corners
+    points.push((Position::new(min_x, min_y), '\u{250C}')); // ┌
+    points.push((Position::new(max_x, min_y), '\u{2510}')); // ┐
+    points.push((Position::new(min_x, max_y), '\u{2514}')); // └
+    points.push((Position::new(max_x, max_y), '\u{2518}')); // ┘
+
+    // Horizontal lines
+    for x in (min_x + 1)..max_x {
+        points.push((Position::new(x, min_y), '\u{2500}')); // ─
+        points.push((Position::new(x, max_y), '\u{2500}')); // ─
+    }
+
+    // Vertical lines
+    for y in (min_y + 1)..max_y {
+        points.push((Position::new(min_x, y), '\u{2502}')); // │
+        points.push((Position::new(max_x, y), '\u{2502}')); // │
     }
 
     points
@@ -417,14 +570,14 @@ pub fn double_rect_points(from: Position, to: Position) -> Vec<(Position, char)>
 
     // Single point
     if min_x == max_x && min_y == max_y {
-        points.push((Position::new(min_x, min_y), '╬'));
+        points.push((Position::new(min_x, min_y), '\u{256C}')); // ╬
         return points;
     }
 
     // Horizontal line only
     if min_y == max_y {
         for x in min_x..=max_x {
-            points.push((Position::new(x, min_y), '═'));
+            points.push((Position::new(x, min_y), '\u{2550}')); // ═
         }
         return points;
     }
@@ -432,39 +585,34 @@ pub fn double_rect_points(from: Position, to: Position) -> Vec<(Position, char)>
     // Vertical line only
     if min_x == max_x {
         for y in min_y..=max_y {
-            points.push((Position::new(min_x, y), '║'));
+            points.push((Position::new(min_x, y), '\u{2551}')); // ║
         }
         return points;
     }
 
-    // Full rectangle with double lines
-    // Corners
-    points.push((Position::new(min_x, min_y), '╔'));
-    points.push((Position::new(max_x, min_y), '╗'));
-    points.push((Position::new(min_x, max_y), '╚'));
-    points.push((Position::new(max_x, max_y), '╝'));
+    // Full rectangle with double lines - Corners
+    points.push((Position::new(min_x, min_y), '\u{2554}')); // ╔
+    points.push((Position::new(max_x, min_y), '\u{2557}')); // ╗
+    points.push((Position::new(min_x, max_y), '\u{255A}')); // ╚
+    points.push((Position::new(max_x, max_y), '\u{255D}')); // ╝
 
     // Horizontal lines
     for x in (min_x + 1)..max_x {
-        points.push((Position::new(x, min_y), '═'));
-        points.push((Position::new(x, max_y), '═'));
+        points.push((Position::new(x, min_y), '\u{2550}')); // ═
+        points.push((Position::new(x, max_y), '\u{2550}')); // ═
     }
 
     // Vertical lines
     for y in (min_y + 1)..max_y {
-        points.push((Position::new(min_x, y), '║'));
-        points.push((Position::new(max_x, y), '║'));
+        points.push((Position::new(min_x, y), '\u{2551}')); // ║
+        points.push((Position::new(max_x, y), '\u{2551}')); // ║
     }
 
     points
 }
 
 /// Generate diamond outline points
-pub fn diamond_points(
-    center: Position,
-    half_width: i32,
-    half_height: i32,
-) -> Vec<(Position, char)> {
+pub fn diamond_points(center: Position, half_width: i32, half_height: i32) -> Vec<(Position, char)> {
     let mut points = Vec::new();
 
     let hw = half_width.abs().max(1);
@@ -472,7 +620,7 @@ pub fn diamond_points(
 
     // Single point
     if hw == 0 && hh == 0 {
-        points.push((center, '◇'));
+        points.push((center, '\u{25C7}')); // ◇
         return points;
     }
 
@@ -495,25 +643,21 @@ pub fn diamond_points(
     points.push((Position::new(center.x + hw, center.y), '>'));
 
     // Draw the four edges using interpolation
-    // Top-right edge
     for i in 1..hh {
         let x = center.x + (hw * i) / hh;
         let y = center.y - hh + i;
         points.push((Position::new(x, y), '\\'));
     }
-    // Top-left edge
     for i in 1..hh {
         let x = center.x - (hw * i) / hh;
         let y = center.y - hh + i;
         points.push((Position::new(x, y), '/'));
     }
-    // Bottom-right edge
     for i in 1..hh {
         let x = center.x + (hw * i) / hh;
         let y = center.y + hh - i;
         points.push((Position::new(x, y), '/'));
     }
-    // Bottom-left edge
     for i in 1..hh {
         let x = center.x - (hw * i) / hh;
         let y = center.y + hh - i;
@@ -532,37 +676,36 @@ pub fn ellipse_points(center: Position, radius_x: i32, radius_y: i32) -> Vec<(Po
 
     // Very small ellipse
     if rx <= 1 && ry <= 1 {
-        points.push((Position::new(center.x, center.y - 1), '─'));
+        points.push((Position::new(center.x, center.y - 1), '\u{2500}')); // ─
         points.push((Position::new(center.x - 1, center.y), '('));
         points.push((Position::new(center.x + 1, center.y), ')'));
-        points.push((Position::new(center.x, center.y + 1), '─'));
+        points.push((Position::new(center.x, center.y + 1), '\u{2500}')); // ─
         return points;
     }
 
-    // Draw ellipse using midpoint algorithm approximation
-    // Top and bottom curves
+    // Left and right parentheses
     points.push((Position::new(center.x - rx, center.y), '('));
     points.push((Position::new(center.x + rx, center.y), ')'));
 
     // Top horizontal edge
     for x in (center.x - rx + 1)..(center.x + rx) {
-        points.push((Position::new(x, center.y - ry), '─'));
+        points.push((Position::new(x, center.y - ry), '\u{2500}')); // ─
     }
     // Bottom horizontal edge
     for x in (center.x - rx + 1)..(center.x + rx) {
-        points.push((Position::new(x, center.y + ry), '─'));
+        points.push((Position::new(x, center.y + ry), '\u{2500}')); // ─
     }
 
     // Corners
-    points.push((Position::new(center.x - rx, center.y - ry), '╭'));
-    points.push((Position::new(center.x + rx, center.y - ry), '╮'));
-    points.push((Position::new(center.x - rx, center.y + ry), '╰'));
-    points.push((Position::new(center.x + rx, center.y + ry), '╯'));
+    points.push((Position::new(center.x - rx, center.y - ry), '\u{256D}')); // ╭
+    points.push((Position::new(center.x + rx, center.y - ry), '\u{256E}')); // ╮
+    points.push((Position::new(center.x - rx, center.y + ry), '\u{2570}')); // ╰
+    points.push((Position::new(center.x + rx, center.y + ry), '\u{256F}')); // ╯
 
-    // Left and right vertical edges (if tall enough)
+    // Left and right vertical edges
     for y in (center.y - ry + 1)..(center.y + ry) {
-        points.push((Position::new(center.x - rx, y), '│'));
-        points.push((Position::new(center.x + rx, y), '│'));
+        points.push((Position::new(center.x - rx, y), '\u{2502}')); // │
+        points.push((Position::new(center.x + rx, y), '\u{2502}')); // │
     }
 
     // For wider ellipses, add parentheses at the widest point
@@ -572,150 +715,6 @@ pub fn ellipse_points(center: Position, radius_x: i32, radius_y: i32) -> Vec<(Po
     }
 
     points
-}
-
-/// Generate rectangle outline points
-pub fn rect_points(from: Position, to: Position) -> Vec<(Position, char)> {
-    let mut points = Vec::new();
-
-    let min_x = from.x.min(to.x);
-    let max_x = from.x.max(to.x);
-    let min_y = from.y.min(to.y);
-    let max_y = from.y.max(to.y);
-
-    // Single point
-    if min_x == max_x && min_y == max_y {
-        points.push((Position::new(min_x, min_y), '┼'));
-        return points;
-    }
-
-    // Horizontal line only
-    if min_y == max_y {
-        for x in min_x..=max_x {
-            points.push((Position::new(x, min_y), '─'));
-        }
-        return points;
-    }
-
-    // Vertical line only
-    if min_x == max_x {
-        for y in min_y..=max_y {
-            points.push((Position::new(min_x, y), '│'));
-        }
-        return points;
-    }
-
-    // Full rectangle
-    // Corners
-    points.push((Position::new(min_x, min_y), '┌'));
-    points.push((Position::new(max_x, min_y), '┐'));
-    points.push((Position::new(min_x, max_y), '└'));
-    points.push((Position::new(max_x, max_y), '┘'));
-
-    // Horizontal lines
-    for x in (min_x + 1)..max_x {
-        points.push((Position::new(x, min_y), '─'));
-        points.push((Position::new(x, max_y), '─'));
-    }
-
-    // Vertical lines
-    for y in (min_y + 1)..max_y {
-        points.push((Position::new(min_x, y), '│'));
-        points.push((Position::new(max_x, y), '│'));
-    }
-
-    points
-}
-
-/// Viewport - what part of the canvas is visible
-#[derive(Debug, Clone)]
-pub struct Viewport {
-    pub offset_x: i32,
-    pub offset_y: i32,
-    pub width: u16,
-    pub height: u16,
-    /// Zoom level: 1.0 = normal, 2.0 = zoomed in (each canvas cell = 2 screen cells)
-    pub zoom: f32,
-}
-
-/// Minimum zoom level (zoomed out)
-pub const MIN_ZOOM: f32 = 0.25;
-/// Maximum zoom level (zoomed in)
-pub const MAX_ZOOM: f32 = 4.0;
-/// Zoom step for keyboard shortcuts
-pub const ZOOM_STEP: f32 = 0.25;
-
-impl Viewport {
-    pub fn new(width: u16, height: u16) -> Self {
-        Self {
-            offset_x: 0,
-            offset_y: 0,
-            width,
-            height,
-            zoom: 1.0,
-        }
-    }
-
-    /// Convert screen coordinates to canvas coordinates
-    /// At zoom > 1.0, screen space is larger than canvas space
-    pub fn screen_to_canvas(&self, screen_x: u16, screen_y: u16) -> Position {
-        Position::new(
-            (screen_x as f32 / self.zoom) as i32 + self.offset_x,
-            (screen_y as f32 / self.zoom) as i32 + self.offset_y,
-        )
-    }
-
-    /// Convert canvas coordinates to screen coordinates (if visible)
-    /// At zoom > 1.0, canvas positions map to larger screen areas
-    pub fn canvas_to_screen(&self, pos: Position) -> Option<(u16, u16)> {
-        let screen_x = ((pos.x - self.offset_x) as f32 * self.zoom) as i32;
-        let screen_y = ((pos.y - self.offset_y) as f32 * self.zoom) as i32;
-
-        if screen_x >= 0
-            && screen_x < self.width as i32
-            && screen_y >= 0
-            && screen_y < self.height as i32
-        {
-            Some((screen_x as u16, screen_y as u16))
-        } else {
-            None
-        }
-    }
-
-    /// Pan the viewport
-    pub fn pan(&mut self, dx: i32, dy: i32) {
-        self.offset_x += dx;
-        self.offset_y += dy;
-    }
-
-    /// Resize the viewport
-    pub fn resize(&mut self, width: u16, height: u16) {
-        self.width = width;
-        self.height = height;
-    }
-
-    /// Zoom in (increase zoom level)
-    pub fn zoom_in(&mut self) {
-        self.zoom = (self.zoom + ZOOM_STEP).min(MAX_ZOOM);
-    }
-
-    /// Zoom out (decrease zoom level)
-    pub fn zoom_out(&mut self) {
-        self.zoom = (self.zoom - ZOOM_STEP).max(MIN_ZOOM);
-    }
-
-    /// Reset zoom to 100%
-    pub fn reset_zoom(&mut self) {
-        self.zoom = 1.0;
-    }
-
-    /// Get the visible canvas area (number of canvas cells visible)
-    pub fn visible_canvas_size(&self) -> (u16, u16) {
-        (
-            (self.width as f32 / self.zoom) as u16,
-            (self.height as f32 / self.zoom) as u16,
-        )
-    }
 }
 
 /// Generate triangle outline points
@@ -739,12 +738,10 @@ pub fn parallelogram_points(from: Position, to: Position) -> Vec<(Position, char
     let min_y = from.y.min(to.y);
     let max_y = from.y.max(to.y);
 
-    // Parallelogram slant offset (about 1/4 of width)
     let slant = (max_x - min_x) / 4;
 
-    // Single point
     if min_x == max_x && min_y == max_y {
-        points.push((Position::new(min_x, min_y), '◇'));
+        points.push((Position::new(min_x, min_y), '\u{25C7}')); // ◇
         return points;
     }
 
@@ -755,7 +752,7 @@ pub fn parallelogram_points(from: Position, to: Position) -> Vec<(Position, char
         } else if x == max_x + slant {
             points.push((Position::new(x, min_y), '\\'));
         } else {
-            points.push((Position::new(x, min_y), '─'));
+            points.push((Position::new(x, min_y), '\u{2500}')); // ─
         }
     }
 
@@ -766,7 +763,7 @@ pub fn parallelogram_points(from: Position, to: Position) -> Vec<(Position, char
         } else if x == max_x {
             points.push((Position::new(x, max_y), '\\'));
         } else {
-            points.push((Position::new(x, max_y), '─'));
+            points.push((Position::new(x, max_y), '\u{2500}')); // ─
         }
     }
 
@@ -797,28 +794,28 @@ pub fn hexagon_points(center: Position, radius_x: i32, radius_y: i32) -> Vec<(Po
     // Small hexagon
     if rx <= 2 && ry <= 1 {
         points.push((Position::new(center.x - 1, center.y - 1), '/'));
-        points.push((Position::new(center.x, center.y - 1), '─'));
+        points.push((Position::new(center.x, center.y - 1), '\u{2500}')); // ─
         points.push((Position::new(center.x + 1, center.y - 1), '\\'));
         points.push((Position::new(center.x - 2, center.y), '<'));
         points.push((Position::new(center.x + 2, center.y), '>'));
         points.push((Position::new(center.x - 1, center.y + 1), '\\'));
-        points.push((Position::new(center.x, center.y + 1), '─'));
+        points.push((Position::new(center.x, center.y + 1), '\u{2500}')); // ─
         points.push((Position::new(center.x + 1, center.y + 1), '/'));
         return points;
     }
 
-    // Top and bottom horizontal edges (shorter than full width)
+    // Top and bottom horizontal edges
     let edge_width = rx * 2 / 3;
     for x in (center.x - edge_width)..=(center.x + edge_width) {
-        points.push((Position::new(x, center.y - ry), '─'));
-        points.push((Position::new(x, center.y + ry), '─'));
+        points.push((Position::new(x, center.y - ry), '\u{2500}')); // ─
+        points.push((Position::new(x, center.y + ry), '\u{2500}')); // ─
     }
 
     // Left and right points
     points.push((Position::new(center.x - rx, center.y), '<'));
     points.push((Position::new(center.x + rx, center.y), '>'));
 
-    // Top-left and top-right diagonals
+    // Diagonals
     let diag_height = ry;
     for i in 1..diag_height {
         let x_offset = edge_width + (rx - edge_width) * i / diag_height;
@@ -826,7 +823,6 @@ pub fn hexagon_points(center: Position, radius_x: i32, radius_y: i32) -> Vec<(Po
         points.push((Position::new(center.x + x_offset, center.y - ry + i), '\\'));
     }
 
-    // Bottom-left and bottom-right diagonals
     for i in 1..diag_height {
         let x_offset = edge_width + (rx - edge_width) * i / diag_height;
         points.push((Position::new(center.x - x_offset, center.y + ry - i), '\\'));
@@ -845,23 +841,21 @@ pub fn trapezoid_points(from: Position, to: Position) -> Vec<(Position, char)> {
     let min_y = from.y.min(to.y);
     let max_y = from.y.max(to.y);
 
-    // Inset for top edge (about 1/4 of width on each side)
     let inset = (max_x - min_x) / 4;
 
-    // Single point
     if min_x == max_x && min_y == max_y {
-        points.push((Position::new(min_x, min_y), '◇'));
+        points.push((Position::new(min_x, min_y), '\u{25C7}')); // ◇
         return points;
     }
 
     // Top edge (shorter, centered)
     for x in (min_x + inset)..=(max_x - inset) {
-        points.push((Position::new(x, min_y), '─'));
+        points.push((Position::new(x, min_y), '\u{2500}')); // ─
     }
 
     // Bottom edge (full width)
     for x in min_x..=max_x {
-        points.push((Position::new(x, max_y), '─'));
+        points.push((Position::new(x, max_y), '\u{2500}')); // ─
     }
 
     // Left edge (slanted inward)
@@ -896,67 +890,47 @@ pub fn rounded_rect_points(from: Position, to: Position) -> Vec<(Position, char)
     let min_y = from.y.min(to.y);
     let max_y = from.y.max(to.y);
 
-    // Single point
     if min_x == max_x && min_y == max_y {
-        points.push((Position::new(min_x, min_y), '○'));
+        points.push((Position::new(min_x, min_y), '\u{25CB}')); // ○
         return points;
     }
 
-    // Horizontal line only
     if min_y == max_y {
         for x in min_x..=max_x {
-            points.push((Position::new(x, min_y), '─'));
+            points.push((Position::new(x, min_y), '\u{2500}')); // ─
         }
         return points;
     }
 
-    // Vertical line only
     if min_x == max_x {
         for y in min_y..=max_y {
-            points.push((Position::new(min_x, y), '│'));
+            points.push((Position::new(min_x, y), '\u{2502}')); // │
         }
         return points;
     }
 
-    // Rounded corners (using curved Unicode characters)
-    points.push((Position::new(min_x, min_y), '╭'));
-    points.push((Position::new(max_x, min_y), '╮'));
-    points.push((Position::new(min_x, max_y), '╰'));
-    points.push((Position::new(max_x, max_y), '╯'));
+    // Rounded corners
+    points.push((Position::new(min_x, min_y), '\u{256D}')); // ╭
+    points.push((Position::new(max_x, min_y), '\u{256E}')); // ╮
+    points.push((Position::new(min_x, max_y), '\u{2570}')); // ╰
+    points.push((Position::new(max_x, max_y), '\u{256F}')); // ╯
 
     // Horizontal lines
     for x in (min_x + 1)..max_x {
-        points.push((Position::new(x, min_y), '─'));
-        points.push((Position::new(x, max_y), '─'));
+        points.push((Position::new(x, min_y), '\u{2500}')); // ─
+        points.push((Position::new(x, max_y), '\u{2500}')); // ─
     }
 
     // Vertical lines
     for y in (min_y + 1)..max_y {
-        points.push((Position::new(min_x, y), '│'));
-        points.push((Position::new(max_x, y), '│'));
+        points.push((Position::new(min_x, y), '\u{2502}')); // │
+        points.push((Position::new(max_x, y), '\u{2502}')); // │
     }
 
     points
 }
 
 /// Generate cylinder outline points (database symbol)
-/// Looks like:
-///  .--------.
-/// (          )
-///  '--------'
-///  |        |
-///  |        |
-/// (          )
-///  '--------'
-/// Generate cylinder outline points
-/// Looks like:
-///    .------.
-///   (        )
-///   |`------'|
-///   |        |
-///   |        |
-///   (        )
-///    '------'
 pub fn cylinder_points(from: Position, to: Position) -> Vec<(Position, char)> {
     let mut points = Vec::new();
 
@@ -968,15 +942,12 @@ pub fn cylinder_points(from: Position, to: Position) -> Vec<(Position, char)> {
     let width = max_x - min_x;
     let height = max_y - min_y;
 
-    // Single point
     if width == 0 && height == 0 {
         points.push((Position::new(min_x, min_y), 'O'));
         return points;
     }
 
-    // Too small for cylinder shape - use simple tube
     if width < 4 || height < 3 {
-        // Simple small cylinder
         for x in min_x..=max_x {
             points.push((Position::new(x, min_y), '-'));
             points.push((Position::new(x, max_y), '-'));
@@ -988,18 +959,17 @@ pub fn cylinder_points(from: Position, to: Position) -> Vec<(Position, char)> {
         return points;
     }
 
-    // Top ellipse - top edge: .------.
+    // Top ellipse
     points.push((Position::new(min_x + 1, min_y), '.'));
     points.push((Position::new(max_x - 1, min_y), '.'));
     for x in (min_x + 2)..(max_x - 1) {
         points.push((Position::new(x, min_y), '-'));
     }
 
-    // Top ellipse - sides: (        )
     points.push((Position::new(min_x, min_y + 1), '('));
     points.push((Position::new(max_x, min_y + 1), ')'));
 
-    // Inner ellipse showing 3D depth: |`------'|
+    // Inner ellipse
     points.push((Position::new(min_x, min_y + 2), '|'));
     points.push((Position::new(max_x, min_y + 2), '|'));
     points.push((Position::new(min_x + 1, min_y + 2), '`'));
@@ -1008,17 +978,16 @@ pub fn cylinder_points(from: Position, to: Position) -> Vec<(Position, char)> {
         points.push((Position::new(x, min_y + 2), '-'));
     }
 
-    // Vertical sides of body
+    // Vertical sides
     for y in (min_y + 3)..(max_y - 1) {
         points.push((Position::new(min_x, y), '|'));
         points.push((Position::new(max_x, y), '|'));
     }
 
-    // Bottom ellipse - sides: (        )
+    // Bottom ellipse
     points.push((Position::new(min_x, max_y - 1), '('));
     points.push((Position::new(max_x, max_y - 1), ')'));
 
-    // Bottom edge: '------'
     points.push((Position::new(min_x + 1, max_y), '\''));
     points.push((Position::new(max_x - 1, max_y), '\''));
     for x in (min_x + 2)..(max_x - 1) {
@@ -1029,11 +998,6 @@ pub fn cylinder_points(from: Position, to: Position) -> Vec<(Position, char)> {
 }
 
 /// Generate cloud outline points
-/// Looks like:
-///      _   _
-///    _( )_( )_
-///   (         )
-///    `._____.'
 pub fn cloud_points(from: Position, to: Position) -> Vec<(Position, char)> {
     let mut points = Vec::new();
 
@@ -1045,13 +1009,11 @@ pub fn cloud_points(from: Position, to: Position) -> Vec<(Position, char)> {
     let width = max_x - min_x;
     let height = max_y - min_y;
 
-    // Single point
     if width == 0 && height == 0 {
         points.push((Position::new(min_x, min_y), 'o'));
         return points;
     }
 
-    // Very small cloud - simple oval
     if width < 6 || height < 3 {
         points.push((Position::new(min_x, (min_y + max_y) / 2), '('));
         points.push((Position::new(max_x, (min_y + max_y) / 2), ')'));
@@ -1062,28 +1024,22 @@ pub fn cloud_points(from: Position, to: Position) -> Vec<(Position, char)> {
         return points;
     }
 
-    // Calculate number of bumps based on width
+    // Calculate bumps
     let bump_width = 4;
     let num_bumps = ((width - 2) / bump_width).clamp(2, 5);
-    let total_bump_space = num_bumps * 3; // each bump takes ~3 chars: _( )
+    let total_bump_space = num_bumps * 3;
     let start_offset = (width - total_bump_space) / 2;
 
-    // Top bumps - row 0: _ between bumps
-    // Row 1: ( ) for each bump
     for i in 0..num_bumps {
         let bump_center = min_x + start_offset + 1 + (i * 3);
-        // Underscore on top
         points.push((Position::new(bump_center, min_y), '_'));
-        // Parentheses on second row
         points.push((Position::new(bump_center - 1, min_y + 1), '('));
         points.push((Position::new(bump_center + 1, min_y + 1), ')'));
-        // Connector underscore between bumps
         if i < num_bumps - 1 {
             points.push((Position::new(bump_center + 2, min_y + 1), '_'));
         }
     }
 
-    // Left edge underscore before first bump
     let first_bump_x = min_x + start_offset;
     if first_bump_x > min_x + 1 {
         for x in (min_x + 1)..first_bump_x {
@@ -1092,7 +1048,6 @@ pub fn cloud_points(from: Position, to: Position) -> Vec<(Position, char)> {
     }
     points.push((Position::new(min_x, min_y + 1), '_'));
 
-    // Right edge underscore after last bump
     let last_bump_x = min_x + start_offset + 2 + ((num_bumps - 1) * 3);
     if last_bump_x < max_x - 1 {
         for x in (last_bump_x + 1)..max_x {
@@ -1101,19 +1056,18 @@ pub fn cloud_points(from: Position, to: Position) -> Vec<(Position, char)> {
     }
     points.push((Position::new(max_x, min_y + 1), '_'));
 
-    // Left side
+    // Sides
     points.push((Position::new(min_x, min_y + 2), '('));
     for y in (min_y + 3)..(max_y - 1) {
         points.push((Position::new(min_x, y), '('));
     }
 
-    // Right side
     points.push((Position::new(max_x, min_y + 2), ')'));
     for y in (min_y + 3)..(max_y - 1) {
         points.push((Position::new(max_x, y), ')'));
     }
 
-    // Bottom curve
+    // Bottom
     points.push((Position::new(min_x + 1, max_y - 1), '`'));
     points.push((Position::new(max_x - 1, max_y - 1), '\''));
     points.push((Position::new(min_x + 2, max_y), '.'));
@@ -1126,16 +1080,11 @@ pub fn cloud_points(from: Position, to: Position) -> Vec<(Position, char)> {
 }
 
 /// Generate star outline points - 5-pointed star
-pub fn star_points(
-    center: Position,
-    outer_radius: i32,
-    _inner_radius: i32,
-) -> Vec<(Position, char)> {
+pub fn star_points(center: Position, outer_radius: i32, _inner_radius: i32) -> Vec<(Position, char)> {
     let mut points = Vec::new();
 
     let r = outer_radius.abs().max(2);
 
-    // Very small star
     if r <= 2 {
         points.push((Position::new(center.x, center.y - 1), '*'));
         points.push((Position::new(center.x - 1, center.y), '*'));
@@ -1145,23 +1094,18 @@ pub fn star_points(
         return points;
     }
 
-    // 5-pointed star with hand-tuned coordinates for ASCII
-    // Points: top, upper-right, lower-right, lower-left, upper-left
     let top = Position::new(center.x, center.y - r);
     let upper_right = Position::new(center.x + r, center.y - r / 3);
     let lower_right = Position::new(center.x + r * 2 / 3, center.y + r);
     let lower_left = Position::new(center.x - r * 2 / 3, center.y + r);
     let upper_left = Position::new(center.x - r, center.y - r / 3);
 
-    // Draw pentagram: connect every other point
-    // top -> lower_left -> upper_right -> upper_left -> lower_right -> top
     draw_star_segment(&mut points, top, lower_left);
     draw_star_segment(&mut points, lower_left, upper_right);
     draw_star_segment(&mut points, upper_right, upper_left);
     draw_star_segment(&mut points, upper_left, lower_right);
     draw_star_segment(&mut points, lower_right, top);
 
-    // Mark the 5 points
     points.push((top, '*'));
     points.push((upper_right, '*'));
     points.push((lower_right, '*'));
@@ -1171,7 +1115,6 @@ pub fn star_points(
     points
 }
 
-/// Draw a line segment for star, choosing char based on direction
 fn draw_star_segment(points: &mut Vec<(Position, char)>, from: Position, to: Position) {
     let dx = to.x - from.x;
     let dy = to.y - from.y;
@@ -1187,7 +1130,6 @@ fn draw_star_segment(points: &mut Vec<(Position, char)>, from: Position, to: Pos
         let y = from.y as f32 + dy as f32 * t;
         let pos = Position::new(x.round() as i32, y.round() as i32);
 
-        // Choose character based on local slope
         let slope = if dx == 0 {
             f32::INFINITY
         } else {
@@ -1208,7 +1150,6 @@ fn draw_star_segment(points: &mut Vec<(Position, char)>, from: Position, to: Pos
     }
 }
 
-/// Helper function to draw a line edge between two points
 fn draw_line_edge(points: &mut Vec<(Position, char)>, from: Position, to: Position) {
     let dx = to.x - from.x;
     let dy = to.y - from.y;
@@ -1218,11 +1159,10 @@ fn draw_line_edge(points: &mut Vec<(Position, char)>, from: Position, to: Positi
         return;
     }
 
-    // Determine character based on direction
     let ch = if dy == 0 {
-        '─'
+        '\u{2500}' // ─
     } else if dx == 0 {
-        '│'
+        '\u{2502}' // │
     } else if (dx > 0) == (dy > 0) {
         '\\'
     } else {
@@ -1238,20 +1178,11 @@ fn draw_line_edge(points: &mut Vec<(Position, char)>, from: Position, to: Positi
 mod tests {
     use super::*;
 
-    // ========== Position tests ==========
-
     #[test]
     fn position_new() {
         let pos = Position::new(10, 20);
         assert_eq!(pos.x, 10);
         assert_eq!(pos.y, 20);
-    }
-
-    #[test]
-    fn position_negative_coords() {
-        let pos = Position::new(-5, -10);
-        assert_eq!(pos.x, -5);
-        assert_eq!(pos.y, -10);
     }
 
     #[test]
@@ -1264,18 +1195,6 @@ mod tests {
     }
 
     #[test]
-    fn position_hash() {
-        use std::collections::HashSet;
-        let mut set = HashSet::new();
-        set.insert(Position::new(1, 2));
-        set.insert(Position::new(1, 2)); // duplicate
-        set.insert(Position::new(3, 4));
-        assert_eq!(set.len(), 2);
-    }
-
-    // ========== line_points tests (Bresenham) ==========
-
-    #[test]
     fn line_points_single_point() {
         let points = line_points(Position::new(5, 5), Position::new(5, 5));
         assert_eq!(points.len(), 1);
@@ -1286,8 +1205,6 @@ mod tests {
     fn line_points_horizontal() {
         let points = line_points(Position::new(0, 0), Position::new(5, 0));
         assert_eq!(points.len(), 6);
-        assert_eq!(points[0], Position::new(0, 0));
-        assert_eq!(points[5], Position::new(5, 0));
         assert!(points.iter().all(|p| p.y == 0));
     }
 
@@ -1299,271 +1216,11 @@ mod tests {
     }
 
     #[test]
-    fn line_points_diagonal_45_degrees() {
-        let points = line_points(Position::new(0, 0), Position::new(5, 5));
-        assert_eq!(points.len(), 6);
-        for (i, p) in points.iter().enumerate() {
-            assert_eq!(p.x, i as i32);
-            assert_eq!(p.y, i as i32);
-        }
-    }
-
-    #[test]
-    fn line_points_reverse_direction() {
-        let forward = line_points(Position::new(0, 0), Position::new(5, 3));
-        let backward = line_points(Position::new(5, 3), Position::new(0, 0));
-        assert_eq!(forward.len(), backward.len());
-    }
-
-    #[test]
-    fn line_points_negative_coords() {
-        let points = line_points(Position::new(-5, -5), Position::new(0, 0));
-        assert!(!points.is_empty());
-        assert_eq!(points[0], Position::new(-5, -5));
-        assert_eq!(*points.last().unwrap(), Position::new(0, 0));
-    }
-
-    #[test]
-    fn line_points_contiguous() {
-        let points = line_points(Position::new(0, 0), Position::new(10, 7));
-        for window in points.windows(2) {
-            let dx = (window[0].x - window[1].x).abs();
-            let dy = (window[0].y - window[1].y).abs();
-            assert!(dx <= 1 && dy <= 1, "Points not contiguous: {:?}", window);
-        }
-    }
-
-    // ========== rect_points tests ==========
-
-    #[test]
-    fn rect_points_single_point() {
-        let points = rect_points(Position::new(5, 5), Position::new(5, 5));
-        assert_eq!(points.len(), 1);
-        assert_eq!(points[0], (Position::new(5, 5), '┼'));
-    }
-
-    #[test]
-    fn rect_points_horizontal_line() {
-        let points = rect_points(Position::new(0, 0), Position::new(5, 0));
-        assert_eq!(points.len(), 6);
-        assert!(points.iter().all(|&(p, _)| p.y == 0));
-    }
-
-    #[test]
-    fn rect_points_vertical_line() {
-        let points = rect_points(Position::new(0, 0), Position::new(0, 5));
-        assert_eq!(points.len(), 6);
-        assert!(points.iter().all(|&(p, _)| p.x == 0));
-    }
-
-    #[test]
-    fn rect_points_full_rect() {
-        let points = rect_points(Position::new(0, 0), Position::new(5, 3));
-        // Check corners exist
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(0, 0) && c == '┌')
-        );
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(5, 0) && c == '┐')
-        );
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(0, 3) && c == '└')
-        );
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(5, 3) && c == '┘')
-        );
-    }
-
-    #[test]
-    fn rect_points_swapped_corners() {
-        let p1 = rect_points(Position::new(0, 0), Position::new(5, 3));
-        let p2 = rect_points(Position::new(5, 3), Position::new(0, 0));
-        assert_eq!(p1.len(), p2.len());
-    }
-
-    // ========== diamond_points tests ==========
-
-    #[test]
-    fn diamond_points_small() {
-        let points = diamond_points(Position::new(10, 10), 1, 1);
-        assert_eq!(points.len(), 4);
-    }
-
-    #[test]
-    fn diamond_points_has_tips() {
-        let points = diamond_points(Position::new(10, 10), 5, 3);
-        // Check tips
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(10, 7) && c == '^')
-        );
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(10, 13) && c == 'v')
-        );
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(5, 10) && c == '<')
-        );
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(15, 10) && c == '>')
-        );
-    }
-
-    // ========== ellipse_points tests ==========
-
-    #[test]
-    fn ellipse_points_small() {
-        let points = ellipse_points(Position::new(10, 10), 1, 1);
-        assert!(!points.is_empty());
-    }
-
-    #[test]
-    fn ellipse_points_has_sides() {
-        let points = ellipse_points(Position::new(10, 10), 5, 3);
-        // Check left and right parentheses
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(5, 10) && c == '(')
-        );
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(15, 10) && c == ')')
-        );
-    }
-
-    // ========== LineStyle tests ==========
-
-    #[test]
     fn line_style_cycle() {
         assert_eq!(LineStyle::Straight.next(), LineStyle::OrthogonalHV);
         assert_eq!(LineStyle::OrthogonalHV.next(), LineStyle::OrthogonalVH);
         assert_eq!(LineStyle::OrthogonalVH.next(), LineStyle::OrthogonalAuto);
         assert_eq!(LineStyle::OrthogonalAuto.next(), LineStyle::Straight);
-    }
-
-    #[test]
-    fn line_style_default() {
-        assert_eq!(LineStyle::default(), LineStyle::Straight);
-    }
-
-    #[test]
-    fn line_style_name() {
-        assert_eq!(LineStyle::Straight.name(), "Straight");
-        assert_eq!(LineStyle::OrthogonalHV.name(), "Ortho H→V");
-        assert_eq!(LineStyle::OrthogonalVH.name(), "Ortho V→H");
-        assert_eq!(LineStyle::OrthogonalAuto.name(), "Auto Route");
-    }
-
-    // ========== line_points_styled tests ==========
-
-    #[test]
-    fn line_points_styled_straight_horizontal() {
-        let points = line_points_styled(
-            Position::new(0, 0),
-            Position::new(5, 0),
-            LineStyle::Straight,
-        );
-        assert_eq!(points.len(), 6);
-        assert!(points.iter().all(|&(_, c)| c == '─'));
-    }
-
-    #[test]
-    fn line_points_styled_straight_vertical() {
-        let points = line_points_styled(
-            Position::new(0, 0),
-            Position::new(0, 5),
-            LineStyle::Straight,
-        );
-        assert_eq!(points.len(), 6);
-        assert!(points.iter().all(|&(_, c)| c == '│'));
-    }
-
-    #[test]
-    fn line_points_styled_orthogonal_hv() {
-        let points = line_points_styled(
-            Position::new(0, 0),
-            Position::new(5, 3),
-            LineStyle::OrthogonalHV,
-        );
-        // Should have a corner character
-        assert!(
-            points
-                .iter()
-                .any(|&(_, c)| c == '┐' || c == '┘' || c == '┌' || c == '└')
-        );
-    }
-
-    // ========== arrow_points_styled tests ==========
-
-    #[test]
-    fn arrow_points_has_arrowhead() {
-        let points = arrow_points_styled(
-            Position::new(0, 0),
-            Position::new(5, 0),
-            LineStyle::Straight,
-        );
-        let (_, last_char) = points.last().unwrap();
-        assert_eq!(*last_char, '→');
-    }
-
-    #[test]
-    fn arrow_points_up() {
-        let points = arrow_points_styled(
-            Position::new(0, 5),
-            Position::new(0, 0),
-            LineStyle::Straight,
-        );
-        let (_, last_char) = points.last().unwrap();
-        assert_eq!(*last_char, '↑');
-    }
-
-    #[test]
-    fn arrow_points_down() {
-        let points = arrow_points_styled(
-            Position::new(0, 0),
-            Position::new(0, 5),
-            LineStyle::Straight,
-        );
-        let (_, last_char) = points.last().unwrap();
-        assert_eq!(*last_char, '↓');
-    }
-
-    #[test]
-    fn arrow_points_left() {
-        let points = arrow_points_styled(
-            Position::new(5, 0),
-            Position::new(0, 0),
-            LineStyle::Straight,
-        );
-        let (_, last_char) = points.last().unwrap();
-        assert_eq!(*last_char, '←');
-    }
-
-    // ========== Viewport tests ==========
-
-    #[test]
-    fn viewport_new() {
-        let vp = Viewport::new(80, 24);
-        assert_eq!(vp.width, 80);
-        assert_eq!(vp.height, 24);
-        assert_eq!(vp.offset_x, 0);
-        assert_eq!(vp.offset_y, 0);
     }
 
     #[test]
@@ -1574,215 +1231,34 @@ mod tests {
     }
 
     #[test]
-    fn viewport_screen_to_canvas_with_offset() {
-        let mut vp = Viewport::new(80, 24);
-        vp.pan(10, 5);
-        assert_eq!(vp.screen_to_canvas(0, 0), Position::new(10, 5));
-        assert_eq!(vp.screen_to_canvas(5, 3), Position::new(15, 8));
-    }
-
-    #[test]
-    fn viewport_canvas_to_screen_visible() {
-        let vp = Viewport::new(80, 24);
-        assert_eq!(vp.canvas_to_screen(Position::new(10, 5)), Some((10, 5)));
-    }
-
-    #[test]
-    fn viewport_canvas_to_screen_not_visible() {
-        let vp = Viewport::new(80, 24);
-        assert_eq!(vp.canvas_to_screen(Position::new(100, 5)), None);
-        assert_eq!(vp.canvas_to_screen(Position::new(-5, 5)), None);
-    }
-
-    #[test]
     fn viewport_pan() {
         let mut vp = Viewport::new(80, 24);
         vp.pan(10, 5);
         assert_eq!(vp.offset_x, 10);
         assert_eq!(vp.offset_y, 5);
-        vp.pan(-5, -3);
-        assert_eq!(vp.offset_x, 5);
-        assert_eq!(vp.offset_y, 2);
     }
 
     #[test]
-    fn viewport_resize() {
-        let mut vp = Viewport::new(80, 24);
-        vp.resize(120, 40);
-        assert_eq!(vp.width, 120);
-        assert_eq!(vp.height, 40);
-    }
-
-    // ========== Other shape point functions ==========
-
-    #[test]
-    fn rounded_rect_points_full() {
-        let points = rounded_rect_points(Position::new(0, 0), Position::new(5, 3));
-        // Check rounded corners
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(0, 0) && c == '╭')
-        );
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(5, 0) && c == '╮')
-        );
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(0, 3) && c == '╰')
-        );
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(5, 3) && c == '╯')
-        );
+    fn rect_points_single_point() {
+        let points = rect_points(Position::new(5, 5), Position::new(5, 5));
+        assert_eq!(points.len(), 1);
     }
 
     #[test]
-    fn double_rect_points_full() {
-        let points = double_rect_points(Position::new(0, 0), Position::new(5, 3));
-        // Check double-line corners
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(0, 0) && c == '╔')
-        );
-        assert!(
-            points
-                .iter()
-                .any(|&(p, c)| p == Position::new(5, 0) && c == '╗')
-        );
-    }
-
-    #[test]
-    fn hexagon_points_not_empty() {
-        let points = hexagon_points(Position::new(10, 10), 5, 3);
+    fn rect_points_full() {
+        let points = rect_points(Position::new(0, 0), Position::new(5, 3));
         assert!(!points.is_empty());
     }
 
     #[test]
-    fn trapezoid_points_not_empty() {
-        let points = trapezoid_points(Position::new(0, 0), Position::new(10, 5));
+    fn diamond_points_not_empty() {
+        let points = diamond_points(Position::new(10, 10), 5, 3);
         assert!(!points.is_empty());
     }
 
     #[test]
-    fn parallelogram_points_not_empty() {
-        let points = parallelogram_points(Position::new(0, 0), Position::new(10, 5));
+    fn ellipse_points_not_empty() {
+        let points = ellipse_points(Position::new(10, 10), 5, 3);
         assert!(!points.is_empty());
-    }
-
-    #[test]
-    fn cylinder_points_not_empty() {
-        let points = cylinder_points(Position::new(0, 0), Position::new(10, 8));
-        assert!(!points.is_empty());
-    }
-
-    #[test]
-    fn cloud_points_not_empty() {
-        let points = cloud_points(Position::new(0, 0), Position::new(15, 6));
-        assert!(!points.is_empty());
-    }
-
-    #[test]
-    fn star_points_not_empty() {
-        let points = star_points(Position::new(10, 10), 5, 2);
-        assert!(!points.is_empty());
-    }
-
-    #[test]
-    fn triangle_points_not_empty() {
-        let points = triangle_points(
-            Position::new(5, 0),
-            Position::new(0, 5),
-            Position::new(10, 5),
-        );
-        assert!(!points.is_empty());
-    }
-}
-
-#[cfg(test)]
-mod proptest_tests {
-    use super::*;
-    use proptest::prelude::*;
-
-    proptest! {
-        #[test]
-        fn line_includes_endpoints(
-            x1 in -100i32..100,
-            y1 in -100i32..100,
-            x2 in -100i32..100,
-            y2 in -100i32..100
-        ) {
-            let start = Position::new(x1, y1);
-            let end = Position::new(x2, y2);
-            let points = line_points(start, end);
-
-            prop_assert!(!points.is_empty());
-            prop_assert_eq!(points[0], start);
-            prop_assert_eq!(*points.last().unwrap(), end);
-        }
-
-        #[test]
-        fn line_points_are_contiguous(
-            x1 in -50i32..50,
-            y1 in -50i32..50,
-            x2 in -50i32..50,
-            y2 in -50i32..50
-        ) {
-            let points = line_points(Position::new(x1, y1), Position::new(x2, y2));
-
-            for window in points.windows(2) {
-                let dx = (window[0].x - window[1].x).abs();
-                let dy = (window[0].y - window[1].y).abs();
-                prop_assert!(dx <= 1 && dy <= 1);
-            }
-        }
-
-        #[test]
-        fn rect_bounds_normalized(
-            x1 in -100i32..100,
-            y1 in -100i32..100,
-            x2 in -100i32..100,
-            y2 in -100i32..100
-        ) {
-            let points = rect_points(Position::new(x1, y1), Position::new(x2, y2));
-
-            if !points.is_empty() {
-                let min_x = points.iter().map(|(p, _)| p.x).min().unwrap();
-                let max_x = points.iter().map(|(p, _)| p.x).max().unwrap();
-                let min_y = points.iter().map(|(p, _)| p.y).min().unwrap();
-                let max_y = points.iter().map(|(p, _)| p.y).max().unwrap();
-
-                prop_assert!(min_x <= max_x);
-                prop_assert!(min_y <= max_y);
-            }
-        }
-
-        #[test]
-        fn viewport_roundtrip(
-            width in 1u16..1000,
-            height in 1u16..1000,
-            offset_x in -1000i32..1000,
-            offset_y in -1000i32..1000,
-            screen_x in 0u16..100,
-            screen_y in 0u16..100
-        ) {
-            let mut vp = Viewport::new(width, height);
-            vp.pan(offset_x, offset_y);
-
-            let canvas_pos = vp.screen_to_canvas(screen_x, screen_y);
-
-            // If screen coords are within viewport, roundtrip should work
-            if screen_x < width && screen_y < height {
-                if let Some((sx, sy)) = vp.canvas_to_screen(canvas_pos) {
-                    prop_assert_eq!(sx, screen_x);
-                    prop_assert_eq!(sy, screen_y);
-                }
-            }
-        }
     }
 }

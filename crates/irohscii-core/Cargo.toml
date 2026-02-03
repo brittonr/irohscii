@@ -1,0 +1,21 @@
+[package]
+name = "irohscii-core"
+description = "Core types, shapes, and CRDT document for irohscii"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+irohscii-geometry = { workspace = true }
+serde = { workspace = true }
+uuid = { workspace = true }
+automerge = { workspace = true }
+anyhow = { workspace = true }
+dirs = { workspace = true }
+ratatui = { workspace = true }
+rmp-serde = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = { workspace = true }

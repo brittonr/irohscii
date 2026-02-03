@@ -20,7 +20,7 @@ use iroh::discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher};
 use iroh_base::EndpointAddr;
 use tokio::sync::mpsc as tokio_mpsc;
 
-use crate::presence::{PeerId, PeerPresence, PresenceMessage};
+use crate::{PeerId, PeerPresence, PresenceMessage};
 use presence_protocol::PresenceProtocol;
 use protocol::IrohAutomergeProtocol;
 

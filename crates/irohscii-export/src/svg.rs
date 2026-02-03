@@ -10,8 +10,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::canvas::{LineStyle, Position};
-use crate::shapes::{CachedShape, ShapeKind, ShapeView};
+use irohscii_core::{CachedShape, LineStyle, Position, ShapeKind, ShapeView};
 
 /// Character dimensions in SVG units
 const CHAR_WIDTH: i32 = 10;
@@ -974,7 +973,7 @@ fn render_star(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shapes::ShapeColor;
+    use irohscii_core::ShapeColor;
 
     fn make_rect(x: i32, y: i32, w: i32, h: i32) -> ShapeKind {
         ShapeKind::Rectangle {
@@ -1037,7 +1036,7 @@ mod tests {
     }
 
     fn build_shape_view(shapes: Vec<ShapeKind>) -> ShapeView {
-        use crate::document::Document;
+        use irohscii_core::Document;
 
         let mut doc = Document::new();
         for kind in shapes {

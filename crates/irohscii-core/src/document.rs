@@ -11,9 +11,9 @@ use anyhow::{Result, anyhow};
 use automerge::{Automerge, ObjId, ObjType, ROOT, ReadDoc, transaction::Transactable};
 use uuid::Uuid;
 
-use crate::canvas::{LineStyle, Position};
 use crate::layers::{Layer, LayerId};
 use crate::shapes::{ShapeColor, ShapeKind};
+use irohscii_geometry::{LineStyle, Position};
 
 /// Get the default storage path for the automerge document
 pub fn default_storage_path() -> PathBuf {

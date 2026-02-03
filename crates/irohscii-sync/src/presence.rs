@@ -9,9 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
-use crate::canvas::Position;
-use crate::document::ShapeId;
-use crate::layers::LayerId;
+use irohscii_core::{LayerId, Position, ShapeId};
 
 /// Staleness threshold - remove cursors not updated in 5 seconds
 const STALE_THRESHOLD: Duration = Duration::from_secs(5);
@@ -232,7 +230,7 @@ impl PresenceManager {
     /// Returns the peer presence if found
     pub fn get_dragger_for_shape(
         &self,
-        shape_id: crate::document::ShapeId,
+        shape_id: ShapeId,
     ) -> Option<&PeerPresence> {
         self.peers.values()
             .map(|(p, _)| p)
@@ -244,7 +242,7 @@ impl PresenceManager {
     #[allow(dead_code)]
     pub fn has_earlier_dragger(
         &self,
-        shape_id: crate::document::ShapeId,
+        shape_id: ShapeId,
         our_start_ms: u64,
     ) -> Option<&PeerPresence> {
         self.peers.values()
@@ -499,14 +497,14 @@ mod tests {
         );
         assert!(
             !CursorActivity::Selected {
-                shape_id: crate::document::ShapeId::new()
+                shape_id: ShapeId::new()
             }
             .label()
             .is_empty()
         );
         assert!(
             !CursorActivity::Dragging {
-                shape_id: crate::document::ShapeId::new(),
+                shape_id: ShapeId::new(),
                 delta: (0, 0)
             }
             .label()
@@ -514,7 +512,7 @@ mod tests {
         );
         assert!(
             !CursorActivity::Resizing {
-                shape_id: crate::document::ShapeId::new(),
+                shape_id: ShapeId::new(),
                 preview_bounds: None
             }
             .label()

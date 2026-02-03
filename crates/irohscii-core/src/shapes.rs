@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
-use crate::canvas::{LineStyle, Position};
 use crate::document::{Document, ShapeId};
 use crate::layers::LayerId;
+use irohscii_geometry::{LineStyle, Position};
 
 /// Color for shapes - 16-color terminal palette
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -2538,7 +2538,7 @@ where
 }
 
 /// Find the corresponding new snap point for a position based on the closest old snap point
-fn find_corresponding_snap(
+pub fn find_corresponding_snap(
     pos: &Position,
     old_snaps: &[Position],
     new_snaps: &[Position],

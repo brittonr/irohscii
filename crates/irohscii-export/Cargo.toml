@@ -1,0 +1,17 @@
+[package]
+name = "irohscii-export"
+description = "ASCII and SVG export for irohscii"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+irohscii-geometry = { workspace = true }
+irohscii-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

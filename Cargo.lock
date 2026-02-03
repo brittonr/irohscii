@@ -2006,6 +2006,11 @@ dependencies = [
  "dirs",
  "iroh",
  "iroh-base",
+ "irohscii-core",
+ "irohscii-export",
+ "irohscii-geometry",
+ "irohscii-session",
+ "irohscii-sync",
  "n0-future",
  "postcard",
  "proptest",
@@ -2018,6 +2023,77 @@ dependencies = [
  "tokio-test",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "irohscii-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "automerge",
+ "dirs",
+ "irohscii-geometry",
+ "proptest",
+ "ratatui",
+ "rmp-serde",
+ "serde",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
+name = "irohscii-export"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "irohscii-core",
+ "irohscii-geometry",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "irohscii-geometry"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+]
+
+[[package]]
+name = "irohscii-session"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "automerge",
+ "dirs",
+ "irohscii-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
+name = "irohscii-sync"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "automerge",
+ "data-encoding",
+ "iroh",
+ "iroh-base",
+ "irohscii-core",
+ "irohscii-geometry",
+ "n0-future",
+ "postcard",
+ "ratatui",
+ "rmp-serde",
+ "serde",
+ "tempfile",
+ "tokio",
+ "tokio-test",
 ]
 
 [[package]]

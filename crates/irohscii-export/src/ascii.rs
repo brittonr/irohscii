@@ -4,12 +4,12 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::canvas::{
-    Position, arrow_points_styled, cloud_points, cylinder_points, diamond_points,
-    double_rect_points, ellipse_points, hexagon_points, line_points_styled, parallelogram_points,
-    rect_points, rounded_rect_points, star_points, trapezoid_points, triangle_points,
+use irohscii_core::{Position, ShapeColor, ShapeKind, ShapeView};
+use irohscii_geometry::{
+    arrow_points_styled, cloud_points, cylinder_points, diamond_points, double_rect_points,
+    ellipse_points, hexagon_points, line_points_styled, parallelogram_points, rect_points,
+    rounded_rect_points, star_points, trapezoid_points, triangle_points,
 };
-use crate::shapes::{ShapeColor, ShapeKind, ShapeView};
 
 /// Render a label centered inside a shape's bounds
 fn render_label_to_grid(
@@ -305,7 +305,7 @@ mod tests {
     }
 
     fn build_shape_view(shapes: Vec<ShapeKind>) -> ShapeView {
-        use crate::document::Document;
+        use irohscii_core::Document;
 
         let mut doc = Document::new();
         for kind in shapes {
