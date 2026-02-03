@@ -10,8 +10,8 @@ use ratatui::{
 };
 
 use crate::app::{
-    App, BRUSHES, COLORS, GRID_SIZE, MessageSeverity, Mode, PendingAction, PopupKind,
-    SnapOrientation, TOOLS, Tool,
+    App, BRUSHES, COLORS, GRID_SIZE, KeyboardShapeField, MessageSeverity, Mode, PendingAction,
+    PopupKind, SnapOrientation, TOOLS, Tool,
 };
 use crate::canvas::{
     Position, arrow_points_styled, cloud_points, cylinder_points, diamond_points,
@@ -138,6 +138,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         }
         Mode::SessionCreate { name } => {
             render_session_create(frame, name, canvas_area);
+        }
+        Mode::KeyboardShapeCreate {
+            tool,
+            width,
+            height,
+            focus,
+        } => {
+            render_keyboard_shape_create(frame, *tool, width, height, *focus, canvas_area);
         }
         Mode::Normal => {}
         Mode::LayerRename { .. } => {} // Handled in layer panel
@@ -1204,6 +1212,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         Mode::ConfirmDialog { .. } => ("CONF", Color::Yellow),
         Mode::HelpScreen { .. } => ("HELP", Color::Cyan),
         Mode::SessionBrowser { .. } | Mode::SessionCreate { .. } => ("SESS", Color::Magenta),
+        Mode::KeyboardShapeCreate { .. } => ("CREATE", Color::Cyan),
     };
 
     let mode_style = Style::default()
@@ -1384,6 +1393,9 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
             "[j/k] navigate [n]ew [d]elete [p]in [*] pinned filter [Tab/Esc] close"
         }
         Mode::SessionCreate { .. } => "type session name | [Enter] create [Esc] cancel",
+        Mode::KeyboardShapeCreate { .. } => {
+            "[Tab] switch field | type dimensions | [Enter] create [Esc] cancel"
+        }
     };
 
     let paragraph = Paragraph::new(help_text).style(Style::default().fg(Color::DarkGray));
@@ -1797,6 +1809,17 @@ fn render_help_screen(frame: &mut Frame, scroll: usize, area: Rect) {
             ],
         ),
         (
+            "KEYBOARD CREATE",
+            vec![
+                ("Ctrl+Shift+R", "Create rectangle"),
+                ("Ctrl+Shift+L", "Create line"),
+                ("Ctrl+Shift+B", "Create double box"),
+                ("Alt+d", "Create diamond"),
+                ("Alt+e", "Create ellipse"),
+                ("Alt+a", "Create arrow"),
+            ],
+        ),
+        (
             "SELECTION",
             vec![
                 ("Click", "Select shape"),
@@ -2097,6 +2120,92 @@ fn render_session_create(frame: &mut Frame, name: &str, area: Rect) {
         ),
         Line::styled(
             " Enter:create Esc:cancel",
+            Style::default().fg(Color::DarkGray),
+        ),
+    ];
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .style(Style::default().bg(Color::Black));
+
+    frame.render_widget(paragraph, popup_area);
+}
+
+/// Render keyboard shape creation dialog
+fn render_keyboard_shape_create(
+    frame: &mut Frame,
+    tool: Tool,
+    width: &str,
+    height: &str,
+    focus: KeyboardShapeField,
+    area: Rect,
+) {
+    let popup_width = 35.min(area.width.saturating_sub(4));
+    let popup_height = 7;
+    let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
+    let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
+
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    // Clear the popup area
+    for py in popup_area.y..popup_area.y + popup_area.height {
+        for px in popup_area.x..popup_area.x + popup_area.width {
+            frame.buffer_mut()[(px, py)]
+                .set_char(' ')
+                .set_style(Style::default().bg(Color::Black));
+        }
+    }
+
+    let title = format!(" Create {} ", tool.name());
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    // Determine labels based on tool type
+    let (label1, label2) = match tool {
+        Tool::Line | Tool::Arrow => ("Length", "Y-Offset"),
+        Tool::Star => ("Outer R", "Inner R"),
+        _ => ("Width", "Height"),
+    };
+
+    let width_style = if focus == KeyboardShapeField::Width {
+        Style::default().fg(Color::Yellow).bold()
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let height_style = if focus == KeyboardShapeField::Height {
+        Style::default().fg(Color::Yellow).bold()
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let cursor = "_";
+    let width_cursor = if focus == KeyboardShapeField::Width {
+        cursor
+    } else {
+        ""
+    };
+    let height_cursor = if focus == KeyboardShapeField::Height {
+        cursor
+    } else {
+        ""
+    };
+
+    let lines = vec![
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled(format!(" {}: ", label1), Style::default().fg(Color::Gray)),
+            Span::styled(format!("{}{} ", width, width_cursor), width_style),
+        ]),
+        Line::from(vec![
+            Span::styled(format!(" {}: ", label2), Style::default().fg(Color::Gray)),
+            Span::styled(format!("{}{} ", height, height_cursor), height_style),
+        ]),
+        Line::raw(""),
+        Line::styled(
+            " Tab:switch Enter:create Esc:cancel",
             Style::default().fg(Color::DarkGray),
         ),
     ];

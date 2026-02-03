@@ -423,6 +423,9 @@ fn run_app(
                                         Mode::SessionCreate { .. } => {
                                             handle_session_create_mode(app, key)
                                         }
+                                        Mode::KeyboardShapeCreate { .. } => {
+                                            handle_keyboard_shape_create_mode(app, key)
+                                        }
                                     }
                                 }
                             }
@@ -678,17 +681,27 @@ fn handle_normal_mode(
         KeyCode::Char('l') if !key.modifiers.contains(KeyModifiers::ALT) => {
             app.set_tool(Tool::Line)
         }
-        KeyCode::Char('a') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Char('a')
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT) =>
+        {
             app.set_tool(Tool::Arrow)
         }
-        KeyCode::Char('r') if !app.show_layers => app.set_tool(Tool::Rectangle),
+        KeyCode::Char('r') if !app.show_layers && !key.modifiers.contains(KeyModifiers::ALT) => {
+            app.set_tool(Tool::Rectangle)
+        }
         KeyCode::Char('b') if !key.modifiers.contains(KeyModifiers::ALT) => {
             app.set_tool(Tool::DoubleBox)
         }
-        KeyCode::Char('d') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Char('d')
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT) =>
+        {
             app.set_tool(Tool::Diamond)
         }
-        KeyCode::Char('e') => app.set_tool(Tool::Ellipse),
+        KeyCode::Char('e') if !key.modifiers.contains(KeyModifiers::ALT) => {
+            app.set_tool(Tool::Ellipse)
+        }
 
         // Line style cycling (c and C are now popup triggers for brush/color)
         KeyCode::Char('v') if !key.modifiers.contains(KeyModifiers::ALT) => app.cycle_line_style(),
@@ -719,7 +732,9 @@ fn handle_normal_mode(
         }
 
         // Layer shortcuts
-        KeyCode::Char('L') => app.toggle_layer_panel(),
+        KeyCode::Char('L') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.toggle_layer_panel()
+        }
         KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => app.create_layer(),
         KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.request_delete_layer()
@@ -849,7 +864,7 @@ fn handle_normal_mode(
         KeyCode::Char('N') => app.request_new_document(),
 
         // Recent files (capital R)
-        KeyCode::Char('R') => {
+        KeyCode::Char('R') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             if !app.recent_files.is_empty() {
                 app.mode = Mode::RecentFiles { selected: 0 };
             } else {
@@ -865,6 +880,28 @@ fn handle_normal_mode(
 
         // Help screen
         KeyCode::Char('?') | KeyCode::F(1) => app.open_help(),
+
+        // Keyboard shape creation (Alt+key or Ctrl+Shift+key)
+        // Alt+key for: d=Diamond, e=Ellipse, a=Arrow
+        // Ctrl+Shift+key for: R=Rectangle, L=Line, B=DoubleBox (avoids alignment conflicts)
+        KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.start_keyboard_shape_create(Tool::Rectangle)
+        }
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.start_keyboard_shape_create(Tool::Diamond)
+        }
+        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.start_keyboard_shape_create(Tool::Ellipse)
+        }
+        KeyCode::Char('L') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.start_keyboard_shape_create(Tool::Line)
+        }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.start_keyboard_shape_create(Tool::Arrow)
+        }
+        KeyCode::Char('B') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.start_keyboard_shape_create(Tool::DoubleBox)
+        }
 
         _ => {}
     }
@@ -1285,5 +1322,51 @@ fn handle_session_create_mode(app: &mut App, key: event::KeyEvent) {
             app.session_create_char(c);
         }
         _ => {}
+    }
+}
+
+fn handle_keyboard_shape_create_mode(app: &mut App, key: event::KeyEvent) {
+    use crate::app::KeyboardShapeField;
+
+    if let Mode::KeyboardShapeCreate {
+        width,
+        height,
+        focus,
+        ..
+    } = &mut app.mode
+    {
+        match key.code {
+            KeyCode::Esc => {
+                app.cancel_keyboard_shape();
+            }
+            KeyCode::Enter => {
+                app.commit_keyboard_shape();
+            }
+            KeyCode::Tab => {
+                // Toggle focus between width and height
+                *focus = match focus {
+                    KeyboardShapeField::Width => KeyboardShapeField::Height,
+                    KeyboardShapeField::Height => KeyboardShapeField::Width,
+                };
+            }
+            KeyCode::Backspace => {
+                let field = match focus {
+                    KeyboardShapeField::Width => width,
+                    KeyboardShapeField::Height => height,
+                };
+                field.pop();
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() || c == '-' => {
+                let field = match focus {
+                    KeyboardShapeField::Width => width,
+                    KeyboardShapeField::Height => height,
+                };
+                // Limit to reasonable length
+                if field.len() < 5 {
+                    field.push(c);
+                }
+            }
+            _ => {}
+        }
     }
 }

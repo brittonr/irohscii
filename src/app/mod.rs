@@ -173,6 +173,20 @@ pub enum Mode {
     SessionCreate {
         name: String,
     },
+    /// Keyboard-based shape creation with dimensions input
+    KeyboardShapeCreate {
+        tool: Tool,
+        width: String,
+        height: String,
+        focus: KeyboardShapeField,
+    },
+}
+
+/// Field focus for keyboard shape creation dialog
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyboardShapeField {
+    Width,
+    Height,
 }
 
 /// Kind of popup selection window
@@ -941,6 +955,231 @@ impl App {
     pub fn clear_hover_snap(&mut self) {
         self.hover_snap = None;
         self.hover_grid_snap = None;
+    }
+
+    /// Start keyboard-based shape creation for the given tool
+    pub fn start_keyboard_shape_create(&mut self, tool: Tool) {
+        // Only allow for tools that make sense with dimensions
+        match tool {
+            Tool::Rectangle
+            | Tool::DoubleBox
+            | Tool::Diamond
+            | Tool::Ellipse
+            | Tool::Triangle
+            | Tool::Parallelogram
+            | Tool::Hexagon
+            | Tool::Trapezoid
+            | Tool::RoundedRect
+            | Tool::Cylinder
+            | Tool::Cloud
+            | Tool::Star => {
+                self.mode = Mode::KeyboardShapeCreate {
+                    tool,
+                    width: "10".to_string(),
+                    height: "5".to_string(),
+                    focus: KeyboardShapeField::Width,
+                };
+            }
+            Tool::Line | Tool::Arrow => {
+                // Lines use length instead of width/height
+                self.mode = Mode::KeyboardShapeCreate {
+                    tool,
+                    width: "20".to_string(), // length
+                    height: "0".to_string(), // angle offset (0 = horizontal)
+                    focus: KeyboardShapeField::Width,
+                };
+            }
+            _ => {
+                self.set_warning("This tool doesn't support keyboard creation");
+            }
+        }
+    }
+
+    /// Commit keyboard shape creation - create the shape at viewport center
+    pub fn commit_keyboard_shape(&mut self) {
+        // Extract values from mode to avoid borrow issues
+        let (tool, w, h) = if let Mode::KeyboardShapeCreate {
+            tool,
+            width,
+            height,
+            ..
+        } = &self.mode
+        {
+            let w: i32 = width.parse().unwrap_or(10);
+            let h: i32 = height.parse().unwrap_or(5);
+            (*tool, w, h)
+        } else {
+            return;
+        };
+
+        if w <= 0 || h < 0 {
+            self.set_error("Invalid dimensions");
+            return;
+        }
+
+        // Calculate center of viewport
+        let center_x = self.viewport.offset_x + (self.viewport.width as i32 / 2);
+        let center_y = self.viewport.offset_y + (self.viewport.height as i32 / 2);
+
+        self.save_undo_state();
+
+        let shape = match tool {
+            Tool::Line | Tool::Arrow => {
+                // w = length, h = vertical offset
+                let start = Position::new(center_x - w / 2, center_y);
+                let end = Position::new(center_x + w / 2, center_y + h);
+                if tool == Tool::Arrow {
+                    ShapeKind::Arrow {
+                        start,
+                        end,
+                        style: self.line_style,
+                        start_connection: None,
+                        end_connection: None,
+                        label: None,
+                        color: self.current_color,
+                    }
+                } else {
+                    ShapeKind::Line {
+                        start,
+                        end,
+                        style: self.line_style,
+                        start_connection: None,
+                        end_connection: None,
+                        label: None,
+                        color: self.current_color,
+                    }
+                }
+            }
+            Tool::Rectangle => {
+                let start = Position::new(center_x - w / 2, center_y - h / 2);
+                let end = Position::new(center_x + w / 2, center_y + h / 2);
+                ShapeKind::Rectangle {
+                    start,
+                    end,
+                    label: None,
+                    color: self.current_color,
+                }
+            }
+            Tool::DoubleBox => {
+                let start = Position::new(center_x - w / 2, center_y - h / 2);
+                let end = Position::new(center_x + w / 2, center_y + h / 2);
+                ShapeKind::DoubleBox {
+                    start,
+                    end,
+                    label: None,
+                    color: self.current_color,
+                }
+            }
+            Tool::Diamond => ShapeKind::Diamond {
+                center: Position::new(center_x, center_y),
+                half_width: w / 2,
+                half_height: h / 2,
+                label: None,
+                color: self.current_color,
+            },
+            Tool::Ellipse => ShapeKind::Ellipse {
+                center: Position::new(center_x, center_y),
+                radius_x: w / 2,
+                radius_y: h / 2,
+                label: None,
+                color: self.current_color,
+            },
+            Tool::Triangle => {
+                // Create isoceles triangle
+                let p1 = Position::new(center_x, center_y - h / 2); // top
+                let p2 = Position::new(center_x - w / 2, center_y + h / 2); // bottom left
+                let p3 = Position::new(center_x + w / 2, center_y + h / 2); // bottom right
+                ShapeKind::Triangle {
+                    p1,
+                    p2,
+                    p3,
+                    label: None,
+                    color: self.current_color,
+                }
+            }
+            Tool::Parallelogram => {
+                let start = Position::new(center_x - w / 2, center_y - h / 2);
+                let end = Position::new(center_x + w / 2, center_y + h / 2);
+                ShapeKind::Parallelogram {
+                    start,
+                    end,
+                    label: None,
+                    color: self.current_color,
+                }
+            }
+            Tool::Hexagon => ShapeKind::Hexagon {
+                center: Position::new(center_x, center_y),
+                radius_x: w / 2,
+                radius_y: h / 2,
+                label: None,
+                color: self.current_color,
+            },
+            Tool::Trapezoid => {
+                let start = Position::new(center_x - w / 2, center_y - h / 2);
+                let end = Position::new(center_x + w / 2, center_y + h / 2);
+                ShapeKind::Trapezoid {
+                    start,
+                    end,
+                    label: None,
+                    color: self.current_color,
+                }
+            }
+            Tool::RoundedRect => {
+                let start = Position::new(center_x - w / 2, center_y - h / 2);
+                let end = Position::new(center_x + w / 2, center_y + h / 2);
+                ShapeKind::RoundedRect {
+                    start,
+                    end,
+                    label: None,
+                    color: self.current_color,
+                }
+            }
+            Tool::Cylinder => {
+                let start = Position::new(center_x - w / 2, center_y - h / 2);
+                let end = Position::new(center_x + w / 2, center_y + h / 2);
+                ShapeKind::Cylinder {
+                    start,
+                    end,
+                    label: None,
+                    color: self.current_color,
+                }
+            }
+            Tool::Cloud => {
+                let start = Position::new(center_x - w / 2, center_y - h / 2);
+                let end = Position::new(center_x + w / 2, center_y + h / 2);
+                ShapeKind::Cloud {
+                    start,
+                    end,
+                    label: None,
+                    color: self.current_color,
+                }
+            }
+            Tool::Star => ShapeKind::Star {
+                center: Position::new(center_x, center_y),
+                outer_radius: w / 2,
+                inner_radius: h / 2,
+                label: None,
+                color: self.current_color,
+            },
+            _ => {
+                self.mode = Mode::Normal;
+                return;
+            }
+        };
+
+        if self.add_shape_to_active_layer(shape).is_ok() {
+            self.rebuild_view();
+            self.doc.mark_dirty();
+            self.set_status(format!("Created {} ({}x{})", tool.name(), w, h));
+        }
+        self.mode = Mode::Normal;
+    }
+
+    /// Cancel keyboard shape creation
+    pub fn cancel_keyboard_shape(&mut self) {
+        if matches!(self.mode, Mode::KeyboardShapeCreate { .. }) {
+            self.mode = Mode::Normal;
+        }
     }
 
     // ========== Selection Methods ==========
