@@ -128,10 +128,19 @@ pub fn start_sync_thread(config: SyncConfig) -> Result<SyncHandle> {
     let (endpoint_id_tx, endpoint_id_rx) = std_mpsc::channel();
 
     let thread = thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
+        let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .expect("Failed to create tokio runtime");
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                let _ = event_tx.send(SyncEvent::Error(format!(
+                    "Failed to create tokio runtime: {}",
+                    e
+                )));
+                return;
+            }
+        };
 
         rt.block_on(async move {
             if let Err(e) = run_sync(config, event_tx.clone(), command_rx, endpoint_id_tx).await {
@@ -196,9 +205,10 @@ async fn run_sync(
     let ticket_string = encode_ticket(&addr);
 
     // Derive our local peer ID from the endpoint's public key
+    // SAFETY: iroh::base::PublicKey is always exactly 32 bytes by type invariant
     let public_key = endpoint.id();
-    let local_peer_id =
-        PeerId::from_bytes(public_key.as_bytes()).expect("PublicKey should be 32 bytes");
+    let local_peer_id = PeerId::from_bytes(public_key.as_bytes())
+        .ok_or_else(|| anyhow::anyhow!("PublicKey must be 32 bytes"))?;
 
     // Send our ticket string back to main thread
     let _ = endpoint_id_tx.send(ticket_string.clone());
