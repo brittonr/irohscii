@@ -1978,6 +1978,7 @@ fn line_style_to_str(style: LineStyle) -> &'static str {
         LineStyle::Straight => "Straight",
         LineStyle::OrthogonalHV => "OrthogonalHV",
         LineStyle::OrthogonalVH => "OrthogonalVH",
+        LineStyle::OrthogonalAuto => "OrthogonalAuto",
     }
 }
 
@@ -1986,6 +1987,7 @@ fn str_to_line_style(s: &str) -> LineStyle {
         "Straight" => LineStyle::Straight,
         "OrthogonalHV" => LineStyle::OrthogonalHV,
         "OrthogonalVH" => LineStyle::OrthogonalVH,
+        "OrthogonalAuto" => LineStyle::OrthogonalAuto,
         _ => LineStyle::default(),
     }
 }

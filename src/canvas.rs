@@ -23,6 +23,8 @@ pub enum LineStyle {
     OrthogonalHV,
     /// Orthogonal: vertical first, then horizontal
     OrthogonalVH,
+    /// Auto-routed orthogonal line that avoids obstacles
+    OrthogonalAuto,
 }
 
 impl LineStyle {
@@ -31,7 +33,8 @@ impl LineStyle {
         match self {
             LineStyle::Straight => LineStyle::OrthogonalHV,
             LineStyle::OrthogonalHV => LineStyle::OrthogonalVH,
-            LineStyle::OrthogonalVH => LineStyle::Straight,
+            LineStyle::OrthogonalVH => LineStyle::OrthogonalAuto,
+            LineStyle::OrthogonalAuto => LineStyle::Straight,
         }
     }
 
@@ -40,6 +43,7 @@ impl LineStyle {
             LineStyle::Straight => "Straight",
             LineStyle::OrthogonalHV => "Ortho H→V",
             LineStyle::OrthogonalVH => "Ortho V→H",
+            LineStyle::OrthogonalAuto => "Auto Route",
         }
     }
 }
@@ -90,7 +94,106 @@ pub fn line_points_styled(from: Position, to: Position, style: LineStyle) -> Vec
         LineStyle::Straight => straight_line_points(from, to),
         LineStyle::OrthogonalHV => orthogonal_line_points(from, to, true),
         LineStyle::OrthogonalVH => orthogonal_line_points(from, to, false),
+        // OrthogonalAuto falls back to HV when no obstacles - actual routing done elsewhere
+        LineStyle::OrthogonalAuto => orthogonal_line_points(from, to, true),
     }
+}
+
+/// Generate auto-routed line points that avoid obstacles
+/// Returns points for an orthogonal path that doesn't intersect any obstacle
+pub fn line_points_auto_routed(
+    from: Position,
+    to: Position,
+    obstacles: &[(i32, i32, i32, i32)], // (min_x, min_y, max_x, max_y) for each obstacle
+) -> Vec<(Position, char)> {
+    // Try horizontal-then-vertical first
+    let hv_path = orthogonal_line_points(from, to, true);
+    if !path_intersects_obstacles(&hv_path, obstacles) {
+        return hv_path;
+    }
+
+    // Try vertical-then-horizontal
+    let vh_path = orthogonal_line_points(from, to, false);
+    if !path_intersects_obstacles(&vh_path, obstacles) {
+        return vh_path;
+    }
+
+    // Both blocked - try routing around with a waypoint
+    // Find the blocking obstacle and route around it
+    if let Some(waypoint) = find_routing_waypoint(from, to, obstacles) {
+        let mut path = Vec::new();
+        // Route: from -> waypoint -> to
+        path.extend(orthogonal_line_points(from, waypoint, true));
+        // Remove duplicate corner point
+        if !path.is_empty() {
+            path.pop();
+        }
+        path.extend(orthogonal_line_points(waypoint, to, true));
+        return path;
+    }
+
+    // Fallback to HV if no good route found
+    hv_path
+}
+
+/// Check if a path intersects any obstacles
+fn path_intersects_obstacles(path: &[(Position, char)], obstacles: &[(i32, i32, i32, i32)]) -> bool {
+    for (pos, _) in path {
+        for &(min_x, min_y, max_x, max_y) in obstacles {
+            // Check if point is inside obstacle (with 1 cell margin)
+            if pos.x > min_x && pos.x < max_x && pos.y > min_y && pos.y < max_y {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Find a waypoint to route around obstacles
+fn find_routing_waypoint(
+    from: Position,
+    to: Position,
+    obstacles: &[(i32, i32, i32, i32)],
+) -> Option<Position> {
+    // Find the first blocking obstacle
+    let hv_path = orthogonal_line_points(from, to, true);
+    let blocking_obstacle = obstacles.iter().find(|&&(min_x, min_y, max_x, max_y)| {
+        hv_path
+            .iter()
+            .any(|(pos, _)| pos.x > min_x && pos.x < max_x && pos.y > min_y && pos.y < max_y)
+    })?;
+
+    let (min_x, min_y, max_x, max_y) = *blocking_obstacle;
+
+    // Try routing around each side of the obstacle
+    let margin = 1;
+    let candidates = [
+        // Go above
+        Position::new(from.x, min_y - margin),
+        // Go below
+        Position::new(from.x, max_y + margin),
+        // Go left
+        Position::new(min_x - margin, from.y),
+        // Go right
+        Position::new(max_x + margin, from.y),
+    ];
+
+    // Find the candidate that creates the shortest total path
+    candidates
+        .into_iter()
+        .filter(|wp| {
+            // Check waypoint doesn't hit any obstacle
+            !obstacles.iter().any(|&(ox1, oy1, ox2, oy2)| {
+                wp.x >= ox1 && wp.x <= ox2 && wp.y >= oy1 && wp.y <= oy2
+            })
+        })
+        .min_by_key(|wp| {
+            // Manhattan distance through waypoint
+            (from.x - wp.x).abs()
+                + (from.y - wp.y).abs()
+                + (wp.x - to.x).abs()
+                + (wp.y - to.y).abs()
+        })
 }
 
 /// Generate a straight line with smart character selection
@@ -1350,7 +1453,8 @@ mod tests {
     fn line_style_cycle() {
         assert_eq!(LineStyle::Straight.next(), LineStyle::OrthogonalHV);
         assert_eq!(LineStyle::OrthogonalHV.next(), LineStyle::OrthogonalVH);
-        assert_eq!(LineStyle::OrthogonalVH.next(), LineStyle::Straight);
+        assert_eq!(LineStyle::OrthogonalVH.next(), LineStyle::OrthogonalAuto);
+        assert_eq!(LineStyle::OrthogonalAuto.next(), LineStyle::Straight);
     }
 
     #[test]
@@ -1363,6 +1467,7 @@ mod tests {
         assert_eq!(LineStyle::Straight.name(), "Straight");
         assert_eq!(LineStyle::OrthogonalHV.name(), "Ortho H→V");
         assert_eq!(LineStyle::OrthogonalVH.name(), "Ortho V→H");
+        assert_eq!(LineStyle::OrthogonalAuto.name(), "Auto Route");
     }
 
     // ========== line_points_styled tests ==========

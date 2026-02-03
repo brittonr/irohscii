@@ -356,6 +356,16 @@ fn render_line(
             )
             .unwrap();
         }
+        LineStyle::OrthogonalAuto => {
+            // For SVG export, treat auto as horizontal-first (actual routing done at render time)
+            let path = format!("M {} {} L {} {} L {} {}", x1, y1, x2, y1, x2, y2);
+            writeln!(
+                output,
+                r#"  <path d="{}" stroke="{}" stroke-width="1" fill="none"{}/>"#,
+                path, color, marker
+            )
+            .unwrap();
+        }
     }
 }
 
