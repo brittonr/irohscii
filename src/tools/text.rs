@@ -7,7 +7,7 @@ pub fn handle_text_event(app: &mut App, event: MouseEvent) {
     match event.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             // If already in text input mode, commit current text first
-            if matches!(app.mode, Mode::TextInput { .. }) {
+            if matches!(app.mode, Mode::TextInput(_)) {
                 app.commit_text();
             }
             // Start new text input at click position

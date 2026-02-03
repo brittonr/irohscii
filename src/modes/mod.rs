@@ -304,6 +304,30 @@ impl Mode {
             _ => None,
         }
     }
+
+    /// Handle a key event and return the transition result.
+    ///
+    /// This dispatches to the appropriate mode handler based on the current mode.
+    pub fn handle_key(&mut self, app: &mut App, key: KeyEvent) -> ModeTransition {
+        let mut ctx = ModeContext { app };
+        match self {
+            Mode::Normal => {
+                let mut handler = NormalModeState;
+                handler.handle_key(&mut ctx, key)
+            }
+            Mode::TextInput(state) => state.handle_key(&mut ctx, key),
+            Mode::LabelInput(state) => state.handle_key(&mut ctx, key),
+            Mode::LayerRename(state) => state.handle_key(&mut ctx, key),
+            Mode::PathInput(state) => state.handle_key(&mut ctx, key),
+            Mode::RecentFiles(state) => state.handle_key(&mut ctx, key),
+            Mode::SelectionPopup(state) => state.handle_key(&mut ctx, key),
+            Mode::ConfirmDialog(state) => state.handle_key(&mut ctx, key),
+            Mode::HelpScreen(state) => state.handle_key(&mut ctx, key),
+            Mode::SessionBrowser(state) => state.handle_key(&mut ctx, key),
+            Mode::SessionCreate(state) => state.handle_key(&mut ctx, key),
+            Mode::KeyboardShapeCreate(state) => state.handle_key(&mut ctx, key),
+        }
+    }
 }
 
 // Convenience constructors for common mode transitions

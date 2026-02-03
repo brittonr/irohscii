@@ -10,6 +10,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ratatui::layout::Rect;
 
 use crate::canvas::{LineStyle, Position, Viewport};
+
+// Re-export Mode and state types from the modes module
+pub use crate::modes::{
+    ConfirmDialogState, HelpScreenState, KeyboardShapeState, LabelInputState, LayerRenameState,
+    Mode, ModeAction, ModeTransition, PathInputKind, PathInputState, RecentFilesState,
+    SelectionPopupState, SessionBrowserState, SessionCreateState, TextInputState,
+};
 use crate::document::{Document, GroupId, ShapeId, default_storage_path};
 use crate::layers::{Layer, LayerId};
 use crate::presence::{CursorActivity, PeerId, PeerPresence, PresenceManager, ToolKind};
@@ -116,70 +123,6 @@ impl Tool {
             Tool::Star => "Star",
         }
     }
-}
-
-/// Application mode
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Mode {
-    Normal,
-    TextInput {
-        start_pos: Position,
-        text: String,
-    },
-    LabelInput {
-        shape_id: ShapeId,
-        text: String,
-        cursor: usize,
-    },
-    LayerRename {
-        layer_id: LayerId,
-        text: String,
-    },
-    FileSave {
-        path: String,
-    },
-    FileOpen {
-        path: String,
-    },
-    DocSave {
-        path: String,
-    },
-    DocOpen {
-        path: String,
-    },
-    SvgExport {
-        path: String,
-    },
-    RecentFiles {
-        selected: usize,
-    },
-    SelectionPopup {
-        kind: PopupKind,
-        selected: usize,
-    },
-    ConfirmDialog {
-        action: PendingAction,
-    },
-    HelpScreen {
-        scroll: usize,
-    },
-    /// Session browser for switching between sessions
-    SessionBrowser {
-        selected: usize,
-        filter: String,
-        show_pinned_only: bool,
-    },
-    /// Create a new session
-    SessionCreate {
-        name: String,
-    },
-    /// Keyboard-based shape creation with dimensions input
-    KeyboardShapeCreate {
-        tool: Tool,
-        width: String,
-        height: String,
-        focus: KeyboardShapeField,
-    },
 }
 
 /// Field focus for keyboard shape creation dialog
@@ -472,9 +415,9 @@ impl App {
                 shape_id: resize_state.shape_id,
                 preview_bounds: resize_state.preview_bounds,
             }
-        } else if let Mode::TextInput { start_pos, .. } = &self.mode {
+        } else if let Mode::TextInput(state) = &self.mode {
             CursorActivity::Typing {
-                position: *start_pos,
+                position: state.start_pos,
             }
         } else if self.selected.len() == 1 {
             let id = *self.selected.iter().next().unwrap();
@@ -636,7 +579,7 @@ impl App {
     /// Switch to a different tool
     pub fn set_tool(&mut self, tool: Tool) {
         // If we're in text input mode, commit the text first
-        if let Mode::TextInput { .. } = &self.mode {
+        if let Mode::TextInput(_) = &self.mode {
             self.commit_text();
         }
         // Cancel any shape/drag/resize in progress
@@ -652,9 +595,9 @@ impl App {
     /// Commit current text input as a shape
     pub fn commit_text(&mut self) {
         // Extract values before borrowing self mutably
-        let text_data = if let Mode::TextInput { start_pos, text } = &self.mode {
-            if !text.is_empty() {
-                Some((*start_pos, text.clone()))
+        let text_data = if let Mode::TextInput(state) = &self.mode {
+            if !state.text.is_empty() {
+                Some((state.start_pos, state.text.clone()))
             } else {
                 None
             }
@@ -973,21 +916,21 @@ impl App {
             | Tool::Cylinder
             | Tool::Cloud
             | Tool::Star => {
-                self.mode = Mode::KeyboardShapeCreate {
+                self.mode = Mode::KeyboardShapeCreate(KeyboardShapeState {
                     tool,
                     width: "10".to_string(),
                     height: "5".to_string(),
                     focus: KeyboardShapeField::Width,
-                };
+                });
             }
             Tool::Line | Tool::Arrow => {
                 // Lines use length instead of width/height
-                self.mode = Mode::KeyboardShapeCreate {
+                self.mode = Mode::KeyboardShapeCreate(KeyboardShapeState {
                     tool,
                     width: "20".to_string(), // length
                     height: "0".to_string(), // angle offset (0 = horizontal)
                     focus: KeyboardShapeField::Width,
-                };
+                });
             }
             _ => {
                 self.set_warning("This tool doesn't support keyboard creation");
@@ -998,16 +941,10 @@ impl App {
     /// Commit keyboard shape creation - create the shape at viewport center
     pub fn commit_keyboard_shape(&mut self) {
         // Extract values from mode to avoid borrow issues
-        let (tool, w, h) = if let Mode::KeyboardShapeCreate {
-            tool,
-            width,
-            height,
-            ..
-        } = &self.mode
-        {
-            let w: i32 = width.parse().unwrap_or(10);
-            let h: i32 = height.parse().unwrap_or(5);
-            (*tool, w, h)
+        let (tool, w, h) = if let Mode::KeyboardShapeCreate(state) = &self.mode {
+            let w: i32 = state.width.parse().unwrap_or(10);
+            let h: i32 = state.height.parse().unwrap_or(5);
+            (state.tool, w, h)
         } else {
             return;
         };
@@ -1177,7 +1114,7 @@ impl App {
 
     /// Cancel keyboard shape creation
     pub fn cancel_keyboard_shape(&mut self) {
-        if matches!(self.mode, Mode::KeyboardShapeCreate { .. }) {
+        if matches!(self.mode, Mode::KeyboardShapeCreate(_)) {
             self.mode = Mode::Normal;
         }
     }
@@ -1584,33 +1521,33 @@ impl App {
     pub fn start_layer_rename(&mut self) {
         if let Some(layer_id) = self.active_layer {
             if let Ok(Some(layer)) = self.doc.read_layer(layer_id) {
-                self.mode = Mode::LayerRename {
+                self.mode = Mode::LayerRename(LayerRenameState {
                     layer_id,
                     text: layer.name.clone(),
-                };
+                });
             }
         }
     }
 
     /// Add a character to layer rename input
     pub fn add_layer_rename_char(&mut self, ch: char) {
-        if let Mode::LayerRename { text, .. } = &mut self.mode {
-            text.push(ch);
+        if let Mode::LayerRename(state) = &mut self.mode {
+            state.text.push(ch);
         }
     }
 
     /// Remove last character from layer rename input
     pub fn backspace_layer_rename(&mut self) {
-        if let Mode::LayerRename { text, .. } = &mut self.mode {
-            text.pop();
+        if let Mode::LayerRename(state) = &mut self.mode {
+            state.text.pop();
         }
     }
 
     /// Commit layer rename
     pub fn commit_layer_rename(&mut self) {
-        let rename_data = if let Mode::LayerRename { layer_id, text } = &self.mode {
-            if !text.is_empty() {
-                Some((*layer_id, text.clone()))
+        let rename_data = if let Mode::LayerRename(state) = &self.mode {
+            if !state.text.is_empty() {
+                Some((state.layer_id, state.text.clone()))
             } else {
                 None
             }
@@ -2085,23 +2022,23 @@ impl App {
 
     /// Start text input at a position
     pub fn start_text_input(&mut self, pos: Position) {
-        self.mode = Mode::TextInput {
+        self.mode = Mode::TextInput(TextInputState {
             start_pos: pos,
             text: String::new(),
-        };
+        });
     }
 
     /// Add a character to current text input
     pub fn add_text_char(&mut self, ch: char) {
-        if let Mode::TextInput { text, .. } = &mut self.mode {
-            text.push(ch);
+        if let Mode::TextInput(state) = &mut self.mode {
+            state.text.push(ch);
         }
     }
 
     /// Remove last character from text input
     pub fn backspace_text(&mut self) {
-        if let Mode::TextInput { text, .. } = &mut self.mode {
-            text.pop();
+        if let Mode::TextInput(state) = &mut self.mode {
+            state.text.pop();
         }
     }
 
@@ -2112,14 +2049,18 @@ impl App {
             .as_ref()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "drawing.txt".to_string());
-        self.mode = Mode::FileSave { path: initial_path };
+        self.mode = Mode::PathInput(PathInputState {
+            path: initial_path,
+            kind: PathInputKind::FileSave,
+        });
     }
 
     /// Enter file open mode
     pub fn start_open(&mut self) {
-        self.mode = Mode::FileOpen {
+        self.mode = Mode::PathInput(PathInputState {
             path: String::new(),
-        };
+            kind: PathInputKind::FileOpen,
+        });
     }
 
     /// Enter SVG export mode
@@ -2133,7 +2074,10 @@ impl App {
                 path.to_string_lossy().to_string()
             })
             .unwrap_or_else(|| "drawing.svg".to_string());
-        self.mode = Mode::SvgExport { path: initial_path };
+        self.mode = Mode::PathInput(PathInputState {
+            path: initial_path,
+            kind: PathInputKind::SvgExport,
+        });
     }
 
     /// Enter document save mode (saves full .automerge document)
@@ -2143,52 +2087,38 @@ impl App {
             .storage_path()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "document.automerge".to_string());
-        self.mode = Mode::DocSave { path: initial_path };
+        self.mode = Mode::PathInput(PathInputState {
+            path: initial_path,
+            kind: PathInputKind::DocSave,
+        });
     }
 
     /// Enter document open mode (opens .automerge document)
     pub fn start_doc_open(&mut self) {
-        self.mode = Mode::DocOpen {
+        self.mode = Mode::PathInput(PathInputState {
             path: String::new(),
-        };
+            kind: PathInputKind::DocOpen,
+        });
     }
 
     /// Add character to current path input
     pub fn add_path_char(&mut self, ch: char) {
-        match &mut self.mode {
-            Mode::FileSave { path }
-            | Mode::FileOpen { path }
-            | Mode::DocSave { path }
-            | Mode::DocOpen { path }
-            | Mode::SvgExport { path } => {
-                path.push(ch);
-            }
-            _ => {}
+        if let Mode::PathInput(state) = &mut self.mode {
+            state.path.push(ch);
         }
     }
 
     /// Remove last character from path input
     pub fn backspace_path(&mut self) {
-        match &mut self.mode {
-            Mode::FileSave { path }
-            | Mode::FileOpen { path }
-            | Mode::DocSave { path }
-            | Mode::DocOpen { path }
-            | Mode::SvgExport { path } => {
-                path.pop();
-            }
-            _ => {}
+        if let Mode::PathInput(state) = &mut self.mode {
+            state.path.pop();
         }
     }
 
     /// Tab completion for file paths
     pub fn complete_path(&mut self) {
         let current_path = match &self.mode {
-            Mode::FileSave { path }
-            | Mode::FileOpen { path }
-            | Mode::DocSave { path }
-            | Mode::DocOpen { path }
-            | Mode::SvgExport { path } => path.clone(),
+            Mode::PathInput(state) => state.path.clone(),
             _ => return,
         };
 
@@ -2268,15 +2198,8 @@ impl App {
         };
 
         // Update the path in the current mode
-        match &mut self.mode {
-            Mode::FileSave { path }
-            | Mode::FileOpen { path }
-            | Mode::DocSave { path }
-            | Mode::DocOpen { path }
-            | Mode::SvgExport { path } => {
-                *path = new_path;
-            }
-            _ => {}
+        if let Mode::PathInput(state) = &mut self.mode {
+            state.path = new_path;
         }
     }
 
@@ -2294,11 +2217,11 @@ impl App {
                 if shape.supports_label() {
                     let existing_label = shape.label().unwrap_or("").to_string();
                     let cursor = existing_label.chars().count();
-                    self.mode = Mode::LabelInput {
+                    self.mode = Mode::LabelInput(LabelInputState {
                         shape_id: id,
                         text: existing_label,
                         cursor,
-                    };
+                    });
                     return true;
                 }
             }
@@ -2308,70 +2231,70 @@ impl App {
 
     /// Add a character to current label input at cursor position
     pub fn add_label_char(&mut self, ch: char) {
-        if let Mode::LabelInput { text, cursor, .. } = &mut self.mode {
+        if let Mode::LabelInput(state) = &mut self.mode {
             // Convert to Vec<char> for proper Unicode handling
-            let mut chars: Vec<char> = text.chars().collect();
-            if *cursor <= chars.len() {
-                chars.insert(*cursor, ch);
-                *text = chars.into_iter().collect();
-                *cursor += 1;
+            let mut chars: Vec<char> = state.text.chars().collect();
+            if state.cursor <= chars.len() {
+                chars.insert(state.cursor, ch);
+                state.text = chars.into_iter().collect();
+                state.cursor += 1;
             }
         }
     }
 
     /// Remove character before cursor in label input
     pub fn backspace_label(&mut self) {
-        if let Mode::LabelInput { text, cursor, .. } = &mut self.mode {
-            if *cursor > 0 {
-                let mut chars: Vec<char> = text.chars().collect();
-                chars.remove(*cursor - 1);
-                *text = chars.into_iter().collect();
-                *cursor -= 1;
+        if let Mode::LabelInput(state) = &mut self.mode {
+            if state.cursor > 0 {
+                let mut chars: Vec<char> = state.text.chars().collect();
+                chars.remove(state.cursor - 1);
+                state.text = chars.into_iter().collect();
+                state.cursor -= 1;
             }
         }
     }
 
     /// Move label cursor left
     pub fn move_label_cursor_left(&mut self) {
-        if let Mode::LabelInput { cursor, .. } = &mut self.mode {
-            if *cursor > 0 {
-                *cursor -= 1;
+        if let Mode::LabelInput(state) = &mut self.mode {
+            if state.cursor > 0 {
+                state.cursor -= 1;
             }
         }
     }
 
     /// Move label cursor right
     pub fn move_label_cursor_right(&mut self) {
-        if let Mode::LabelInput { text, cursor, .. } = &mut self.mode {
-            let len = text.chars().count();
-            if *cursor < len {
-                *cursor += 1;
+        if let Mode::LabelInput(state) = &mut self.mode {
+            let len = state.text.chars().count();
+            if state.cursor < len {
+                state.cursor += 1;
             }
         }
     }
 
     /// Move label cursor to start
     pub fn move_label_cursor_home(&mut self) {
-        if let Mode::LabelInput { cursor, .. } = &mut self.mode {
-            *cursor = 0;
+        if let Mode::LabelInput(state) = &mut self.mode {
+            state.cursor = 0;
         }
     }
 
     /// Move label cursor to end
     pub fn move_label_cursor_end(&mut self) {
-        if let Mode::LabelInput { text, cursor, .. } = &mut self.mode {
-            *cursor = text.chars().count();
+        if let Mode::LabelInput(state) = &mut self.mode {
+            state.cursor = state.text.chars().count();
         }
     }
 
     /// Delete character at cursor position (forward delete)
     pub fn delete_label_char(&mut self) {
-        if let Mode::LabelInput { text, cursor, .. } = &mut self.mode {
-            let chars: Vec<char> = text.chars().collect();
-            if *cursor < chars.len() {
+        if let Mode::LabelInput(state) = &mut self.mode {
+            let chars: Vec<char> = state.text.chars().collect();
+            if state.cursor < chars.len() {
                 let mut chars = chars;
-                chars.remove(*cursor);
-                *text = chars.into_iter().collect();
+                chars.remove(state.cursor);
+                state.text = chars.into_iter().collect();
             }
         }
     }
@@ -2379,13 +2302,13 @@ impl App {
     /// Commit the label to the shape
     pub fn commit_label(&mut self) {
         // Extract values before borrowing self mutably
-        let label_data = if let Mode::LabelInput { shape_id, text, .. } = &self.mode {
-            let label = if text.is_empty() {
+        let label_data = if let Mode::LabelInput(state) = &self.mode {
+            let label = if state.text.is_empty() {
                 None
             } else {
-                Some(text.clone())
+                Some(state.text.clone())
             };
-            Some((*shape_id, label))
+            Some((state.shape_id, label))
         } else {
             None
         };
@@ -2468,10 +2391,11 @@ impl App {
             .iter()
             .position(|&t| t == self.current_tool)
             .unwrap_or(0);
-        self.mode = Mode::SelectionPopup {
+        self.mode = Mode::SelectionPopup(SelectionPopupState {
             kind: PopupKind::Tool,
             selected,
-        };
+            trigger_key: None,
+        });
     }
 
     /// Open the color selection popup
@@ -2480,10 +2404,11 @@ impl App {
             .iter()
             .position(|&c| c == self.current_color)
             .unwrap_or(0);
-        self.mode = Mode::SelectionPopup {
+        self.mode = Mode::SelectionPopup(SelectionPopupState {
             kind: PopupKind::Color,
             selected,
-        };
+            trigger_key: None,
+        });
     }
 
     /// Open the brush character selection popup
@@ -2492,15 +2417,18 @@ impl App {
             .iter()
             .position(|&c| c == self.brush_char)
             .unwrap_or(0);
-        self.mode = Mode::SelectionPopup {
+        self.mode = Mode::SelectionPopup(SelectionPopupState {
             kind: PopupKind::Brush,
             selected,
-        };
+            trigger_key: None,
+        });
     }
 
     /// Confirm the current popup selection
     pub fn confirm_popup_selection(&mut self) {
-        if let Mode::SelectionPopup { kind, selected } = self.mode {
+        if let Mode::SelectionPopup(state) = &self.mode {
+            let kind = state.kind;
+            let selected = state.selected;
             match kind {
                 PopupKind::Tool => {
                     if let Some(&tool) = TOOLS.get(selected) {
@@ -2546,23 +2474,19 @@ impl App {
 
     /// Navigate within the popup selection grid
     pub fn popup_navigate(&mut self, dx: i32, dy: i32) {
-        if let Mode::SelectionPopup {
-            kind,
-            ref mut selected,
-        } = self.mode
-        {
-            let (cols, total) = match kind {
+        if let Mode::SelectionPopup(state) = &mut self.mode {
+            let (cols, total) = match state.kind {
                 PopupKind::Tool => (3, TOOLS.len()),    // 3x3 grid for 9 tools
                 PopupKind::Color => (4, COLORS.len()),  // 4x4 grid for 16 colors
                 PopupKind::Brush => (6, BRUSHES.len()), // 6 columns for brushes
             };
             let rows = (total + cols - 1) / cols;
-            let row = *selected / cols;
-            let col = *selected % cols;
+            let row = state.selected / cols;
+            let col = state.selected % cols;
             let new_col = (col as i32 + dx).clamp(0, cols as i32 - 1) as usize;
             let new_row = (row as i32 + dy).clamp(0, rows as i32 - 1) as usize;
             let new_selected = new_row * cols + new_col;
-            *selected = new_selected.min(total - 1);
+            state.selected = new_selected.min(total - 1);
         }
     }
 
@@ -2642,18 +2566,18 @@ impl App {
     /// Request to delete the active layer (shows confirmation dialog)
     pub fn request_delete_layer(&mut self) {
         if let Some(layer_id) = self.active_layer {
-            self.mode = Mode::ConfirmDialog {
+            self.mode = Mode::ConfirmDialog(ConfirmDialogState {
                 action: PendingAction::DeleteLayer(layer_id),
-            };
+            });
         }
     }
 
     /// Request a new document (shows confirmation if dirty)
     pub fn request_new_document(&mut self) {
         if self.is_dirty() {
-            self.mode = Mode::ConfirmDialog {
+            self.mode = Mode::ConfirmDialog(ConfirmDialogState {
                 action: PendingAction::NewDocument,
-            };
+            });
         } else {
             // Not dirty, just create new document directly
             self.new_document();
@@ -2662,8 +2586,8 @@ impl App {
 
     /// Confirm and execute the pending action
     pub fn confirm_pending_action(&mut self) {
-        let action = if let Mode::ConfirmDialog { action } = &self.mode {
-            action.clone()
+        let action = if let Mode::ConfirmDialog(state) = &self.mode {
+            state.action.clone()
         } else {
             return;
         };
@@ -2696,7 +2620,7 @@ impl App {
 
     /// Open the help screen
     pub fn open_help(&mut self) {
-        self.mode = Mode::HelpScreen { scroll: 0 };
+        self.mode = Mode::HelpScreen(HelpScreenState { scroll: 0 });
     }
 
     /// Close the help screen
@@ -2706,11 +2630,11 @@ impl App {
 
     /// Scroll the help screen
     pub fn scroll_help(&mut self, delta: i32) {
-        if let Mode::HelpScreen { ref mut scroll } = self.mode {
+        if let Mode::HelpScreen(state) = &mut self.mode {
             if delta < 0 {
-                *scroll = scroll.saturating_sub((-delta) as usize);
+                state.scroll = state.scroll.saturating_sub((-delta) as usize);
             } else {
-                *scroll = scroll.saturating_add(delta as usize);
+                state.scroll = state.scroll.saturating_add(delta as usize);
             }
         }
     }
@@ -2720,11 +2644,11 @@ impl App {
     /// Open the session browser
     pub fn open_session_browser(&mut self, sessions: Vec<crate::session::SessionMeta>) {
         self.session_list = sessions;
-        self.mode = Mode::SessionBrowser {
+        self.mode = Mode::SessionBrowser(SessionBrowserState {
             selected: 0,
             filter: String::new(),
             show_pinned_only: false,
-        };
+        });
     }
 
     /// Close the session browser
@@ -2735,13 +2659,8 @@ impl App {
     /// Navigate in session browser
     pub fn session_browser_navigate(&mut self, delta: i32) {
         // Extract values to avoid borrow checker issues
-        let (filter, show_pinned_only) = if let Mode::SessionBrowser {
-            ref filter,
-            show_pinned_only,
-            ..
-        } = self.mode
-        {
-            (filter.clone(), show_pinned_only)
+        let (filter, show_pinned_only) = if let Mode::SessionBrowser(state) = &self.mode {
+            (state.filter.clone(), state.show_pinned_only)
         } else {
             return;
         };
@@ -2751,54 +2670,36 @@ impl App {
             return;
         }
 
-        if let Mode::SessionBrowser {
-            ref mut selected, ..
-        } = self.mode
-        {
+        if let Mode::SessionBrowser(state) = &mut self.mode {
             if delta < 0 {
-                *selected = selected.saturating_sub((-delta) as usize);
+                state.selected = state.selected.saturating_sub((-delta) as usize);
             } else {
-                *selected = (*selected + delta as usize).min(len - 1);
+                state.selected = (state.selected + delta as usize).min(len - 1);
             }
         }
     }
 
     /// Add character to session browser filter
     pub fn session_browser_filter_char(&mut self, ch: char) {
-        if let Mode::SessionBrowser {
-            ref mut filter,
-            ref mut selected,
-            ..
-        } = self.mode
-        {
-            filter.push(ch);
-            *selected = 0; // Reset selection when filter changes
+        if let Mode::SessionBrowser(state) = &mut self.mode {
+            state.filter.push(ch);
+            state.selected = 0; // Reset selection when filter changes
         }
     }
 
     /// Remove character from session browser filter
     pub fn session_browser_filter_backspace(&mut self) {
-        if let Mode::SessionBrowser {
-            ref mut filter,
-            ref mut selected,
-            ..
-        } = self.mode
-        {
-            filter.pop();
-            *selected = 0;
+        if let Mode::SessionBrowser(state) = &mut self.mode {
+            state.filter.pop();
+            state.selected = 0;
         }
     }
 
     /// Toggle pinned-only filter in session browser
     pub fn session_browser_toggle_pinned(&mut self) {
-        if let Mode::SessionBrowser {
-            ref mut show_pinned_only,
-            ref mut selected,
-            ..
-        } = self.mode
-        {
-            *show_pinned_only = !*show_pinned_only;
-            *selected = 0;
+        if let Mode::SessionBrowser(state) = &mut self.mode {
+            state.show_pinned_only = !state.show_pinned_only;
+            state.selected = 0;
         }
     }
 
@@ -2830,14 +2731,9 @@ impl App {
 
     /// Select the current session in browser
     pub fn session_browser_select(&mut self) {
-        if let Mode::SessionBrowser {
-            selected,
-            ref filter,
-            show_pinned_only,
-        } = self.mode
-        {
-            let filtered = self.get_filtered_sessions(filter, show_pinned_only);
-            if let Some(session) = filtered.get(selected) {
+        if let Mode::SessionBrowser(state) = &self.mode {
+            let filtered = self.get_filtered_sessions(&state.filter, state.show_pinned_only);
+            if let Some(session) = filtered.get(state.selected) {
                 self.session_to_switch = Some(session.id.clone());
             }
         }
@@ -2846,36 +2742,26 @@ impl App {
 
     /// Request to delete selected session (shows confirm dialog)
     pub fn session_browser_request_delete(&mut self) {
-        if let Mode::SessionBrowser {
-            selected,
-            ref filter,
-            show_pinned_only,
-        } = self.mode
-        {
-            let filtered = self.get_filtered_sessions(filter, show_pinned_only);
-            if let Some(session) = filtered.get(selected) {
+        if let Mode::SessionBrowser(state) = &self.mode {
+            let filtered = self.get_filtered_sessions(&state.filter, state.show_pinned_only);
+            if let Some(session) = filtered.get(state.selected) {
                 // Don't allow deleting current session
                 if self.current_session.as_ref() == Some(&session.id) {
                     self.set_error("Cannot delete the active session");
                     return;
                 }
-                self.mode = Mode::ConfirmDialog {
+                self.mode = Mode::ConfirmDialog(ConfirmDialogState {
                     action: PendingAction::DeleteSession(session.id.0.clone()),
-                };
+                });
             }
         }
     }
 
     /// Toggle pinned status of selected session
     pub fn session_browser_toggle_pin(&mut self) -> Option<crate::session::SessionId> {
-        if let Mode::SessionBrowser {
-            selected,
-            ref filter,
-            show_pinned_only,
-        } = self.mode
-        {
-            let filtered = self.get_filtered_sessions(filter, show_pinned_only);
-            if let Some(session) = filtered.get(selected) {
+        if let Mode::SessionBrowser(state) = &self.mode {
+            let filtered = self.get_filtered_sessions(&state.filter, state.show_pinned_only);
+            if let Some(session) = filtered.get(state.selected) {
                 return Some(session.id.clone());
             }
         }
@@ -2887,55 +2773,47 @@ impl App {
         self.session_list = sessions;
         // Clamp selection to valid bounds
         // Extract filter values first to avoid borrow checker issues
-        let (filter, show_pinned_only) = if let Mode::SessionBrowser {
-            ref filter,
-            show_pinned_only,
-            ..
-        } = self.mode
-        {
-            (filter.clone(), show_pinned_only)
+        let (filter, show_pinned_only) = if let Mode::SessionBrowser(state) = &self.mode {
+            (state.filter.clone(), state.show_pinned_only)
         } else {
             return;
         };
 
         let filtered_len = self.get_filtered_sessions(&filter, show_pinned_only).len();
-        if let Mode::SessionBrowser {
-            ref mut selected, ..
-        } = self.mode
-        {
+        if let Mode::SessionBrowser(state) = &mut self.mode {
             if filtered_len == 0 {
-                *selected = 0;
+                state.selected = 0;
             } else {
-                *selected = (*selected).min(filtered_len - 1);
+                state.selected = state.selected.min(filtered_len - 1);
             }
         }
     }
 
     /// Open session create dialog
     pub fn open_session_create(&mut self) {
-        self.mode = Mode::SessionCreate {
+        self.mode = Mode::SessionCreate(SessionCreateState {
             name: String::new(),
-        };
+        });
     }
 
     /// Add character to session create name
     pub fn session_create_char(&mut self, ch: char) {
-        if let Mode::SessionCreate { ref mut name } = self.mode {
-            name.push(ch);
+        if let Mode::SessionCreate(state) = &mut self.mode {
+            state.name.push(ch);
         }
     }
 
     /// Remove character from session create name
     pub fn session_create_backspace(&mut self) {
-        if let Mode::SessionCreate { ref mut name } = self.mode {
-            name.pop();
+        if let Mode::SessionCreate(state) = &mut self.mode {
+            state.name.pop();
         }
     }
 
     /// Confirm session creation
     pub fn session_create_confirm(&mut self) {
-        if let Mode::SessionCreate { ref name } = self.mode {
-            let trimmed = name.trim();
+        if let Mode::SessionCreate(state) = &self.mode {
+            let trimmed = state.name.trim();
             if trimmed.len() >= 2 {
                 self.session_to_create = Some(trimmed.to_string());
                 self.mode = Mode::Normal;
@@ -3406,8 +3284,8 @@ mod tests {
         assert!(matches!(app.mode, Mode::Normal));
 
         // Enter help screen mode
-        app.mode = Mode::HelpScreen { scroll: 0 };
-        assert!(matches!(app.mode, Mode::HelpScreen { .. }));
+        app.mode = Mode::HelpScreen(HelpScreenState { scroll: 0 });
+        assert!(matches!(app.mode, Mode::HelpScreen(_)));
 
         // Exit back to normal
         app.mode = Mode::Normal;

@@ -85,70 +85,46 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Render input overlay if in input mode
     match &app.mode {
-        Mode::TextInput { start_pos, text } => {
-            render_text_cursor(frame, app, start_pos, text, canvas_area);
+        Mode::TextInput(state) => {
+            render_text_cursor(frame, app, &state.start_pos, &state.text, canvas_area);
         }
-        Mode::LabelInput {
-            shape_id,
-            text,
-            cursor,
-        } => {
-            render_label_input(frame, app, *shape_id, text, *cursor, canvas_area);
+        Mode::LabelInput(state) => {
+            render_label_input(frame, app, state.shape_id, &state.text, state.cursor, canvas_area);
         }
-        Mode::FileSave { path } => {
-            render_file_input(frame, "Export ASCII to:", path, canvas_area);
+        Mode::PathInput(state) => {
+            let prompt = state.kind.prompt();
+            render_file_input(frame, prompt, &state.path, canvas_area);
         }
-        Mode::FileOpen { path } => {
-            render_file_input(frame, "Import ASCII from:", path, canvas_area);
+        Mode::RecentFiles(state) => {
+            render_recent_files_menu(frame, app, state.selected, canvas_area);
         }
-        Mode::DocSave { path } => {
-            render_file_input(frame, "Save document to:", path, canvas_area);
+        Mode::SelectionPopup(state) => {
+            render_selection_popup(frame, state.kind, state.selected, canvas_area);
         }
-        Mode::DocOpen { path } => {
-            render_file_input(frame, "Open document:", path, canvas_area);
+        Mode::ConfirmDialog(state) => {
+            render_confirm_dialog(frame, &state.action, canvas_area);
         }
-        Mode::SvgExport { path } => {
-            render_file_input(frame, "Export SVG:", path, canvas_area);
+        Mode::HelpScreen(state) => {
+            render_help_screen(frame, state.scroll, frame.area());
         }
-        Mode::RecentFiles { selected } => {
-            render_recent_files_menu(frame, app, *selected, canvas_area);
-        }
-        Mode::SelectionPopup { kind, selected } => {
-            render_selection_popup(frame, *kind, *selected, canvas_area);
-        }
-        Mode::ConfirmDialog { action } => {
-            render_confirm_dialog(frame, action, canvas_area);
-        }
-        Mode::HelpScreen { scroll } => {
-            render_help_screen(frame, *scroll, frame.area());
-        }
-        Mode::SessionBrowser {
-            selected,
-            filter,
-            show_pinned_only,
-        } => {
+        Mode::SessionBrowser(state) => {
             render_session_browser(
                 frame,
                 app,
-                *selected,
-                filter,
-                *show_pinned_only,
+                state.selected,
+                &state.filter,
+                state.show_pinned_only,
                 canvas_area,
             );
         }
-        Mode::SessionCreate { name } => {
-            render_session_create(frame, name, canvas_area);
+        Mode::SessionCreate(state) => {
+            render_session_create(frame, &state.name, canvas_area);
         }
-        Mode::KeyboardShapeCreate {
-            tool,
-            width,
-            height,
-            focus,
-        } => {
-            render_keyboard_shape_create(frame, *tool, width, height, *focus, canvas_area);
+        Mode::KeyboardShapeCreate(state) => {
+            render_keyboard_shape_create(frame, state.tool, &state.width, &state.height, state.focus, canvas_area);
         }
         Mode::Normal => {}
-        Mode::LayerRename { .. } => {} // Handled in layer panel
+        Mode::LayerRename(_) => {} // Handled in layer panel
     }
 }
 
@@ -1081,8 +1057,8 @@ fn render_layer_panel(frame: &mut Frame, app: &App, area: Rect) {
         .border_style(Style::default().fg(Color::DarkGray));
 
     // Check if we're renaming a layer
-    let renaming = if let Mode::LayerRename { layer_id, text } = &app.mode {
-        Some((*layer_id, text.as_str()))
+    let renaming = if let Mode::LayerRename(state) = &app.mode {
+        Some((state.layer_id, state.text.as_str()))
     } else {
         None
     };
@@ -1200,19 +1176,15 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             Tool::Text => ("TXT", Color::Green),
             _ => ("DRAW", Color::Yellow),
         },
-        Mode::TextInput { .. } | Mode::LabelInput { .. } | Mode::LayerRename { .. } => {
+        Mode::TextInput(_) | Mode::LabelInput(_) | Mode::LayerRename(_) => {
             ("INS", Color::Green)
         }
-        Mode::FileSave { .. }
-        | Mode::FileOpen { .. }
-        | Mode::DocSave { .. }
-        | Mode::DocOpen { .. }
-        | Mode::SvgExport { .. } => ("CMD", Color::Magenta),
-        Mode::RecentFiles { .. } | Mode::SelectionPopup { .. } => ("MENU", Color::Cyan),
-        Mode::ConfirmDialog { .. } => ("CONF", Color::Yellow),
-        Mode::HelpScreen { .. } => ("HELP", Color::Cyan),
-        Mode::SessionBrowser { .. } | Mode::SessionCreate { .. } => ("SESS", Color::Magenta),
-        Mode::KeyboardShapeCreate { .. } => ("CREATE", Color::Cyan),
+        Mode::PathInput(_) => ("CMD", Color::Magenta),
+        Mode::RecentFiles(_) | Mode::SelectionPopup(_) => ("MENU", Color::Cyan),
+        Mode::ConfirmDialog(_) => ("CONF", Color::Yellow),
+        Mode::HelpScreen(_) => ("HELP", Color::Cyan),
+        Mode::SessionBrowser(_) | Mode::SessionCreate(_) => ("SESS", Color::Magenta),
+        Mode::KeyboardShapeCreate(_) => ("CREATE", Color::Cyan),
     };
 
     let mode_style = Style::default()
@@ -1382,26 +1354,22 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
                 base_help
             }
         }
-        Mode::TextInput { .. } | Mode::LabelInput { .. } => {
+        Mode::TextInput(_) | Mode::LabelInput(_) => {
             "type text | [Enter] confirm [Esc] cancel [Backspace] delete"
         }
-        Mode::LayerRename { .. } => "type layer name | [Enter] confirm [Esc] cancel",
-        Mode::FileSave { .. }
-        | Mode::FileOpen { .. }
-        | Mode::DocSave { .. }
-        | Mode::DocOpen { .. }
-        | Mode::SvgExport { .. } => "type path | [Tab] complete [Enter] confirm [Esc] cancel",
-        Mode::RecentFiles { .. } => "[j/k] navigate [Enter] open [Esc] cancel",
-        Mode::SelectionPopup { .. } => {
+        Mode::LayerRename(_) => "type layer name | [Enter] confirm [Esc] cancel",
+        Mode::PathInput(_) => "type path | [Tab] complete [Enter] confirm [Esc] cancel",
+        Mode::RecentFiles(_) => "[j/k] navigate [Enter] open [Esc] cancel",
+        Mode::SelectionPopup(_) => {
             "[hjkl] navigate | release key or [Enter] to select | [Esc] cancel"
         }
-        Mode::ConfirmDialog { .. } => "[y] Yes [n] No | [Enter] confirm [Esc] cancel",
-        Mode::HelpScreen { .. } => "[j/k] scroll [Space] page down [Esc/q/?] close",
-        Mode::SessionBrowser { .. } => {
+        Mode::ConfirmDialog(_) => "[y] Yes [n] No | [Enter] confirm [Esc] cancel",
+        Mode::HelpScreen(_) => "[j/k] scroll [Space] page down [Esc/q/?] close",
+        Mode::SessionBrowser(_) => {
             "[j/k] navigate [n]ew [d]elete [p]in [*] pinned filter [Tab/Esc] close"
         }
-        Mode::SessionCreate { .. } => "type session name | [Enter] create [Esc] cancel",
-        Mode::KeyboardShapeCreate { .. } => {
+        Mode::SessionCreate(_) => "type session name | [Enter] create [Esc] cancel",
+        Mode::KeyboardShapeCreate(_) => {
             "[Tab] switch field | type dimensions | [Enter] create [Esc] cancel"
         }
     };

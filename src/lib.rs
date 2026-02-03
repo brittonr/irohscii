@@ -5,9 +5,9 @@
 // Re-export core types (shapes, document, layers)
 pub use irohscii_core as core;
 pub use irohscii_core::{
-    flip_horizontal, flip_vertical, resize_shape, rotate_90_ccw, rotate_90_cw, CachedShape,
-    Document, DocumentId, Group, GroupId, Layer, LayerId, LineStyle, Position, ResizeHandle,
-    ResizeHandleInfo, ShapeColor, ShapeId, ShapeKind, ShapeView, SnapPoint, Viewport,
+    CachedShape, Document, DocumentId, Group, GroupId, Layer, LayerId, LineStyle, Position,
+    ResizeHandle, ResizeHandleInfo, ShapeColor, ShapeId, ShapeKind, ShapeView, SnapPoint, Viewport,
+    flip_horizontal, flip_vertical, resize_shape, rotate_90_ccw, rotate_90_cw,
 };
 
 // Re-export geometry functions
@@ -22,9 +22,9 @@ pub use irohscii_geometry::{
 // Re-export sync types
 pub use irohscii_sync as sync;
 pub use irohscii_sync::{
-    decode_ticket, encode_ticket, peer_color, start_sync_thread, CursorActivity, PeerId,
-    PeerPresence, PresenceManager, PresenceMessage, SyncCommand, SyncConfig, SyncEvent,
-    SyncHandle, SyncMode, ToolKind, PEER_COLORS,
+    CursorActivity, PEER_COLORS, PeerId, PeerPresence, PresenceManager, PresenceMessage,
+    SyncCommand, SyncConfig, SyncEvent, SyncHandle, SyncMode, ToolKind, decode_ticket,
+    encode_ticket, peer_color, start_sync_thread,
 };
 
 // Re-export export functions
@@ -34,8 +34,7 @@ pub use irohscii_export::{export_svg, load_ascii, save_ascii, save_svg};
 // Re-export session management
 pub use irohscii_session as session;
 pub use irohscii_session::{
-    Collaborator, SessionId, SessionManager, SessionMeta, SessionRegistry, TicketInfo,
-    UndoManager,
+    Collaborator, SessionId, SessionManager, SessionMeta, SessionRegistry, TicketInfo, UndoManager,
 };
 
 // Legacy module aliases for backwards compatibility with internal code
@@ -44,9 +43,7 @@ pub mod canvas {
 }
 
 pub mod document {
-    pub use irohscii_core::{
-        default_storage_path, Document, DocumentId, Group, GroupId, ShapeId,
-    };
+    pub use irohscii_core::{Document, DocumentId, Group, GroupId, ShapeId, default_storage_path};
 }
 
 pub mod layers {
@@ -55,16 +52,16 @@ pub mod layers {
 
 pub mod shapes {
     pub use irohscii_core::{
-        flip_horizontal, flip_vertical, resize_shape, rotate_90_ccw, rotate_90_cw, CachedShape,
-        ResizeHandle, ResizeHandleInfo, ShapeColor, ShapeKind, ShapeView, SnapPoint,
-        find_corresponding_snap,
+        CachedShape, ResizeHandle, ResizeHandleInfo, ShapeColor, ShapeKind, ShapeView, SnapPoint,
+        find_corresponding_snap, flip_horizontal, flip_vertical, resize_shape, rotate_90_ccw,
+        rotate_90_cw,
     };
 }
 
 pub mod presence {
     pub use irohscii_sync::{
-        peer_color, CursorActivity, PeerId, PeerPresence, PresenceManager, PresenceMessage,
-        ToolKind, PEER_COLORS,
+        CursorActivity, PEER_COLORS, PeerId, PeerPresence, PresenceManager, PresenceMessage,
+        ToolKind, peer_color,
     };
 }
 

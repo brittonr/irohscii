@@ -382,13 +382,22 @@ fn run_app(
                             app.clear_status();
 
                             // Check if we're in a popup and this is a re-press of trigger key (fallback confirm)
-                            if let Mode::SelectionPopup { .. } = &app.mode {
+                            if let Mode::SelectionPopup(_) = &app.mode {
                                 if Some(key.code) == popup_trigger_key {
                                     // Same key pressed again = confirm (fallback for terminals without release)
                                     app.confirm_popup_selection();
                                     popup_trigger_key = None;
                                 } else {
-                                    handle_selection_popup_mode(app, key);
+                                    // Use new dispatch for popup navigation
+                                    // Take mode out to avoid double mutable borrow
+                                    use crate::modes::ModeTransition;
+                                    let mut mode = std::mem::take(&mut app.mode);
+                                    let transition = mode.handle_key(app, key);
+                                    match transition {
+                                        ModeTransition::Normal => app.mode = Mode::Normal,
+                                        ModeTransition::To(new_mode) => app.mode = *new_mode,
+                                        ModeTransition::Stay | ModeTransition::Action(_) => app.mode = mode,
+                                    }
                                 }
                             } else {
                                 // Check for popup triggers in Normal mode
@@ -418,40 +427,50 @@ fn run_app(
                                 };
 
                                 if !triggered_popup {
-                                    match &app.mode {
-                                        Mode::Normal => {
-                                            handle_normal_mode(app, key, session_manager)
+                                    // Use the new Mode::handle_key dispatch
+                                    // Take mode out to avoid double mutable borrow
+                                    use crate::modes::{ModeAction, ModeTransition};
+                                    let mut mode = std::mem::take(&mut app.mode);
+                                    let transition = mode.handle_key(app, key);
+                                    match transition {
+                                        ModeTransition::Stay => {
+                                            app.mode = mode;
                                         }
-                                        Mode::TextInput { .. } => handle_text_input_mode(app, key),
-                                        Mode::LabelInput { .. } => {
-                                            handle_label_input_mode(app, key)
+                                        ModeTransition::Normal => {
+                                            app.mode = Mode::Normal;
                                         }
-                                        Mode::LayerRename { .. } => {
-                                            handle_layer_rename_mode(app, key)
+                                        ModeTransition::To(new_mode) => {
+                                            app.mode = *new_mode;
                                         }
-                                        Mode::FileSave { .. } => handle_file_save_mode(app, key),
-                                        Mode::FileOpen { .. } => handle_file_open_mode(app, key),
-                                        Mode::DocSave { .. } => handle_doc_save_mode(app, key),
-                                        Mode::DocOpen { .. } => handle_doc_open_mode(app, key),
-                                        Mode::SvgExport { .. } => handle_svg_export_mode(app, key),
-                                        Mode::RecentFiles { .. } => {
-                                            handle_recent_files_mode(app, key)
-                                        }
-                                        Mode::SelectionPopup { .. } => {} // Handled above
-                                        Mode::ConfirmDialog { .. } => {
-                                            handle_confirm_dialog_mode(app, key)
-                                        }
-                                        Mode::HelpScreen { .. } => {
-                                            handle_help_screen_mode(app, key)
-                                        }
-                                        Mode::SessionBrowser { .. } => {
-                                            handle_session_browser_mode(app, key, session_manager)
-                                        }
-                                        Mode::SessionCreate { .. } => {
-                                            handle_session_create_mode(app, key)
-                                        }
-                                        Mode::KeyboardShapeCreate { .. } => {
-                                            handle_keyboard_shape_create_mode(app, key)
+                                        ModeTransition::Action(action) => {
+                                            match action {
+                                                ModeAction::Quit => {
+                                                    app.running = false;
+                                                }
+                                                ModeAction::OpenSessionBrowser => {
+                                                    if let Ok(sessions) = session_manager.list_sessions() {
+                                                        app.open_session_browser(sessions);
+                                                    }
+                                                }
+                                                ModeAction::SwitchSession(session_id) => {
+                                                    app.session_to_switch = Some(session_id);
+                                                    app.mode = Mode::Normal;
+                                                }
+                                                ModeAction::CreateSession(name) => {
+                                                    app.session_to_create = Some(name);
+                                                    app.mode = Mode::Normal;
+                                                }
+                                                ModeAction::DeleteSession(session_id) => {
+                                                    app.session_to_delete = Some(session_id.0.clone());
+                                                    app.mode = Mode::Normal;
+                                                }
+                                                ModeAction::ToggleSessionPin(session_id) => {
+                                                    let _ = session_manager.toggle_pinned(&session_id);
+                                                    if let Ok(sessions) = session_manager.list_sessions() {
+                                                        app.refresh_session_list(sessions);
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -564,7 +583,7 @@ fn run_app(
                         }
                         KeyEventKind::Release => {
                             // Check if this is the release of the popup trigger key
-                            if let Mode::SelectionPopup { .. } = &app.mode {
+                            if let Mode::SelectionPopup(_) = &app.mode {
                                 if Some(key.code) == popup_trigger_key {
                                     app.confirm_popup_selection();
                                     popup_trigger_key = None;
@@ -573,9 +592,18 @@ fn run_app(
                         }
                         KeyEventKind::Repeat => {
                             // Handle repeats same as press for navigation
-                            if let Mode::SelectionPopup { .. } = &app.mode {
+                            if let Mode::SelectionPopup(_) = &app.mode {
                                 if Some(key.code) != popup_trigger_key {
-                                    handle_selection_popup_mode(app, key);
+                                    // Use new dispatch for popup navigation
+                                    // Take mode out to avoid double mutable borrow
+                                    use crate::modes::ModeTransition;
+                                    let mut mode = std::mem::take(&mut app.mode);
+                                    let transition = mode.handle_key(app, key);
+                                    match transition {
+                                        ModeTransition::Normal => app.mode = Mode::Normal,
+                                        ModeTransition::To(new_mode) => app.mode = *new_mode,
+                                        ModeTransition::Stay | ModeTransition::Action(_) => app.mode = mode,
+                                    }
                                 }
                             }
                         }
@@ -697,745 +725,4 @@ fn run_app(
     }
 
     Ok(())
-}
-
-fn handle_normal_mode(
-    app: &mut App,
-    key: event::KeyEvent,
-    session_manager: &mut session::SessionManager,
-) {
-    match key.code {
-        KeyCode::Char('q') => app.running = false,
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.running = false;
-        }
-        KeyCode::Esc => {
-            app.cancel_shape();
-            app.clear_selection(); // Deselect
-        }
-
-        // Session browser (Tab key)
-        KeyCode::Tab => match session_manager.list_sessions() {
-            Ok(sessions) => app.open_session_browser(sessions),
-            Err(e) => app.set_error(format!("Failed to list sessions: {}", e)),
-        },
-
-        // Tool selection
-        KeyCode::Char('s') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.set_tool(Tool::Select)
-        }
-        KeyCode::Char('f') => app.set_tool(Tool::Freehand),
-        KeyCode::Char('t') if !key.modifiers.contains(KeyModifiers::ALT) => {
-            app.set_tool(Tool::Text)
-        }
-        KeyCode::Char('l') if !key.modifiers.contains(KeyModifiers::ALT) => {
-            app.set_tool(Tool::Line)
-        }
-        KeyCode::Char('a')
-            if !key.modifiers.contains(KeyModifiers::CONTROL)
-                && !key.modifiers.contains(KeyModifiers::ALT) =>
-        {
-            app.set_tool(Tool::Arrow)
-        }
-        KeyCode::Char('r') if !app.show_layers && !key.modifiers.contains(KeyModifiers::ALT) => {
-            app.set_tool(Tool::Rectangle)
-        }
-        KeyCode::Char('b') if !key.modifiers.contains(KeyModifiers::ALT) => {
-            app.set_tool(Tool::DoubleBox)
-        }
-        KeyCode::Char('d')
-            if !key.modifiers.contains(KeyModifiers::CONTROL)
-                && !key.modifiers.contains(KeyModifiers::ALT) =>
-        {
-            app.set_tool(Tool::Diamond)
-        }
-        KeyCode::Char('e') if !key.modifiers.contains(KeyModifiers::ALT) => {
-            app.set_tool(Tool::Ellipse)
-        }
-
-        // Line style cycling (c and C are now popup triggers for brush/color)
-        KeyCode::Char('v') if !key.modifiers.contains(KeyModifiers::ALT) => app.cycle_line_style(),
-
-        // Undo/Redo (Helix/Kakoune keymaps)
-        KeyCode::Char('u') => app.undo(),
-        KeyCode::Char('U') => app.redo(),
-
-        // Copy/Paste (Helix keymaps)
-        KeyCode::Char('y') => app.yank(),
-        KeyCode::Char('p') => app.paste(),
-
-        // Z-order control
-        KeyCode::Char(']') if !key.modifiers.contains(KeyModifiers::ALT) => app.bring_forward(),
-        KeyCode::Char('[') if !key.modifiers.contains(KeyModifiers::ALT) => app.send_backward(),
-        KeyCode::Char('}') => app.bring_to_front(),
-        KeyCode::Char('{') => app.send_to_back(),
-
-        // Grouping (Shift+G to group, Ctrl+Shift+G to ungroup)
-        KeyCode::Char('G') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.group_selection()
-        }
-        KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.group_selection()
-        }
-        KeyCode::Char('G') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.ungroup_selection()
-        }
-
-        // Layer shortcuts
-        KeyCode::Char('L') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.toggle_layer_panel()
-        }
-        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => app.create_layer(),
-        KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.request_delete_layer()
-        }
-        KeyCode::F(2) if app.show_layers => app.start_layer_rename(),
-        KeyCode::Char('r') if app.show_layers && app.active_layer.is_some() => {
-            app.start_layer_rename()
-        }
-        KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::ALT) => {
-            app.select_layer_by_index(1)
-        }
-        KeyCode::Char('2') if key.modifiers.contains(KeyModifiers::ALT) => {
-            app.select_layer_by_index(2)
-        }
-        KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::ALT) => {
-            app.select_layer_by_index(3)
-        }
-        KeyCode::Char('4') if key.modifiers.contains(KeyModifiers::ALT) => {
-            app.select_layer_by_index(4)
-        }
-        KeyCode::Char('5') if key.modifiers.contains(KeyModifiers::ALT) => {
-            app.select_layer_by_index(5)
-        }
-        KeyCode::Char('6') if key.modifiers.contains(KeyModifiers::ALT) => {
-            app.select_layer_by_index(6)
-        }
-        KeyCode::Char('7') if key.modifiers.contains(KeyModifiers::ALT) => {
-            app.select_layer_by_index(7)
-        }
-        KeyCode::Char('8') if key.modifiers.contains(KeyModifiers::ALT) => {
-            app.select_layer_by_index(8)
-        }
-        KeyCode::Char('9') if key.modifiers.contains(KeyModifiers::ALT) => {
-            app.select_layer_by_index(9)
-        }
-        KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.move_selection_to_active_layer()
-        }
-        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.toggle_active_layer_visibility()
-        }
-
-        // Select all (Ctrl+A)
-        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => app.select_all(),
-
-        // Duplicate selection (Ctrl+D)
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.duplicate_selection()
-        }
-
-        // Alignment shortcuts (Alt + key)
-        KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::ALT) => app.align_left(),
-        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::ALT) => app.align_right(),
-        KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::ALT) => app.align_top(),
-        KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::ALT) => app.align_bottom(),
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::ALT) => app.align_center_h(),
-        KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::ALT) => app.align_center_v(),
-
-        // Transform shortcuts (Alt + key)
-        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::ALT) => app.flip_horizontal(),
-        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::ALT) => app.flip_vertical(),
-        KeyCode::Char('.') if key.modifiers.contains(KeyModifiers::ALT) => app.rotate_90_cw(),
-        KeyCode::Char(',') if key.modifiers.contains(KeyModifiers::ALT) => app.rotate_90_ccw(),
-
-        // Distribution shortcuts (Alt + bracket)
-        KeyCode::Char('[') if key.modifiers.contains(KeyModifiers::ALT) => {
-            app.distribute_horizontal()
-        }
-        KeyCode::Char(']') if key.modifiers.contains(KeyModifiers::ALT) => {
-            app.distribute_vertical()
-        }
-
-        // Delete selected shape
-        KeyCode::Delete | KeyCode::Backspace => {
-            if app.current_tool == Tool::Select {
-                app.delete_selected();
-            }
-        }
-
-        // Edit label of selected shape
-        KeyCode::Enter => {
-            if app.current_tool == Tool::Select && !app.selected.is_empty() {
-                if app.start_label_input() {
-                    app.set_status("Editing label - type text, Enter/Esc to finish");
-                }
-            }
-        }
-
-        // File operations (ASCII export/import)
-        KeyCode::Char('s')
-            if key.modifiers.contains(KeyModifiers::CONTROL)
-                && !key.modifiers.contains(KeyModifiers::SHIFT) =>
-        {
-            app.start_save()
-        }
-        KeyCode::Char('o')
-            if key.modifiers.contains(KeyModifiers::CONTROL)
-                && !key.modifiers.contains(KeyModifiers::SHIFT) =>
-        {
-            app.start_open()
-        }
-        // Document save/open (with Shift)
-        KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::CONTROL) => app.start_doc_save(),
-        KeyCode::Char('O') if key.modifiers.contains(KeyModifiers::CONTROL) => app.start_doc_open(),
-
-        // Copy sync ticket to clipboard (capital T)
-        KeyCode::Char('T') => app.copy_ticket_to_clipboard(),
-
-        // Toggle participant panel (capital P)
-        KeyCode::Char('P') => {
-            app.show_participants = !app.show_participants;
-            let status = if app.show_participants {
-                "Participants panel shown"
-            } else {
-                "Participants panel hidden"
-            };
-            app.set_status(status);
-        }
-
-        // SVG export (capital E)
-        KeyCode::Char('E') => app.start_svg_export(),
-
-        // Toggle grid (g key)
-        KeyCode::Char('g') => app.toggle_grid(),
-
-        // New document (capital N) - shows confirmation if dirty
-        KeyCode::Char('N') => app.request_new_document(),
-
-        // Recent files (capital R)
-        KeyCode::Char('R') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if !app.recent_files.is_empty() {
-                app.mode = Mode::RecentFiles { selected: 0 };
-            } else {
-                app.set_status("No recent files");
-            }
-        }
-
-        // Viewport panning
-        KeyCode::Up => app.viewport.pan(0, -1),
-        KeyCode::Down => app.viewport.pan(0, 1),
-        KeyCode::Left => app.viewport.pan(-1, 0),
-        KeyCode::Right => app.viewport.pan(1, 0),
-
-        // Zoom controls (Ctrl+Plus, Ctrl+Minus, Ctrl+0)
-        KeyCode::Char('+') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.viewport.zoom_in();
-            app.set_status(format!("Zoom: {}%", (app.viewport.zoom * 100.0) as i32));
-        }
-        KeyCode::Char('=') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            // Ctrl+= is often pressed instead of Ctrl++ (without shift)
-            app.viewport.zoom_in();
-            app.set_status(format!("Zoom: {}%", (app.viewport.zoom * 100.0) as i32));
-        }
-        KeyCode::Char('-') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.viewport.zoom_out();
-            app.set_status(format!("Zoom: {}%", (app.viewport.zoom * 100.0) as i32));
-        }
-        KeyCode::Char('0') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.viewport.reset_zoom();
-            app.set_status("Zoom: 100%");
-        }
-
-        // Help screen
-        KeyCode::Char('?') | KeyCode::F(1) => app.open_help(),
-
-        // Keyboard shape creation (Alt+key or Ctrl+Shift+key)
-        // Alt+key for: d=Diamond, e=Ellipse, a=Arrow
-        // Ctrl+Shift+key for: R=Rectangle, L=Line, B=DoubleBox (avoids alignment conflicts)
-        KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.start_keyboard_shape_create(Tool::Rectangle)
-        }
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::ALT) => {
-            app.start_keyboard_shape_create(Tool::Diamond)
-        }
-        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::ALT) => {
-            app.start_keyboard_shape_create(Tool::Ellipse)
-        }
-        KeyCode::Char('L') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.start_keyboard_shape_create(Tool::Line)
-        }
-        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::ALT) => {
-            app.start_keyboard_shape_create(Tool::Arrow)
-        }
-        KeyCode::Char('B') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.start_keyboard_shape_create(Tool::DoubleBox)
-        }
-
-        _ => {}
-    }
-}
-
-fn handle_text_input_mode(app: &mut App, key: event::KeyEvent) {
-    match key.code {
-        KeyCode::Esc | KeyCode::Enter => {
-            app.commit_text();
-        }
-        KeyCode::Backspace => {
-            app.backspace_text();
-        }
-        KeyCode::Char(c) => {
-            app.add_text_char(c);
-        }
-        _ => {}
-    }
-}
-
-fn handle_label_input_mode(app: &mut App, key: event::KeyEvent) {
-    match key.code {
-        KeyCode::Esc | KeyCode::Enter => {
-            app.commit_label();
-        }
-        KeyCode::Backspace => {
-            app.backspace_label();
-        }
-        KeyCode::Delete => {
-            app.delete_label_char();
-        }
-        KeyCode::Left => {
-            app.move_label_cursor_left();
-        }
-        KeyCode::Right => {
-            app.move_label_cursor_right();
-        }
-        KeyCode::Home => {
-            app.move_label_cursor_home();
-        }
-        KeyCode::End => {
-            app.move_label_cursor_end();
-        }
-        KeyCode::Char(c) => {
-            app.add_label_char(c);
-        }
-        _ => {}
-    }
-}
-
-fn handle_layer_rename_mode(app: &mut App, key: event::KeyEvent) {
-    match key.code {
-        KeyCode::Enter => {
-            app.commit_layer_rename();
-        }
-        KeyCode::Esc => {
-            app.cancel_layer_rename();
-        }
-        KeyCode::Backspace => {
-            app.backspace_layer_rename();
-        }
-        KeyCode::Char(c) => {
-            app.add_layer_rename_char(c);
-        }
-        _ => {}
-    }
-}
-
-fn handle_file_save_mode(app: &mut App, key: event::KeyEvent) {
-    match key.code {
-        KeyCode::Esc => {
-            app.mode = Mode::Normal;
-        }
-        KeyCode::Enter => {
-            if let Mode::FileSave { path } = &app.mode {
-                let path = PathBuf::from(path.clone());
-                match file_io::save_ascii(&app.shape_view, &path) {
-                    Ok(()) => {
-                        app.recent_files.add(path.clone());
-                        app.file_path = Some(path);
-                        app.set_status("Exported!");
-                    }
-                    Err(e) => {
-                        app.set_error(format!("Export error: {}", e));
-                    }
-                }
-            }
-            app.mode = Mode::Normal;
-        }
-        KeyCode::Tab => {
-            app.complete_path();
-        }
-        KeyCode::Backspace => {
-            app.backspace_path();
-        }
-        KeyCode::Char(c) => {
-            app.add_path_char(c);
-        }
-        _ => {}
-    }
-}
-
-fn handle_file_open_mode(app: &mut App, key: event::KeyEvent) {
-    match key.code {
-        KeyCode::Esc => {
-            app.mode = Mode::Normal;
-        }
-        KeyCode::Enter => {
-            if let Mode::FileOpen { path } = &app.mode {
-                let path = PathBuf::from(path.clone());
-                match file_io::load_ascii(&path) {
-                    Ok(shapes) => {
-                        // Create new document and add shapes
-                        app.doc = document::Document::new();
-                        for kind in shapes {
-                            let _ = app.doc.add_shape(kind);
-                        }
-                        // Rebuild view
-                        if let Err(e) = app.shape_view.rebuild(&app.doc) {
-                            app.set_error(format!("Error rebuilding view: {}", e));
-                        } else {
-                            app.recent_files.add(path.clone());
-                            app.file_path = Some(path);
-                            app.set_status("Imported!");
-                        }
-                    }
-                    Err(e) => {
-                        app.set_error(format!("Import error: {}", e));
-                    }
-                }
-            }
-            app.mode = Mode::Normal;
-        }
-        KeyCode::Tab => {
-            app.complete_path();
-        }
-        KeyCode::Backspace => {
-            app.backspace_path();
-        }
-        KeyCode::Char(c) => {
-            app.add_path_char(c);
-        }
-        _ => {}
-    }
-}
-
-fn handle_svg_export_mode(app: &mut App, key: event::KeyEvent) {
-    match key.code {
-        KeyCode::Esc => {
-            app.mode = Mode::Normal;
-        }
-        KeyCode::Enter => {
-            if let Mode::SvgExport { path } = &app.mode {
-                let path = PathBuf::from(path.clone());
-                match svg_export::save_svg(&app.shape_view, &path) {
-                    Ok(()) => {
-                        app.set_status(format!("Exported to {}", path.display()));
-                    }
-                    Err(e) => {
-                        app.set_error(format!("SVG export error: {}", e));
-                    }
-                }
-            }
-            app.mode = Mode::Normal;
-        }
-        KeyCode::Tab => {
-            app.complete_path();
-        }
-        KeyCode::Backspace => {
-            app.backspace_path();
-        }
-        KeyCode::Char(c) => {
-            app.add_path_char(c);
-        }
-        _ => {}
-    }
-}
-
-fn handle_doc_save_mode(app: &mut App, key: event::KeyEvent) {
-    match key.code {
-        KeyCode::Esc => {
-            app.mode = Mode::Normal;
-        }
-        KeyCode::Enter => {
-            if let Mode::DocSave { path } = &app.mode {
-                let path = PathBuf::from(path.clone());
-                match app.doc.save_to(&path) {
-                    Ok(()) => {
-                        app.set_status(format!("Document saved to {}", path.display()));
-                    }
-                    Err(e) => {
-                        app.set_error(format!("Failed to save: {}", e));
-                    }
-                }
-            }
-            app.mode = Mode::Normal;
-        }
-        KeyCode::Tab => {
-            app.complete_path();
-        }
-        KeyCode::Backspace => {
-            app.backspace_path();
-        }
-        KeyCode::Char(c) => {
-            app.add_path_char(c);
-        }
-        _ => {}
-    }
-}
-
-fn handle_doc_open_mode(app: &mut App, key: event::KeyEvent) {
-    match key.code {
-        KeyCode::Esc => {
-            app.mode = Mode::Normal;
-        }
-        KeyCode::Enter => {
-            if let Mode::DocOpen { path } = &app.mode {
-                let path = PathBuf::from(path.clone());
-                match document::Document::load(&path) {
-                    Ok(doc) => {
-                        app.doc = doc;
-                        // Rebuild view
-                        if let Err(e) = app.shape_view.rebuild(&app.doc) {
-                            app.set_error(format!("Error rebuilding view: {}", e));
-                        } else {
-                            app.init_active_layer();
-                            app.selected.clear();
-                            app.set_status(format!("Document loaded from {}", path.display()));
-                        }
-                    }
-                    Err(e) => {
-                        app.set_error(format!("Failed to load: {}", e));
-                    }
-                }
-            }
-            app.mode = Mode::Normal;
-        }
-        KeyCode::Tab => {
-            app.complete_path();
-        }
-        KeyCode::Backspace => {
-            app.backspace_path();
-        }
-        KeyCode::Char(c) => {
-            app.add_path_char(c);
-        }
-        _ => {}
-    }
-}
-
-fn handle_recent_files_mode(app: &mut App, key: event::KeyEvent) {
-    if let Mode::RecentFiles { ref mut selected } = app.mode {
-        match key.code {
-            KeyCode::Esc => {
-                app.mode = Mode::Normal;
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                *selected = selected.saturating_sub(1);
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                let max = app.recent_files.len().saturating_sub(1);
-                *selected = (*selected + 1).min(max);
-            }
-            KeyCode::Enter => {
-                let idx = *selected;
-                if let Some(file) = app.recent_files.get(idx) {
-                    let path = file.path.clone();
-                    match file_io::load_ascii(&path) {
-                        Ok(shapes) => {
-                            app.doc = document::Document::new();
-                            for kind in shapes {
-                                let _ = app.doc.add_shape(kind);
-                            }
-                            if let Err(e) = app.shape_view.rebuild(&app.doc) {
-                                app.set_status(format!("Error: {}", e));
-                            } else {
-                                app.file_path = Some(path);
-                                app.set_status("Loaded!");
-                            }
-                        }
-                        Err(e) => {
-                            app.set_status(format!("Error: {}", e));
-                        }
-                    }
-                }
-                app.mode = Mode::Normal;
-            }
-            _ => {}
-        }
-    }
-}
-
-fn handle_selection_popup_mode(app: &mut App, key: event::KeyEvent) {
-    match key.code {
-        // hjkl navigation
-        KeyCode::Char('h') | KeyCode::Left => app.popup_navigate(-1, 0),
-        KeyCode::Char('l') | KeyCode::Right => app.popup_navigate(1, 0),
-        KeyCode::Char('j') | KeyCode::Down => app.popup_navigate(0, 1),
-        KeyCode::Char('k') | KeyCode::Up => app.popup_navigate(0, -1),
-        // Enter to confirm
-        KeyCode::Enter => app.confirm_popup_selection(),
-        // Escape to cancel
-        KeyCode::Esc => app.cancel_popup(),
-        _ => {}
-    }
-}
-
-fn handle_confirm_dialog_mode(app: &mut App, key: event::KeyEvent) {
-    match key.code {
-        // Yes - confirm the action
-        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-            app.confirm_pending_action();
-        }
-        // No - cancel the action
-        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-            app.cancel_pending_action();
-        }
-        _ => {}
-    }
-}
-
-fn handle_help_screen_mode(app: &mut App, key: event::KeyEvent) {
-    match key.code {
-        // Close help
-        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') | KeyCode::F(1) => {
-            app.close_help();
-        }
-        // Scroll down
-        KeyCode::Char('j') | KeyCode::Down => {
-            app.scroll_help(1);
-        }
-        // Scroll up
-        KeyCode::Char('k') | KeyCode::Up => {
-            app.scroll_help(-1);
-        }
-        // Page down
-        KeyCode::PageDown | KeyCode::Char(' ') => {
-            app.scroll_help(10);
-        }
-        // Page up
-        KeyCode::PageUp => {
-            app.scroll_help(-10);
-        }
-        _ => {}
-    }
-}
-
-fn handle_session_browser_mode(
-    app: &mut App,
-    key: event::KeyEvent,
-    session_manager: &mut session::SessionManager,
-) {
-    match key.code {
-        // Close browser
-        KeyCode::Esc | KeyCode::Tab => {
-            app.close_session_browser();
-        }
-        // Navigate
-        KeyCode::Char('j') | KeyCode::Down => {
-            app.session_browser_navigate(1);
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            app.session_browser_navigate(-1);
-        }
-        // Select session
-        KeyCode::Enter => {
-            app.session_browser_select();
-        }
-        // Create new session
-        KeyCode::Char('n') => {
-            app.open_session_create();
-        }
-        // Delete session
-        KeyCode::Char('d') | KeyCode::Delete => {
-            app.session_browser_request_delete();
-        }
-        // Toggle pinned
-        KeyCode::Char('p') => {
-            if let Some(session_id) = app.session_browser_toggle_pin() {
-                if let Ok(pinned) = session_manager.toggle_pinned(&session_id) {
-                    // Refresh list with bounds checking to show updated pinned status
-                    if let Ok(sessions) = session_manager.list_sessions() {
-                        app.refresh_session_list(sessions);
-                    }
-                    let msg = if pinned { "Pinned" } else { "Unpinned" };
-                    app.set_status(msg);
-                }
-            }
-        }
-        // Toggle pinned-only filter
-        KeyCode::Char('*') => {
-            app.session_browser_toggle_pinned();
-        }
-        // Backspace for filter
-        KeyCode::Backspace => {
-            app.session_browser_filter_backspace();
-        }
-        // Type to filter
-        KeyCode::Char(c) if c.is_alphanumeric() || c == '-' || c == '_' => {
-            app.session_browser_filter_char(c);
-        }
-        _ => {}
-    }
-}
-
-fn handle_session_create_mode(app: &mut App, key: event::KeyEvent) {
-    match key.code {
-        KeyCode::Esc => {
-            app.session_create_cancel();
-        }
-        KeyCode::Enter => {
-            app.session_create_confirm();
-        }
-        KeyCode::Backspace => {
-            app.session_create_backspace();
-        }
-        KeyCode::Char(c) => {
-            app.session_create_char(c);
-        }
-        _ => {}
-    }
-}
-
-fn handle_keyboard_shape_create_mode(app: &mut App, key: event::KeyEvent) {
-    use crate::app::KeyboardShapeField;
-
-    if let Mode::KeyboardShapeCreate {
-        width,
-        height,
-        focus,
-        ..
-    } = &mut app.mode
-    {
-        match key.code {
-            KeyCode::Esc => {
-                app.cancel_keyboard_shape();
-            }
-            KeyCode::Enter => {
-                app.commit_keyboard_shape();
-            }
-            KeyCode::Tab => {
-                // Toggle focus between width and height
-                *focus = match focus {
-                    KeyboardShapeField::Width => KeyboardShapeField::Height,
-                    KeyboardShapeField::Height => KeyboardShapeField::Width,
-                };
-            }
-            KeyCode::Backspace => {
-                let field = match focus {
-                    KeyboardShapeField::Width => width,
-                    KeyboardShapeField::Height => height,
-                };
-                field.pop();
-            }
-            KeyCode::Char(c) if c.is_ascii_digit() || c == '-' => {
-                let field = match focus {
-                    KeyboardShapeField::Width => width,
-                    KeyboardShapeField::Height => height,
-                };
-                // Limit to reasonable length
-                if field.len() < 5 {
-                    field.push(c);
-                }
-            }
-            _ => {}
-        }
-    }
 }
