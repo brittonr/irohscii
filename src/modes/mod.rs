@@ -8,11 +8,14 @@ mod help;
 mod keyboard_shape;
 mod label_input;
 mod layer_rename;
+mod normal;
 mod path_input;
 mod popup;
 mod recent_files;
 mod session;
 mod text_input;
+
+pub use normal::NormalModeState;
 
 use crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
@@ -49,6 +52,8 @@ impl ModeTransition {
 pub enum ModeAction {
     /// Quit the application
     Quit,
+    /// Open the session browser (needs SessionManager to list sessions)
+    OpenSessionBrowser,
     /// Switch to a different session
     SwitchSession(SessionId),
     /// Create a new session with the given name
