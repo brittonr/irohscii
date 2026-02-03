@@ -71,7 +71,7 @@ fn wait_for_remote_changes(handle: &SyncHandle, timeout: Duration) -> Option<Aut
         matches!(e, SyncEvent::RemoteChanges { .. })
     })
     .and_then(|e| match e {
-        SyncEvent::RemoteChanges { doc } => Some(doc),
+        SyncEvent::RemoteChanges { doc } => Some(*doc),
         _ => None,
     })
 }
@@ -123,7 +123,6 @@ fn make_test_presence(peer_id: PeerId, x: i32, y: i32) -> PeerPresence {
 fn setup_host_peer() -> (SyncHandle, String, PeerId) {
     let config = SyncConfig {
         mode: SyncMode::Active { join_ticket: None },
-        storage_path: None,
         disable_discovery: true,
     };
     let handle = start_sync_thread(config).expect("Failed to start host peer");
@@ -140,7 +139,6 @@ fn setup_joining_peer(ticket: &str) -> (SyncHandle, PeerId) {
         mode: SyncMode::Active {
             join_ticket: Some(ticket.to_string()),
         },
-        storage_path: None,
         disable_discovery: true,
     };
     let handle = start_sync_thread(config).expect("Failed to start joining peer");
@@ -192,7 +190,7 @@ fn test_two_peer_document_sync() {
     // Send document to sync
     handle_a
         .send_command(SyncCommand::SyncDoc {
-            doc: doc_a.automerge().clone(),
+            doc: Box::new(doc_a.automerge().clone()),
         })
         .expect("Failed to send sync command");
 
@@ -226,7 +224,7 @@ fn test_bidirectional_sync() {
 
     handle_a
         .send_command(SyncCommand::SyncDoc {
-            doc: doc_a.automerge().clone(),
+            doc: Box::new(doc_a.automerge().clone()),
         })
         .expect("Failed to send from A");
 
@@ -246,7 +244,7 @@ fn test_bidirectional_sync() {
 
     handle_b
         .send_command(SyncCommand::SyncDoc {
-            doc: doc_b.automerge().clone(),
+            doc: Box::new(doc_b.automerge().clone()),
         })
         .expect("Failed to send from B");
 
@@ -363,13 +361,13 @@ fn test_concurrent_edits_converge() {
     // Send both at nearly the same time
     handle_a
         .send_command(SyncCommand::SyncDoc {
-            doc: doc_a.automerge().clone(),
+            doc: Box::new(doc_a.automerge().clone()),
         })
         .expect("Failed to send from A");
 
     handle_b
         .send_command(SyncCommand::SyncDoc {
-            doc: doc_b.automerge().clone(),
+            doc: Box::new(doc_b.automerge().clone()),
         })
         .expect("Failed to send from B");
 
@@ -403,7 +401,7 @@ fn test_concurrent_shape_modification() {
     // Sync to B
     handle_a
         .send_command(SyncCommand::SyncDoc {
-            doc: doc_a.automerge().clone(),
+            doc: Box::new(doc_a.automerge().clone()),
         })
         .expect("Failed to initial sync");
 
@@ -418,7 +416,7 @@ fn test_concurrent_shape_modification() {
 
     handle_a
         .send_command(SyncCommand::SyncDoc {
-            doc: doc_a.automerge().clone(),
+            doc: Box::new(doc_a.automerge().clone()),
         })
         .expect("Failed to send modified from A");
 
@@ -450,7 +448,7 @@ fn test_three_peer_mesh_sync() {
 
     handle_a
         .send_command(SyncCommand::SyncDoc {
-            doc: doc_a.automerge().clone(),
+            doc: Box::new(doc_a.automerge().clone()),
         })
         .expect("Failed to send from A");
 
@@ -480,7 +478,7 @@ fn test_late_joiner_receives_full_state() {
 
     handle_a
         .send_command(SyncCommand::SyncDoc {
-            doc: doc_a.automerge().clone(),
+            doc: Box::new(doc_a.automerge().clone()),
         })
         .expect("Failed to send shapes from A");
 
@@ -494,7 +492,7 @@ fn test_late_joiner_receives_full_state() {
     // Trigger a sync so C receives the current state
     handle_a
         .send_command(SyncCommand::SyncDoc {
-            doc: doc_a.automerge().clone(),
+            doc: Box::new(doc_a.automerge().clone()),
         })
         .expect("Failed to re-sync for C");
 
@@ -543,7 +541,7 @@ fn test_peer_disconnect_handling() {
 
     handle_a
         .send_command(SyncCommand::SyncDoc {
-            doc: doc_a.automerge().clone(),
+            doc: Box::new(doc_a.automerge().clone()),
         })
         .expect("Failed to send from A");
 
@@ -567,7 +565,7 @@ fn test_peer_disconnect_handling() {
 
     handle_a
         .send_command(SyncCommand::SyncDoc {
-            doc: doc_a.automerge().clone(),
+            doc: Box::new(doc_a.automerge().clone()),
         })
         .expect("A should be able to sync with C");
 

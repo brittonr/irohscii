@@ -9,7 +9,6 @@
 pub mod presence_protocol;
 pub mod protocol;
 
-use std::path::PathBuf;
 use std::sync::mpsc as std_mpsc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -21,9 +20,7 @@ use iroh::discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher};
 use iroh_base::EndpointAddr;
 use tokio::sync::mpsc as tokio_mpsc;
 
-use crate::document::ShapeId;
 use crate::presence::{PeerId, PeerPresence, PresenceMessage};
-use crate::shapes::ShapeKind;
 use presence_protocol::PresenceProtocol;
 use protocol::IrohAutomergeProtocol;
 
@@ -31,7 +28,6 @@ use protocol::IrohAutomergeProtocol;
 #[derive(Debug, Clone)]
 pub struct SyncConfig {
     pub mode: SyncMode,
-    pub storage_path: Option<PathBuf>,
     /// Disable DNS/Pkarr discovery (for test isolation)
     pub disable_discovery: bool,
 }
@@ -40,7 +36,6 @@ impl Default for SyncConfig {
     fn default() -> Self {
         Self {
             mode: SyncMode::Active { join_ticket: None },
-            storage_path: None,
             disable_discovery: false,
         }
     }
@@ -63,10 +58,8 @@ pub enum SyncEvent {
         endpoint_id: String,
         local_peer_id: PeerId,
     },
-    /// Remote changes received
-    RemoteChanges { doc: Automerge },
-    /// Peer connected/disconnected
-    PeerStatus { peer_count: usize, connected: bool },
+    /// Remote changes received (boxed to reduce enum size)
+    RemoteChanges { doc: Box<Automerge> },
     /// Presence update from remote peer
     PresenceUpdate(PeerPresence),
     /// Peer presence removed (disconnect or leave)
@@ -78,20 +71,12 @@ pub enum SyncEvent {
 /// Commands from main thread to sync thread
 #[derive(Debug)]
 pub enum SyncCommand {
-    /// Send local document state
-    SyncDoc { doc: Automerge },
+    /// Send local document state (boxed to reduce enum size)
+    SyncDoc { doc: Box<Automerge> },
     /// Broadcast local presence to all peers
     BroadcastPresence(PeerPresence),
     /// Shutdown sync
     Shutdown,
-}
-
-/// Change to a shape that needs to be synced
-#[derive(Debug, Clone)]
-pub enum ShapeChange {
-    Added { id: ShapeId, kind: ShapeKind },
-    Modified { id: ShapeId, kind: ShapeKind },
-    Deleted { id: ShapeId },
 }
 
 /// Handle for communicating with the sync thread from the main thread
@@ -273,7 +258,7 @@ async fn run_sync(
             loop {
                 tokio::select! {
                     Some(doc) = sync_rx.recv() => {
-                        let _ = event_tx.send(SyncEvent::RemoteChanges { doc });
+                        let _ = event_tx.send(SyncEvent::RemoteChanges { doc: Box::new(doc) });
                     }
                     Some(msg) = presence_rx.recv() => {
                         match msg {
@@ -291,7 +276,7 @@ async fn run_sync(
                     _ = tokio::time::sleep(Duration::from_millis(50)) => {
                         match command_rx.try_recv() {
                             Ok(SyncCommand::SyncDoc { doc }) => {
-                                if let Err(e) = protocol.merge_and_notify(&doc).await {
+                                if let Err(e) = protocol.merge_and_notify(&*doc).await {
                                     let _ = event_tx.send(SyncEvent::Error(e.to_string()));
                                 }
                             }

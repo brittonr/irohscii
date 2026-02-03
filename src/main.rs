@@ -94,7 +94,6 @@ fn main() -> Result<()> {
     let sync_config = if args.offline {
         SyncConfig {
             mode: SyncMode::Disabled,
-            storage_path: None,
             disable_discovery: false,
         }
     } else {
@@ -102,7 +101,6 @@ fn main() -> Result<()> {
             mode: SyncMode::Active {
                 join_ticket: args.join,
             },
-            storage_path: None,
             disable_discovery: false,
         }
     };
@@ -326,19 +324,8 @@ fn run_app(
                         app.init_presence(local_peer_id);
                         app.set_status(format!("Session ready: {}", endpoint_id));
                     }
-                    sync::SyncEvent::RemoteChanges { doc } => {
-                        let mut remote_doc = doc;
-                        app.merge_remote(&mut remote_doc);
-                    }
-                    sync::SyncEvent::PeerStatus {
-                        peer_count,
-                        connected,
-                    } => {
-                        if connected {
-                            app.set_status(format!("Peer connected ({})", peer_count));
-                        } else {
-                            app.set_status(format!("Peer disconnected ({})", peer_count));
-                        }
+                    sync::SyncEvent::RemoteChanges { mut doc } => {
+                        app.merge_remote(&mut *doc);
                     }
                     sync::SyncEvent::PresenceUpdate(presence) => {
                         if let Some(ref mut mgr) = app.presence {
@@ -444,7 +431,9 @@ fn run_app(
                             if matches!(app.mode, Mode::Normal) {
                                 if let Some(handle) = sync_handle {
                                     let doc = app.clone_automerge();
-                                    let _ = handle.send_command(sync::SyncCommand::SyncDoc { doc });
+                                    let _ = handle.send_command(sync::SyncCommand::SyncDoc {
+                                        doc: Box::new(doc),
+                                    });
                                 }
                                 // Autosave to session
                                 if let (Some(session_id), Some(meta)) =
@@ -626,7 +615,9 @@ fn run_app(
                         if app.is_dirty() {
                             if let Some(handle) = sync_handle {
                                 let doc = app.clone_automerge();
-                                let _ = handle.send_command(sync::SyncCommand::SyncDoc { doc });
+                                let _ = handle.send_command(sync::SyncCommand::SyncDoc {
+                                    doc: Box::new(doc),
+                                });
                             }
                             // Autosave after changes
                             app.autosave();
@@ -681,16 +672,24 @@ fn handle_normal_mode(
             app.set_tool(Tool::Select)
         }
         KeyCode::Char('f') => app.set_tool(Tool::Freehand),
-        KeyCode::Char('t') => app.set_tool(Tool::Text),
-        KeyCode::Char('l') => app.set_tool(Tool::Line),
-        KeyCode::Char('a') => app.set_tool(Tool::Arrow),
+        KeyCode::Char('t') if !key.modifiers.contains(KeyModifiers::ALT) => {
+            app.set_tool(Tool::Text)
+        }
+        KeyCode::Char('l') if !key.modifiers.contains(KeyModifiers::ALT) => {
+            app.set_tool(Tool::Line)
+        }
+        KeyCode::Char('a') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.set_tool(Tool::Arrow)
+        }
         KeyCode::Char('r') if !app.show_layers => app.set_tool(Tool::Rectangle),
-        KeyCode::Char('b') => app.set_tool(Tool::DoubleBox),
+        KeyCode::Char('b') if !key.modifiers.contains(KeyModifiers::ALT) => {
+            app.set_tool(Tool::DoubleBox)
+        }
         KeyCode::Char('d') => app.set_tool(Tool::Diamond),
         KeyCode::Char('e') => app.set_tool(Tool::Ellipse),
 
         // Line style cycling (c and C are now popup triggers for brush/color)
-        KeyCode::Char('v') => app.cycle_line_style(),
+        KeyCode::Char('v') if !key.modifiers.contains(KeyModifiers::ALT) => app.cycle_line_style(),
 
         // Undo/Redo (Helix/Kakoune keymaps)
         KeyCode::Char('u') => app.undo(),

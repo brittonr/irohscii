@@ -269,30 +269,6 @@ impl Document {
         }
     }
 
-    fn ensure_shapes_map(&mut self) -> Result<ObjId> {
-        match self.doc.get(ROOT, "shapes")? {
-            Some((_, obj_id)) => Ok(obj_id),
-            None => {
-                // Create the shapes map
-                let mut tx = self.doc.transaction();
-                tx.put_object(ROOT, "shapes", ObjType::Map)?;
-                tx.commit();
-                // Re-fetch the ObjId after commit (the one from tx is stale)
-                match self.doc.get(ROOT, "shapes")? {
-                    Some((_, obj_id)) => Ok(obj_id),
-                    None => Err(anyhow!("Failed to create shapes map")),
-                }
-            }
-        }
-    }
-
-    fn get_shape_order_list(&self) -> Result<ObjId> {
-        match self.doc.get(ROOT, "shape_order")? {
-            Some((_, obj_id)) => Ok(obj_id),
-            None => Err(anyhow!("No shape_order list in document")),
-        }
-    }
-
     /// Add a new shape to the document
     pub fn add_shape(&mut self, kind: ShapeKind) -> Result<ShapeId> {
         let id = ShapeId::new();
