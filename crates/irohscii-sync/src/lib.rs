@@ -9,12 +9,12 @@ pub mod presence;
 mod sync;
 
 pub use presence::{
-    peer_color, CursorActivity, PeerId, PeerPresence, PresenceManager, PresenceMessage, ToolKind,
-    PEER_COLORS,
+    CursorActivity, PEER_COLORS, PeerId, PeerPresence, PresenceManager, PresenceMessage, ToolKind,
+    peer_color,
 };
 pub use sync::{
-    decode_ticket, encode_ticket, start_sync_thread, SyncCommand, SyncConfig, SyncEvent,
-    SyncHandle, SyncMode,
+    SyncCommand, SyncConfig, SyncEvent, SyncHandle, SyncMode, decode_ticket, encode_ticket,
+    start_sync_thread,
 };
 
 // Re-export core types for convenience

@@ -1,26 +1,35 @@
 [package]
-name = "irohscii-sync"
-description = "P2P synchronization for irohscii using Iroh and Automerge"
+name = "iroh-collab"
+description = "Generic P2P collaboration infrastructure using Iroh networking"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+# Automerge CRDT backend
+automerge = ["dep:automerge"]
+
 [dependencies]
-irohscii-geometry = { workspace = true }
-irohscii-core = { workspace = true }
-iroh-collab = { workspace = true, features = ["automerge"] }
-serde = { workspace = true }
-automerge = { workspace = true }
+# Networking
 iroh = { workspace = true }
 iroh-base = { workspace = true }
+
+# Async runtime
 tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+rmp-serde = { workspace = true }
 postcard = { workspace = true }
 data-encoding = { workspace = true }
+
+# Error handling
 anyhow = { workspace = true }
-rmp-serde = { workspace = true }
-ratatui = { workspace = true }
-n0-future = { workspace = true }
+
+# Optional: Automerge CRDT backend
+automerge = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

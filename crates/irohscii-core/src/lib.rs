@@ -12,12 +12,12 @@ mod document;
 mod layers;
 mod shapes;
 
-pub use document::{default_storage_path, Document, DocumentId, Group, GroupId, ShapeId};
+pub use document::{Document, DocumentId, Group, GroupId, ShapeId, default_storage_path};
 pub use layers::{Layer, LayerId};
 pub use shapes::{
+    CachedShape, ResizeHandle, ResizeHandleInfo, ShapeColor, ShapeKind, ShapeView, SnapPoint,
     find_corresponding_snap, flip_horizontal, flip_vertical, resize_shape, rotate_90_ccw,
-    rotate_90_cw, CachedShape, ResizeHandle, ResizeHandleInfo, ShapeColor, ShapeKind, ShapeView,
-    SnapPoint,
+    rotate_90_cw,
 };
 
 // Re-export geometry types for convenience

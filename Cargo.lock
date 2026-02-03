@@ -1867,6 +1867,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-collab"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "automerge",
+ "data-encoding",
+ "iroh",
+ "iroh-base",
+ "postcard",
+ "rmp-serde",
+ "serde",
+ "tempfile",
+ "tokio",
+ "tokio-test",
+]
+
+[[package]]
 name = "iroh-metrics"
 version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2084,6 +2101,7 @@ dependencies = [
  "data-encoding",
  "iroh",
  "iroh-base",
+ "iroh-collab",
  "irohscii-core",
  "irohscii-geometry",
  "n0-future",

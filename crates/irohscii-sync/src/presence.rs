@@ -2,6 +2,8 @@
 //!
 //! This module handles ephemeral presence data (cursor positions, selections, activities)
 //! which is synced separately from the automerge document for efficiency.
+//!
+//! Uses [`iroh_collab::PresenceData`] trait for generic presence support.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -10,6 +12,9 @@ use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
 use irohscii_core::{LayerId, Position, ShapeId};
+
+// Re-export PeerId from iroh-collab for compatibility
+pub use iroh_collab::PeerId;
 
 /// Staleness threshold - remove cursors not updated in 5 seconds
 const STALE_THRESHOLD: Duration = Duration::from_secs(5);
@@ -25,22 +30,6 @@ pub const PEER_COLORS: &[Color] = &[
     Color::LightBlue,
     Color::LightMagenta,
 ];
-
-/// Unique peer identifier (derived from iroh PublicKey)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PeerId(pub [u8; 32]);
-
-impl PeerId {
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() >= 32 {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&bytes[..32]);
-            Some(Self(arr))
-        } else {
-            None
-        }
-    }
-}
 
 /// Tool kind for presence (simplified from Tool enum)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,7 +122,7 @@ impl PeerPresence {
         active_layer_id: Option<LayerId>,
         drag_start_ms: Option<u64>,
     ) -> Self {
-        let color_index = peer_id.0[0] % (PEER_COLORS.len() as u8);
+        let color_index = peer_id.color_index(PEER_COLORS.len()) as u8;
         let timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -152,7 +141,24 @@ impl PeerPresence {
 
     /// Get a short display name from the peer ID (first 4 hex chars)
     pub fn display_name(&self) -> String {
-        format!("Peer-{:02x}{:02x}", self.peer_id.0[0], self.peer_id.0[1])
+        format!("Peer-{}", self.peer_id.short_name())
+    }
+}
+
+/// Implement the generic PresenceData trait from iroh-collab
+impl iroh_collab::PresenceData for PeerPresence {
+    fn peer_id(&self) -> PeerId {
+        self.peer_id
+    }
+
+    fn timestamp_ms(&self) -> u64 {
+        self.timestamp_ms
+    }
+
+    fn with_peer_id(mut self, peer_id: PeerId) -> Self {
+        self.peer_id = peer_id;
+        self.color_index = peer_id.color_index(PEER_COLORS.len()) as u8;
+        self
     }
 }
 
@@ -173,6 +179,9 @@ pub fn peer_color(presence: &PeerPresence) -> Color {
 }
 
 /// Manages all peer presence states
+///
+/// This is an irohscii-specific presence manager with methods for querying
+/// drag/resize state. For generic presence management, see [`iroh_collab::PresenceManager`].
 #[derive(Debug)]
 pub struct PresenceManager {
     /// Our own peer ID
@@ -228,11 +237,9 @@ impl PresenceManager {
 
     /// Find a peer who is currently dragging the specified shape
     /// Returns the peer presence if found
-    pub fn get_dragger_for_shape(
-        &self,
-        shape_id: ShapeId,
-    ) -> Option<&PeerPresence> {
-        self.peers.values()
+    pub fn get_dragger_for_shape(&self, shape_id: ShapeId) -> Option<&PeerPresence> {
+        self.peers
+            .values()
             .map(|(p, _)| p)
             .find(|p| matches!(p.activity, CursorActivity::Dragging { shape_id: sid, .. } if sid == shape_id))
     }
@@ -245,7 +252,8 @@ impl PresenceManager {
         shape_id: ShapeId,
         our_start_ms: u64,
     ) -> Option<&PeerPresence> {
-        self.peers.values()
+        self.peers
+            .values()
             .map(|(p, _)| p)
             .filter(|p| matches!(p.activity, CursorActivity::Dragging { shape_id: sid, .. } if sid == shape_id))
             .find(|p| p.drag_start_ms.is_some_and(|t| t < our_start_ms))
@@ -525,5 +533,27 @@ mod tests {
             .label()
             .is_empty()
         );
+    }
+
+    #[test]
+    fn peer_presence_implements_presence_data() {
+        use iroh_collab::PresenceData;
+
+        let peer_id = PeerId([42u8; 32]);
+        let presence = PeerPresence::new(
+            peer_id,
+            Position::new(10, 20),
+            CursorActivity::Idle,
+            None,
+            None,
+        );
+
+        // Test PresenceData trait methods
+        assert_eq!(presence.peer_id(), peer_id);
+        assert!(presence.timestamp_ms() > 0);
+
+        let new_peer_id = PeerId([99u8; 32]);
+        let updated = presence.with_peer_id(new_peer_id);
+        assert_eq!(updated.peer_id(), new_peer_id);
     }
 }

@@ -238,7 +238,10 @@ pub fn line_points_auto_routed(
 }
 
 /// Check if a path intersects any obstacles
-fn path_intersects_obstacles(path: &[(Position, char)], obstacles: &[(i32, i32, i32, i32)]) -> bool {
+fn path_intersects_obstacles(
+    path: &[(Position, char)],
+    obstacles: &[(i32, i32, i32, i32)],
+) -> bool {
     for (pos, _) in path {
         for &(min_x, min_y, max_x, max_y) in obstacles {
             // Check if point is inside obstacle (with 1 cell margin)
@@ -284,9 +287,9 @@ fn find_routing_waypoint(
         .into_iter()
         .filter(|wp| {
             // Check waypoint doesn't hit any obstacle
-            !obstacles
-                .iter()
-                .any(|&(ox1, oy1, ox2, oy2)| wp.x >= ox1 && wp.x <= ox2 && wp.y >= oy1 && wp.y <= oy2)
+            !obstacles.iter().any(|&(ox1, oy1, ox2, oy2)| {
+                wp.x >= ox1 && wp.x <= ox2 && wp.y >= oy1 && wp.y <= oy2
+            })
         })
         .min_by_key(|wp| {
             // Manhattan distance through waypoint
@@ -413,9 +416,9 @@ fn orthogonal_line_points(
         (false, true, true) => '\u{250C}',  // ┌ left then down
         (false, false, true) => '\u{2514}', // └ left then up
         // Vertical first (corner at from.x, to.y)
-        (true, true, false) => '\u{2514}',  // └ down then right
-        (true, false, false) => '\u{250C}', // ┌ up then right
-        (false, true, false) => '\u{2518}', // ┘ down then left
+        (true, true, false) => '\u{2514}',   // └ down then right
+        (true, false, false) => '\u{250C}',  // ┌ up then right
+        (false, true, false) => '\u{2518}',  // ┘ down then left
         (false, false, false) => '\u{2510}', // ┐ up then left
     };
 
@@ -471,7 +474,11 @@ fn orthogonal_line_points(
 }
 
 /// Generate arrow points (line with arrowhead at end)
-pub fn arrow_points_styled(from: Position, to: Position, style: LineStyle) -> Vec<(Position, char)> {
+pub fn arrow_points_styled(
+    from: Position,
+    to: Position,
+    style: LineStyle,
+) -> Vec<(Position, char)> {
     let mut points = line_points_styled(from, to, style);
 
     // Replace the last character with an arrowhead
@@ -612,7 +619,11 @@ pub fn double_rect_points(from: Position, to: Position) -> Vec<(Position, char)>
 }
 
 /// Generate diamond outline points
-pub fn diamond_points(center: Position, half_width: i32, half_height: i32) -> Vec<(Position, char)> {
+pub fn diamond_points(
+    center: Position,
+    half_width: i32,
+    half_height: i32,
+) -> Vec<(Position, char)> {
     let mut points = Vec::new();
 
     let hw = half_width.abs().max(1);
@@ -1080,7 +1091,11 @@ pub fn cloud_points(from: Position, to: Position) -> Vec<(Position, char)> {
 }
 
 /// Generate star outline points - 5-pointed star
-pub fn star_points(center: Position, outer_radius: i32, _inner_radius: i32) -> Vec<(Position, char)> {
+pub fn star_points(
+    center: Position,
+    outer_radius: i32,
+    _inner_radius: i32,
+) -> Vec<(Position, char)> {
     let mut points = Vec::new();
 
     let r = outer_radius.abs().max(2);

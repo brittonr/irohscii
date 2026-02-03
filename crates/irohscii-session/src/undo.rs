@@ -69,11 +69,7 @@ impl UndoManager {
         // Count existing snapshots
         let count = fs::read_dir(&dir)?
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .is_some_and(|ext| ext == "snap")
-            })
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "snap"))
             .count();
 
         Ok(Self {
@@ -214,11 +210,7 @@ impl UndoManager {
                 // Delete all snapshot files
                 if let Ok(entries) = fs::read_dir(&dir) {
                     for entry in entries.filter_map(|e| e.ok()) {
-                        if entry
-                            .path()
-                            .extension()
-                            .is_some_and(|ext| ext == "snap")
-                        {
+                        if entry.path().extension().is_some_and(|ext| ext == "snap") {
                             let _ = fs::remove_file(entry.path());
                         }
                     }
