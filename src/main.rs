@@ -5,6 +5,7 @@ mod file_io;
 mod layers;
 mod presence;
 mod recent_files;
+mod session;
 mod shapes;
 mod svg_export;
 mod sync;
@@ -19,14 +20,16 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        MouseButton, MouseEventKind,
+    },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::prelude::*;
 
 use app::{App, Mode, Tool};
-use document::default_storage_path;
 use sync::{SyncConfig, SyncHandle, SyncMode};
 
 /// ASCII art drawing tool with real-time collaboration
@@ -42,7 +45,19 @@ struct Args {
     #[arg(long)]
     offline: bool,
 
-    /// File to open
+    /// Open a specific session by name or ID
+    #[arg(long, short = 's', value_name = "SESSION")]
+    session: Option<String>,
+
+    /// Create a new session with the given name
+    #[arg(long, value_name = "NAME")]
+    new_session: Option<String>,
+
+    /// List all available sessions and exit
+    #[arg(long)]
+    list_sessions: bool,
+
+    /// File to open (ASCII import)
     #[arg(value_name = "FILE")]
     file: Option<PathBuf>,
 }
@@ -50,6 +65,30 @@ struct Args {
 fn main() -> Result<()> {
     // Parse CLI args
     let args = Args::parse();
+
+    // Initialize session manager
+    let mut session_manager = session::SessionManager::new()?;
+
+    // Handle --list-sessions flag
+    if args.list_sessions {
+        let sessions = session_manager.list_sessions()?;
+        if sessions.is_empty() {
+            println!("No sessions found. Create one with --new-session <name>");
+        } else {
+            println!("Available sessions:");
+            println!("{:<30} {:<20} {}", "NAME", "ID", "LAST ACCESSED");
+            println!("{}", "-".repeat(70));
+            for session in sessions {
+                let pinned = if session.pinned { "*" } else { " " };
+                let timestamp = chrono_lite_format(session.last_accessed);
+                println!(
+                    "{}{:<29} {:<20} {}",
+                    pinned, session.name, session.id.0, timestamp
+                );
+            }
+        }
+        return Ok(());
+    }
 
     // Determine sync configuration - always active unless --offline
     let sync_config = if args.offline {
@@ -60,7 +99,9 @@ fn main() -> Result<()> {
         }
     } else {
         SyncConfig {
-            mode: SyncMode::Active { join_ticket: args.join },
+            mode: SyncMode::Active {
+                join_ticket: args.join,
+            },
             storage_path: None,
             disable_discovery: false,
         }
@@ -77,18 +118,73 @@ fn main() -> Result<()> {
     let size = terminal.size()?;
     let mut app = App::new(size.width, size.height.saturating_sub(2)); // Reserve 2 rows for status/help
 
-    // Get the default storage path for persistence
-    let storage_path = default_storage_path();
+    // Determine which session to load
+    let session_to_load: Option<session::SessionId> = if let Some(name) = args.new_session {
+        // Create a new session
+        match session_manager.create_session(&name) {
+            Ok(meta) => {
+                app.set_status(format!("Created session: {}", meta.name));
+                Some(meta.id)
+            }
+            Err(e) => {
+                app.set_error(format!("Failed to create session: {}", e));
+                None
+            }
+        }
+    } else if let Some(query) = args.session {
+        // Open specified session
+        match session_manager.find_session(&query)? {
+            Some(meta) => Some(meta.id),
+            None => {
+                app.set_error(format!("Session not found: {}", query));
+                None
+            }
+        }
+    } else {
+        // Try to load last active session, or create default
+        match session_manager.last_active() {
+            Some(id) if session_manager.session_exists(id) => Some(id.clone()),
+            _ => {
+                // Create default session if none exists
+                let sessions = session_manager.list_sessions()?;
+                if sessions.is_empty() {
+                    match session_manager.create_session("Default") {
+                        Ok(meta) => Some(meta.id),
+                        Err(_) => None,
+                    }
+                } else {
+                    Some(sessions[0].id.clone())
+                }
+            }
+        }
+    };
 
-    // Load file if specified (ASCII export file - for viewing/editing)
+    // Load the session
+    if let Some(session_id) = session_to_load {
+        match session_manager.open_session(&session_id) {
+            Ok((doc, meta)) => {
+                app.doc = doc;
+                app.current_session = Some(session_id);
+                app.current_session_meta = Some(meta.clone());
+                if let Err(e) = app.shape_view.rebuild(&app.doc) {
+                    app.set_status(format!("Error rebuilding view: {}", e));
+                } else {
+                    app.set_status(format!("Session: {}", meta.name));
+                }
+            }
+            Err(e) => {
+                app.set_error(format!("Failed to load session: {}", e));
+            }
+        }
+    }
+
+    // Load ASCII file if specified (imports into current session)
     if let Some(file_path) = args.file {
         match file_io::load_ascii(&file_path) {
             Ok(shapes) => {
-                // Add shapes to document
                 for kind in shapes {
                     let _ = app.doc.add_shape(kind);
                 }
-                // Rebuild view
                 if let Err(e) = app.shape_view.rebuild(&app.doc) {
                     app.set_status(format!("Error rebuilding view: {}", e));
                 }
@@ -98,29 +194,6 @@ fn main() -> Result<()> {
                 app.set_status(format!("Error loading file: {}", e));
             }
         }
-        // Set storage path for autosave
-        app.doc.set_storage_path(storage_path);
-    } else if storage_path.exists() {
-        // Load from persisted automerge document if it exists
-        match document::Document::load(&storage_path) {
-            Ok(doc) => {
-                app.doc = doc;
-                // Rebuild view from loaded document
-                if let Err(e) = app.shape_view.rebuild(&app.doc) {
-                    app.set_status(format!("Error rebuilding view: {}", e));
-                } else {
-                    app.set_status("Loaded previous session");
-                }
-            }
-            Err(e) => {
-                app.set_status(format!("Error loading saved document: {}", e));
-                // Continue with fresh document but set storage path
-                app.doc.set_storage_path(storage_path);
-            }
-        }
-    } else {
-        // Fresh document - set storage path for autosave
-        app.doc.set_storage_path(storage_path);
     }
 
     // Initialize active layer from document
@@ -130,8 +203,16 @@ fn main() -> Result<()> {
     let sync_handle = if !matches!(sync_config.mode, SyncMode::Disabled) {
         match sync::start_sync_thread(sync_config) {
             Ok(handle) => {
-                if let Some(ref endpoint_id) = handle.endpoint_id {
+                if let Some(endpoint_id) = &handle.endpoint_id {
                     app.sync_ticket = Some(endpoint_id.clone());
+                    // Save ticket to session metadata
+                    if let Some(meta) = &mut app.current_session_meta {
+                        meta.set_ticket(endpoint_id);
+                        if app.current_session.is_some() {
+                            let _ = session_manager.save_meta(meta);
+                            let _ = session_manager.save_registry();
+                        }
+                    }
                     app.set_status(format!("Session: {} (T to copy)", endpoint_id));
                 }
                 Some(handle)
@@ -146,7 +227,18 @@ fn main() -> Result<()> {
     };
 
     // Main event loop
-    let result = run_app(&mut terminal, &mut app, sync_handle.as_ref());
+    let result = run_app(
+        &mut terminal,
+        &mut app,
+        sync_handle.as_ref(),
+        &mut session_manager,
+    );
+
+    // Save current session on shutdown
+    if let (Some(session_id), Some(meta)) = (&app.current_session, &mut app.current_session_meta) {
+        meta.touch();
+        let _ = session_manager.save_session(session_id, &mut app.doc, meta);
+    }
 
     // Save recent files on shutdown
     if let Err(e) = app.recent_files.save() {
@@ -174,6 +266,30 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// Simple timestamp formatter (no chrono dependency)
+fn chrono_lite_format(unix_secs: u64) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let diff = now.saturating_sub(unix_secs);
+
+    if diff < 60 {
+        "just now".to_string()
+    } else if diff < 3600 {
+        format!("{}m ago", diff / 60)
+    } else if diff < 86400 {
+        format!("{}h ago", diff / 3600)
+    } else if diff < 604800 {
+        format!("{}d ago", diff / 86400)
+    } else {
+        format!("{}w ago", diff / 604800)
+    }
+}
+
 /// Presence broadcast interval (50ms = 20 Hz)
 const PRESENCE_BROADCAST_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -181,6 +297,7 @@ fn run_app(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     app: &mut App,
     sync_handle: Option<&SyncHandle>,
+    session_manager: &mut session::SessionManager,
 ) -> Result<()> {
     let mut last_presence_broadcast = Instant::now();
     let mut last_stale_prune = Instant::now();
@@ -202,7 +319,10 @@ fn run_app(
         if let Some(handle) = sync_handle {
             while let Some(event) = handle.poll_event() {
                 match event {
-                    sync::SyncEvent::Ready { endpoint_id, local_peer_id } => {
+                    sync::SyncEvent::Ready {
+                        endpoint_id,
+                        local_peer_id,
+                    } => {
                         app.init_presence(local_peer_id);
                         app.set_status(format!("Session ready: {}", endpoint_id));
                     }
@@ -210,7 +330,10 @@ fn run_app(
                         let mut remote_doc = doc;
                         app.merge_remote(&mut remote_doc);
                     }
-                    sync::SyncEvent::PeerStatus { peer_count, connected } => {
+                    sync::SyncEvent::PeerStatus {
+                        peer_count,
+                        connected,
+                    } => {
                         if connected {
                             app.set_status(format!("Peer connected ({})", peer_count));
                         } else {
@@ -267,7 +390,9 @@ fn run_app(
                                             popup_trigger_key = Some(key.code);
                                             true
                                         }
-                                        KeyCode::Char('c') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                        KeyCode::Char('c')
+                                            if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                        {
                                             app.open_brush_popup();
                                             popup_trigger_key = Some(key.code);
                                             true
@@ -280,19 +405,37 @@ fn run_app(
 
                                 if !triggered_popup {
                                     match &app.mode {
-                                        Mode::Normal => handle_normal_mode(app, key),
+                                        Mode::Normal => {
+                                            handle_normal_mode(app, key, session_manager)
+                                        }
                                         Mode::TextInput { .. } => handle_text_input_mode(app, key),
-                                        Mode::LabelInput { .. } => handle_label_input_mode(app, key),
-                                        Mode::LayerRename { .. } => handle_layer_rename_mode(app, key),
+                                        Mode::LabelInput { .. } => {
+                                            handle_label_input_mode(app, key)
+                                        }
+                                        Mode::LayerRename { .. } => {
+                                            handle_layer_rename_mode(app, key)
+                                        }
                                         Mode::FileSave { .. } => handle_file_save_mode(app, key),
                                         Mode::FileOpen { .. } => handle_file_open_mode(app, key),
                                         Mode::DocSave { .. } => handle_doc_save_mode(app, key),
                                         Mode::DocOpen { .. } => handle_doc_open_mode(app, key),
                                         Mode::SvgExport { .. } => handle_svg_export_mode(app, key),
-                                        Mode::RecentFiles { .. } => handle_recent_files_mode(app, key),
+                                        Mode::RecentFiles { .. } => {
+                                            handle_recent_files_mode(app, key)
+                                        }
                                         Mode::SelectionPopup { .. } => {} // Handled above
-                                        Mode::ConfirmDialog { .. } => handle_confirm_dialog_mode(app, key),
-                                        Mode::HelpScreen { .. } => handle_help_screen_mode(app, key),
+                                        Mode::ConfirmDialog { .. } => {
+                                            handle_confirm_dialog_mode(app, key)
+                                        }
+                                        Mode::HelpScreen { .. } => {
+                                            handle_help_screen_mode(app, key)
+                                        }
+                                        Mode::SessionBrowser { .. } => {
+                                            handle_session_browser_mode(app, key, session_manager)
+                                        }
+                                        Mode::SessionCreate { .. } => {
+                                            handle_session_create_mode(app, key)
+                                        }
                                     }
                                 }
                             }
@@ -303,8 +446,103 @@ fn run_app(
                                     let doc = app.clone_automerge();
                                     let _ = handle.send_command(sync::SyncCommand::SyncDoc { doc });
                                 }
-                                // Autosave after changes
-                                app.autosave();
+                                // Autosave to session
+                                if let (Some(session_id), Some(meta)) =
+                                    (&app.current_session, &mut app.current_session_meta)
+                                {
+                                    let _ = session_manager.save_session(
+                                        session_id,
+                                        &mut app.doc,
+                                        meta,
+                                    );
+                                }
+                            }
+
+                            // Handle session switching requests
+                            if let Some(session_id) = app.session_to_switch.take() {
+                                // Save current session first
+                                if let (Some(cur_id), Some(meta)) =
+                                    (&app.current_session, &mut app.current_session_meta)
+                                {
+                                    meta.touch();
+                                    let _ =
+                                        session_manager.save_session(cur_id, &mut app.doc, meta);
+                                }
+                                // Load new session
+                                match session_manager.open_session(&session_id) {
+                                    Ok((doc, meta)) => {
+                                        app.doc = doc;
+                                        app.current_session = Some(session_id);
+                                        app.current_session_meta = Some(meta.clone());
+                                        app.selected.clear();
+                                        if let Err(e) = app.shape_view.rebuild(&app.doc) {
+                                            app.set_error(format!("Error rebuilding view: {}", e));
+                                        } else {
+                                            app.init_active_layer();
+                                            app.set_status(format!("Switched to: {}", meta.name));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        app.set_error(format!("Failed to switch session: {}", e));
+                                    }
+                                }
+                            }
+
+                            // Handle session creation requests
+                            if let Some(name) = app.session_to_create.take() {
+                                // Save current session first
+                                if let (Some(cur_id), Some(meta)) =
+                                    (&app.current_session, &mut app.current_session_meta)
+                                {
+                                    meta.touch();
+                                    let _ =
+                                        session_manager.save_session(cur_id, &mut app.doc, meta);
+                                }
+                                // Create and switch to new session
+                                match session_manager.create_session(&name) {
+                                    Ok(meta) => match session_manager.open_session(&meta.id) {
+                                        Ok((doc, meta)) => {
+                                            app.doc = doc;
+                                            app.current_session = Some(meta.id.clone());
+                                            app.current_session_meta = Some(meta.clone());
+                                            app.selected.clear();
+                                            if let Err(e) = app.shape_view.rebuild(&app.doc) {
+                                                app.set_error(format!("Error: {}", e));
+                                            } else {
+                                                app.init_active_layer();
+                                                app.set_status(format!("Created: {}", meta.name));
+                                            }
+                                        }
+                                        Err(e) => {
+                                            app.set_error(format!(
+                                                "Failed to open new session: {}",
+                                                e
+                                            ));
+                                        }
+                                    },
+                                    Err(e) => {
+                                        app.set_error(format!("Failed to create session: {}", e));
+                                    }
+                                }
+                            }
+
+                            // Handle session deletion requests
+                            if let Some(session_id_str) = app.session_to_delete.take() {
+                                let session_id = session::SessionId(session_id_str);
+                                match session_manager.delete_session(&session_id) {
+                                    Ok(()) => {
+                                        app.set_status("Session deleted");
+                                        // Refresh session list if still in browser
+                                        if matches!(app.mode, Mode::SessionBrowser { .. }) {
+                                            if let Ok(sessions) = session_manager.list_sessions() {
+                                                app.session_list = sessions;
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        app.set_error(format!("Failed to delete: {}", e));
+                                    }
+                                }
                             }
                         }
                         KeyEventKind::Release => {
@@ -357,7 +595,10 @@ fn run_app(
                                     } else {
                                         // Normal click: select layer
                                         app.active_layer = Some(clicked_layer.id);
-                                        app.set_status(format!("Active layer: {}", clicked_layer.name));
+                                        app.set_status(format!(
+                                            "Active layer: {}",
+                                            clicked_layer.name
+                                        ));
                                     }
                                 }
                             }
@@ -398,7 +639,8 @@ fn run_app(
                     if let Some(handle) = sync_handle {
                         if last_presence_broadcast.elapsed() >= PRESENCE_BROADCAST_INTERVAL {
                             if let Some(presence) = app.build_presence(cursor_pos) {
-                                let _ = handle.send_command(sync::SyncCommand::BroadcastPresence(presence));
+                                let _ = handle
+                                    .send_command(sync::SyncCommand::BroadcastPresence(presence));
                             }
                             last_presence_broadcast = Instant::now();
                         }
@@ -415,7 +657,11 @@ fn run_app(
     Ok(())
 }
 
-fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
+fn handle_normal_mode(
+    app: &mut App,
+    key: event::KeyEvent,
+    session_manager: &mut session::SessionManager,
+) {
     match key.code {
         KeyCode::Char('q') => app.running = false,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -426,6 +672,12 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
             app.clear_selection(); // Deselect
         }
 
+        // Session browser (Tab key)
+        KeyCode::Tab => match session_manager.list_sessions() {
+            Ok(sessions) => app.open_session_browser(sessions),
+            Err(e) => app.set_error(format!("Failed to list sessions: {}", e)),
+        },
+
         // Tool selection
         KeyCode::Char('s') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.set_tool(Tool::Select)
@@ -434,7 +686,7 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
         KeyCode::Char('t') => app.set_tool(Tool::Text),
         KeyCode::Char('l') => app.set_tool(Tool::Line),
         KeyCode::Char('a') => app.set_tool(Tool::Arrow),
-        KeyCode::Char('r') => app.set_tool(Tool::Rectangle),
+        KeyCode::Char('r') if !app.show_layers => app.set_tool(Tool::Rectangle),
         KeyCode::Char('b') => app.set_tool(Tool::DoubleBox),
         KeyCode::Char('d') => app.set_tool(Tool::Diamond),
         KeyCode::Char('e') => app.set_tool(Tool::Ellipse),
@@ -457,27 +709,59 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
         KeyCode::Char('{') => app.send_to_back(),
 
         // Grouping (Shift+G to group, Ctrl+Shift+G to ungroup)
-        KeyCode::Char('G') if !key.modifiers.contains(KeyModifiers::CONTROL) => app.group_selection(),
-        KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => app.group_selection(),
-        KeyCode::Char('G') if key.modifiers.contains(KeyModifiers::CONTROL) => app.ungroup_selection(),
+        KeyCode::Char('G') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.group_selection()
+        }
+        KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.group_selection()
+        }
+        KeyCode::Char('G') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.ungroup_selection()
+        }
 
         // Layer shortcuts
         KeyCode::Char('L') => app.toggle_layer_panel(),
         KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => app.create_layer(),
-        KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::CONTROL) => app.request_delete_layer(),
+        KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.request_delete_layer()
+        }
         KeyCode::F(2) if app.show_layers => app.start_layer_rename(),
-        KeyCode::Char('r') if app.show_layers && app.active_layer.is_some() => app.start_layer_rename(),
-        KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(1),
-        KeyCode::Char('2') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(2),
-        KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(3),
-        KeyCode::Char('4') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(4),
-        KeyCode::Char('5') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(5),
-        KeyCode::Char('6') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(6),
-        KeyCode::Char('7') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(7),
-        KeyCode::Char('8') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(8),
-        KeyCode::Char('9') if key.modifiers.contains(KeyModifiers::ALT) => app.select_layer_by_index(9),
-        KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => app.move_selection_to_active_layer(),
-        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => app.toggle_active_layer_visibility(),
+        KeyCode::Char('r') if app.show_layers && app.active_layer.is_some() => {
+            app.start_layer_rename()
+        }
+        KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.select_layer_by_index(1)
+        }
+        KeyCode::Char('2') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.select_layer_by_index(2)
+        }
+        KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.select_layer_by_index(3)
+        }
+        KeyCode::Char('4') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.select_layer_by_index(4)
+        }
+        KeyCode::Char('5') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.select_layer_by_index(5)
+        }
+        KeyCode::Char('6') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.select_layer_by_index(6)
+        }
+        KeyCode::Char('7') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.select_layer_by_index(7)
+        }
+        KeyCode::Char('8') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.select_layer_by_index(8)
+        }
+        KeyCode::Char('9') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.select_layer_by_index(9)
+        }
+        KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.move_selection_to_active_layer()
+        }
+        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.toggle_active_layer_visibility()
+        }
 
         // Delete selected shape
         KeyCode::Delete | KeyCode::Backspace => {
@@ -496,19 +780,21 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) {
         }
 
         // File operations (ASCII export/import)
-        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::SHIFT) => {
+        KeyCode::Char('s')
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::SHIFT) =>
+        {
             app.start_save()
         }
-        KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::SHIFT) => {
+        KeyCode::Char('o')
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::SHIFT) =>
+        {
             app.start_open()
         }
         // Document save/open (with Shift)
-        KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.start_doc_save()
-        }
-        KeyCode::Char('O') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.start_doc_open()
-        }
+        KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::CONTROL) => app.start_doc_save(),
+        KeyCode::Char('O') if key.modifiers.contains(KeyModifiers::CONTROL) => app.start_doc_open(),
 
         // Copy sync ticket to clipboard (capital T)
         KeyCode::Char('T') => app.copy_ticket_to_clipboard(),
@@ -892,6 +1178,82 @@ fn handle_help_screen_mode(app: &mut App, key: event::KeyEvent) {
         // Page up
         KeyCode::PageUp => {
             app.scroll_help(-10);
+        }
+        _ => {}
+    }
+}
+
+fn handle_session_browser_mode(
+    app: &mut App,
+    key: event::KeyEvent,
+    session_manager: &mut session::SessionManager,
+) {
+    match key.code {
+        // Close browser
+        KeyCode::Esc | KeyCode::Tab => {
+            app.close_session_browser();
+        }
+        // Navigate
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.session_browser_navigate(1);
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.session_browser_navigate(-1);
+        }
+        // Select session
+        KeyCode::Enter => {
+            app.session_browser_select();
+        }
+        // Create new session
+        KeyCode::Char('n') => {
+            app.open_session_create();
+        }
+        // Delete session
+        KeyCode::Char('d') | KeyCode::Delete => {
+            app.session_browser_request_delete();
+        }
+        // Toggle pinned
+        KeyCode::Char('p') => {
+            if let Some(session_id) = app.session_browser_toggle_pin() {
+                if let Ok(pinned) = session_manager.toggle_pinned(&session_id) {
+                    // Refresh list to show updated pinned status
+                    if let Ok(sessions) = session_manager.list_sessions() {
+                        app.session_list = sessions;
+                    }
+                    let msg = if pinned { "Pinned" } else { "Unpinned" };
+                    app.set_status(msg);
+                }
+            }
+        }
+        // Toggle pinned-only filter
+        KeyCode::Char('*') => {
+            app.session_browser_toggle_pinned();
+        }
+        // Backspace for filter
+        KeyCode::Backspace => {
+            app.session_browser_filter_backspace();
+        }
+        // Type to filter
+        KeyCode::Char(c) if c.is_alphanumeric() || c == '-' || c == '_' => {
+            app.session_browser_filter_char(c);
+        }
+        _ => {}
+    }
+}
+
+fn handle_session_create_mode(app: &mut App, key: event::KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.session_create_cancel();
+        }
+        KeyCode::Enter => {
+            app.session_create_confirm();
+        }
+        KeyCode::Backspace => {
+            app.session_create_backspace();
+        }
+        KeyCode::Char(c) => {
+            app.session_create_char(c);
         }
         _ => {}
     }

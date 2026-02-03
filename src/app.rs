@@ -5,11 +5,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ratatui::layout::Rect;
 
 use crate::canvas::{LineStyle, Position, Viewport};
-use crate::document::{default_storage_path, Document, Group, GroupId, ShapeId};
+use crate::document::{Document, GroupId, ShapeId, default_storage_path};
 use crate::layers::{Layer, LayerId};
 use crate::presence::{CursorActivity, PeerId, PeerPresence, PresenceManager, ToolKind};
-use crate::shapes::{resize_shape, ResizeHandle, ShapeColor, ShapeKind, ShapeView, SnapPoint};
 use crate::recent_files::RecentFiles;
+use crate::shapes::{ResizeHandle, ShapeColor, ShapeKind, ShapeView, SnapPoint, resize_shape};
 
 /// Snap distance threshold (in characters)
 pub const SNAP_THRESHOLD: i32 = 3;
@@ -19,14 +19,10 @@ pub const GRID_SIZE: i32 = 5;
 
 /// Available brush characters for freehand drawing
 pub const BRUSHES: &[char] = &[
-    '*', '#', '@', '+', '.', 'o', 'x', 'O', '~',
-    // Full and shade blocks
-    '█', '░', '▒', '▓',
-    // Half blocks
-    '▀', '▄', '▌', '▐',
-    // Quadrant blocks
-    '▖', '▗', '▘', '▝',
-    // Shapes
+    '*', '#', '@', '+', '.', 'o', 'x', 'O', '~', // Full and shade blocks
+    '█', '░', '▒', '▓', // Half blocks
+    '▀', '▄', '▌', '▐', // Quadrant blocks
+    '▖', '▗', '▘', '▝', // Shapes
     '●', '○', '■', '□', '◆', '◇', '▪', '▫',
 ];
 
@@ -121,18 +117,57 @@ impl Tool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
     Normal,
-    TextInput { start_pos: Position, text: String },
-    LabelInput { shape_id: ShapeId, text: String, cursor: usize },
-    LayerRename { layer_id: LayerId, text: String },
-    FileSave { path: String },
-    FileOpen { path: String },
-    DocSave { path: String },
-    DocOpen { path: String },
-    SvgExport { path: String },
-    RecentFiles { selected: usize },
-    SelectionPopup { kind: PopupKind, selected: usize },
-    ConfirmDialog { action: PendingAction },
-    HelpScreen { scroll: usize },
+    TextInput {
+        start_pos: Position,
+        text: String,
+    },
+    LabelInput {
+        shape_id: ShapeId,
+        text: String,
+        cursor: usize,
+    },
+    LayerRename {
+        layer_id: LayerId,
+        text: String,
+    },
+    FileSave {
+        path: String,
+    },
+    FileOpen {
+        path: String,
+    },
+    DocSave {
+        path: String,
+    },
+    DocOpen {
+        path: String,
+    },
+    SvgExport {
+        path: String,
+    },
+    RecentFiles {
+        selected: usize,
+    },
+    SelectionPopup {
+        kind: PopupKind,
+        selected: usize,
+    },
+    ConfirmDialog {
+        action: PendingAction,
+    },
+    HelpScreen {
+        scroll: usize,
+    },
+    /// Session browser for switching between sessions
+    SessionBrowser {
+        selected: usize,
+        filter: String,
+        show_pinned_only: bool,
+    },
+    /// Create a new session
+    SessionCreate {
+        name: String,
+    },
 }
 
 /// Kind of popup selection window
@@ -148,6 +183,7 @@ pub enum PopupKind {
 pub enum PendingAction {
     DeleteLayer(LayerId),
     NewDocument,
+    DeleteSession(String), // Session ID
 }
 
 impl PendingAction {
@@ -156,6 +192,7 @@ impl PendingAction {
         match self {
             PendingAction::DeleteLayer(_) => "Delete Layer",
             PendingAction::NewDocument => "New Document",
+            PendingAction::DeleteSession(_) => "Delete Session",
         }
     }
 
@@ -164,6 +201,7 @@ impl PendingAction {
         match self {
             PendingAction::DeleteLayer(_) => "Delete this layer and all its shapes?",
             PendingAction::NewDocument => "Discard unsaved changes and start new document?",
+            PendingAction::DeleteSession(_) => "Permanently delete this session?",
         }
     }
 }
@@ -191,8 +229,8 @@ impl MessageSeverity {
 pub struct ShapeState {
     pub start: Position,
     pub current: Position,
-    pub start_snap: Option<Position>,   // Snapped start position
-    pub current_snap: Option<Position>, // Snapped current position
+    pub start_snap: Option<Position>,     // Snapped start position
+    pub current_snap: Option<Position>,   // Snapped current position
     pub start_snap_id: Option<ShapeId>,   // Shape ID snapped to at start
     pub current_snap_id: Option<ShapeId>, // Shape ID snapped to at current
 }
@@ -233,9 +271,9 @@ pub enum SnapOrientation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapGuide {
     pub orientation: SnapOrientation,
-    pub position: i32,  // x for vertical, y for horizontal
-    pub start: i32,     // start of line extent
-    pub end: i32,       // end of line extent
+    pub position: i32, // x for vertical, y for horizontal
+    pub start: i32,    // start of line extent
+    pub end: i32,      // end of line extent
 }
 
 /// Mouse button state
@@ -309,6 +347,18 @@ pub struct App {
     pub layer_panel_area: Option<Rect>,
     /// Snap guide lines shown during drag
     pub shape_snap_guides: Vec<SnapGuide>,
+    /// Current session ID (if using session management)
+    pub current_session: Option<crate::session::SessionId>,
+    /// Current session metadata (cached for display)
+    pub current_session_meta: Option<crate::session::SessionMeta>,
+    /// Cached session list for browser (refreshed on open)
+    pub session_list: Vec<crate::session::SessionMeta>,
+    /// Session to switch to (set by UI, handled by main loop)
+    pub session_to_switch: Option<crate::session::SessionId>,
+    /// Session to delete (set by confirm dialog, handled by main loop)
+    pub session_to_delete: Option<String>,
+    /// New session to create (set by UI, handled by main loop)
+    pub session_to_create: Option<String>,
 }
 
 impl App {
@@ -346,6 +396,12 @@ impl App {
             show_layers: false,
             layer_panel_area: None,
             shape_snap_guides: Vec::new(),
+            current_session: None,
+            current_session_meta: None,
+            session_list: Vec::new(),
+            session_to_switch: None,
+            session_to_delete: None,
+            session_to_create: None,
         }
     }
 
@@ -372,7 +428,12 @@ impl App {
             }
         } else if let Some(ref drag_state) = self.drag_state {
             // Use actual selected shape (drag_state.shape_id is ShapeId::default() for multi-select)
-            let shape_id = self.selected.iter().next().copied().unwrap_or(drag_state.shape_id);
+            let shape_id = self
+                .selected
+                .iter()
+                .next()
+                .copied()
+                .unwrap_or(drag_state.shape_id);
             CursorActivity::Dragging {
                 shape_id,
                 delta: (drag_state.total_dx, drag_state.total_dy),
@@ -383,7 +444,9 @@ impl App {
                 preview_bounds: resize_state.preview_bounds,
             }
         } else if let Mode::TextInput { start_pos, .. } = &self.mode {
-            CursorActivity::Typing { position: *start_pos }
+            CursorActivity::Typing {
+                position: *start_pos,
+            }
         } else if self.selected.len() == 1 {
             let id = *self.selected.iter().next().unwrap();
             CursorActivity::Selected { shape_id: id }
@@ -419,7 +482,10 @@ impl App {
     pub fn build_presence(&self, cursor_pos: Position) -> Option<PeerPresence> {
         let peer_id = self.local_peer_id?;
         // Include drag/resize start time for soft lock ordering
-        let drag_start_ms = self.drag_state.as_ref().map(|d| d.started_at_ms)
+        let drag_start_ms = self
+            .drag_state
+            .as_ref()
+            .map(|d| d.started_at_ms)
             .or_else(|| self.resize_state.as_ref().map(|r| r.started_at_ms));
         Some(PeerPresence::new(
             peer_id,
@@ -445,7 +511,9 @@ impl App {
                 .spawn()
             {
                 // Don't wait, just detach
-                std::thread::spawn(move || { let _ = child.wait(); });
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
                 self.set_status(format!("Copied: {}", ticket));
                 return;
             }
@@ -656,7 +724,14 @@ impl App {
 
         if let Some((pos, content)) = text_data {
             self.save_undo_state();
-            if self.add_shape_to_active_layer(ShapeKind::Text { pos, content, color: self.current_color }).is_ok() {
+            if self
+                .add_shape_to_active_layer(ShapeKind::Text {
+                    pos,
+                    content,
+                    color: self.current_color,
+                })
+                .is_ok()
+            {
                 self.rebuild_view();
                 self.doc.mark_dirty();
             }
@@ -689,12 +764,15 @@ impl App {
         if let Some(state) = self.freehand_state.take() {
             if !state.points.is_empty() {
                 self.save_undo_state();
-                if self.add_shape_to_active_layer(ShapeKind::Freehand {
-                    points: state.points,
-                    char: self.brush_char,
-                    label: None,
-                    color: self.current_color,
-                }).is_ok() {
+                if self
+                    .add_shape_to_active_layer(ShapeKind::Freehand {
+                        points: state.points,
+                        char: self.brush_char,
+                        label: None,
+                        color: self.current_color,
+                    })
+                    .is_ok()
+                {
                     self.rebuild_view();
                     self.doc.mark_dirty();
                 }
@@ -777,44 +855,36 @@ impl App {
 
             self.save_undo_state();
             let result = match self.current_tool {
-                Tool::Line => {
-                    self.add_shape_to_active_layer(ShapeKind::Line {
-                        start,
-                        end,
-                        style: self.line_style,
-                        start_connection: start_conn,
-                        end_connection: current_conn,
-                        label: None,
-                        color: self.current_color,
-                    })
-                }
-                Tool::Arrow => {
-                    self.add_shape_to_active_layer(ShapeKind::Arrow {
-                        start,
-                        end,
-                        style: self.line_style,
-                        start_connection: start_conn,
-                        end_connection: current_conn,
-                        label: None,
-                        color: self.current_color,
-                    })
-                }
-                Tool::Rectangle => {
-                    self.add_shape_to_active_layer(ShapeKind::Rectangle {
-                        start,
-                        end,
-                        label: None,
-                        color: self.current_color,
-                    })
-                }
-                Tool::DoubleBox => {
-                    self.add_shape_to_active_layer(ShapeKind::DoubleBox {
-                        start,
-                        end,
-                        label: None,
-                        color: self.current_color,
-                    })
-                }
+                Tool::Line => self.add_shape_to_active_layer(ShapeKind::Line {
+                    start,
+                    end,
+                    style: self.line_style,
+                    start_connection: start_conn,
+                    end_connection: current_conn,
+                    label: None,
+                    color: self.current_color,
+                }),
+                Tool::Arrow => self.add_shape_to_active_layer(ShapeKind::Arrow {
+                    start,
+                    end,
+                    style: self.line_style,
+                    start_connection: start_conn,
+                    end_connection: current_conn,
+                    label: None,
+                    color: self.current_color,
+                }),
+                Tool::Rectangle => self.add_shape_to_active_layer(ShapeKind::Rectangle {
+                    start,
+                    end,
+                    label: None,
+                    color: self.current_color,
+                }),
+                Tool::DoubleBox => self.add_shape_to_active_layer(ShapeKind::DoubleBox {
+                    start,
+                    end,
+                    label: None,
+                    color: self.current_color,
+                }),
                 Tool::Diamond => {
                     // Diamond uses center + half dimensions
                     let center = start;
@@ -854,14 +924,12 @@ impl App {
                         color: self.current_color,
                     })
                 }
-                Tool::Parallelogram => {
-                    self.add_shape_to_active_layer(ShapeKind::Parallelogram {
-                        start,
-                        end,
-                        label: None,
-                        color: self.current_color,
-                    })
-                }
+                Tool::Parallelogram => self.add_shape_to_active_layer(ShapeKind::Parallelogram {
+                    start,
+                    end,
+                    label: None,
+                    color: self.current_color,
+                }),
                 Tool::Hexagon => {
                     let center = start;
                     let radius_x = (end.x - start.x).abs().max(2);
@@ -874,38 +942,30 @@ impl App {
                         color: self.current_color,
                     })
                 }
-                Tool::Trapezoid => {
-                    self.add_shape_to_active_layer(ShapeKind::Trapezoid {
-                        start,
-                        end,
-                        label: None,
-                        color: self.current_color,
-                    })
-                }
-                Tool::RoundedRect => {
-                    self.add_shape_to_active_layer(ShapeKind::RoundedRect {
-                        start,
-                        end,
-                        label: None,
-                        color: self.current_color,
-                    })
-                }
-                Tool::Cylinder => {
-                    self.add_shape_to_active_layer(ShapeKind::Cylinder {
-                        start,
-                        end,
-                        label: None,
-                        color: self.current_color,
-                    })
-                }
-                Tool::Cloud => {
-                    self.add_shape_to_active_layer(ShapeKind::Cloud {
-                        start,
-                        end,
-                        label: None,
-                        color: self.current_color,
-                    })
-                }
+                Tool::Trapezoid => self.add_shape_to_active_layer(ShapeKind::Trapezoid {
+                    start,
+                    end,
+                    label: None,
+                    color: self.current_color,
+                }),
+                Tool::RoundedRect => self.add_shape_to_active_layer(ShapeKind::RoundedRect {
+                    start,
+                    end,
+                    label: None,
+                    color: self.current_color,
+                }),
+                Tool::Cylinder => self.add_shape_to_active_layer(ShapeKind::Cylinder {
+                    start,
+                    end,
+                    label: None,
+                    color: self.current_color,
+                }),
+                Tool::Cloud => self.add_shape_to_active_layer(ShapeKind::Cloud {
+                    start,
+                    end,
+                    label: None,
+                    color: self.current_color,
+                }),
                 Tool::Star => {
                     let center = start;
                     let outer_radius = (end.x - start.x).abs().max((end.y - start.y).abs()).max(2);
@@ -976,7 +1036,10 @@ impl App {
         // Check if shape is on a locked layer and warn
         if let Some((layer_name, _visible, locked)) = self.get_shape_layer_info(id) {
             if locked {
-                self.set_warning(format!("Shape on locked layer '{}' (read-only)", layer_name));
+                self.set_warning(format!(
+                    "Shape on locked layer '{}' (read-only)",
+                    layer_name
+                ));
                 return;
             }
         }
@@ -985,7 +1048,10 @@ impl App {
         if count == 1 {
             self.set_status("Selected shape - drag to move, [Del] to delete");
         } else {
-            self.set_status(format!("Selected group ({} shapes) - drag to move, [Del] to delete", count));
+            self.set_status(format!(
+                "Selected group ({} shapes) - drag to move, [Del] to delete",
+                count
+            ));
         }
     }
 
@@ -1146,7 +1212,11 @@ impl App {
         }
 
         self.rebuild_view();
-        self.set_status(format!("Ungrouped {} group{}", count, if count == 1 { "" } else { "s" }));
+        self.set_status(format!(
+            "Ungrouped {} group{}",
+            count,
+            if count == 1 { "" } else { "s" }
+        ));
     }
 
     /// Expand selection to include all shapes in the same groups
@@ -1292,7 +1362,11 @@ impl App {
                 }
             }
             self.rebuild_view();
-            self.set_status(format!("Moved {} shape{} to active layer", count, if count == 1 { "" } else { "s" }));
+            self.set_status(format!(
+                "Moved {} shape{} to active layer",
+                count,
+                if count == 1 { "" } else { "s" }
+            ));
         }
     }
 
@@ -1469,7 +1543,10 @@ impl App {
             for &id in &self.selected {
                 if let Some(peer) = presence_mgr.get_dragger_for_shape(id) {
                     // Another peer is dragging this shape - warn but allow
-                    self.set_warning(format!("{} is already moving this shape", peer.display_name()));
+                    self.set_warning(format!(
+                        "{} is already moving this shape",
+                        peer.display_name()
+                    ));
                     break;
                 }
             }
@@ -1720,13 +1797,17 @@ impl App {
                 // Check if any remote peer is already resizing this shape (soft lock)
                 if let Some(ref presence_mgr) = self.presence {
                     if let Some(peer) = presence_mgr.get_dragger_for_shape(id) {
-                        self.set_warning(format!("{} is already manipulating this shape", peer.display_name()));
+                        self.set_warning(format!(
+                            "{} is already manipulating this shape",
+                            peer.display_name()
+                        ));
                     }
                 }
 
                 // Get initial preview bounds
                 let (min_x, min_y, max_x, max_y) = original_kind.bounds();
-                let preview_bounds = Some((Position::new(min_x, min_y), Position::new(max_x, max_y)));
+                let preview_bounds =
+                    Some((Position::new(min_x, min_y), Position::new(max_x, max_y)));
 
                 self.save_undo_state();
                 self.resize_state = Some(ResizeState {
@@ -1763,14 +1844,13 @@ impl App {
         let new_kind = resize_shape(&old_kind, handle, pos);
 
         // Update ONLY the cache during resize (no document writes - they're slow!)
-        self.shape_view.update_shape_kind(shape_id, new_kind.clone());
+        self.shape_view
+            .update_shape_kind(shape_id, new_kind.clone());
 
         // Find and update connected shapes in cache
-        let connected_updates = self.shape_view.find_connected_updates_for_resize(
-            shape_id,
-            &original_kind,
-            &new_kind,
-        );
+        let connected_updates =
+            self.shape_view
+                .find_connected_updates_for_resize(shape_id, &original_kind, &new_kind);
 
         let mut modified_ids = vec![shape_id];
         for (id, kind) in connected_updates {
@@ -1783,7 +1863,8 @@ impl App {
             resize.modified_shapes.extend(modified_ids);
             // Update preview bounds for presence broadcast
             let (min_x, min_y, max_x, max_y) = new_kind.bounds();
-            resize.preview_bounds = Some((Position::new(min_x, min_y), Position::new(max_x, max_y)));
+            resize.preview_bounds =
+                Some((Position::new(min_x, min_y), Position::new(max_x, max_y)));
         }
     }
 
@@ -1810,7 +1891,9 @@ impl App {
         }
 
         // Check if any selected shapes are on locked layers
-        let locked_count = self.selected.iter()
+        let locked_count = self
+            .selected
+            .iter()
             .filter(|&&id| self.is_shape_locked(id))
             .count();
 
@@ -1819,12 +1902,17 @@ impl App {
                 self.set_error("Cannot delete - all selected shapes are on locked layers");
                 return;
             } else {
-                self.set_warning(format!("{} shape(s) on locked layers will be skipped", locked_count));
+                self.set_warning(format!(
+                    "{} shape(s) on locked layers will be skipped",
+                    locked_count
+                ));
             }
         }
 
         self.save_undo_state();
-        let ids: Vec<_> = self.selected.iter()
+        let ids: Vec<_> = self
+            .selected
+            .iter()
             .copied()
             .filter(|&id| !self.is_shape_locked(id))
             .collect();
@@ -1955,21 +2043,23 @@ impl App {
         let path = std::path::Path::new(&current_path);
 
         // Get the directory and prefix to complete
-        let (dir, prefix) = if current_path.ends_with('/') || current_path.ends_with(std::path::MAIN_SEPARATOR) {
-            (std::path::PathBuf::from(&current_path), String::new())
-        } else if let Some(parent) = path.parent() {
-            let parent_path = if parent.as_os_str().is_empty() {
-                std::path::PathBuf::from(".")
+        let (dir, prefix) =
+            if current_path.ends_with('/') || current_path.ends_with(std::path::MAIN_SEPARATOR) {
+                (std::path::PathBuf::from(&current_path), String::new())
+            } else if let Some(parent) = path.parent() {
+                let parent_path = if parent.as_os_str().is_empty() {
+                    std::path::PathBuf::from(".")
+                } else {
+                    parent.to_path_buf()
+                };
+                let file_name = path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                (parent_path, file_name)
             } else {
-                parent.to_path_buf()
+                (std::path::PathBuf::from("."), current_path.clone())
             };
-            let file_name = path.file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-            (parent_path, file_name)
-        } else {
-            (std::path::PathBuf::from("."), current_path.clone())
-        };
 
         // List directory and find matches
         let matches: Vec<String> = match std::fs::read_dir(&dir) {
@@ -2011,15 +2101,14 @@ impl App {
         } else {
             // Find longest common prefix
             let first = &matches[0];
-            let common_len = matches.iter()
-                .skip(1)
-                .fold(first.len(), |len, s| {
-                    first.chars()
-                        .zip(s.chars())
-                        .take(len)
-                        .take_while(|(a, b)| a == b)
-                        .count()
-                });
+            let common_len = matches.iter().skip(1).fold(first.len(), |len, s| {
+                first
+                    .chars()
+                    .zip(s.chars())
+                    .take(len)
+                    .take_while(|(a, b)| a == b)
+                    .count()
+            });
             let common: String = first.chars().take(common_len).collect();
             self.set_status(format!("{} matches", matches.len()));
             common
@@ -2201,7 +2290,11 @@ impl App {
     /// Toggle grid snapping
     pub fn toggle_grid(&mut self) {
         self.grid_enabled = !self.grid_enabled;
-        self.set_status(if self.grid_enabled { "Grid: ON" } else { "Grid: OFF" });
+        self.set_status(if self.grid_enabled {
+            "Grid: ON"
+        } else {
+            "Grid: OFF"
+        });
     }
 
     /// Create a new empty document
@@ -2234,7 +2327,10 @@ impl App {
 
     /// Open the tool selection popup
     pub fn open_tool_popup(&mut self) {
-        let selected = TOOLS.iter().position(|&t| t == self.current_tool).unwrap_or(0);
+        let selected = TOOLS
+            .iter()
+            .position(|&t| t == self.current_tool)
+            .unwrap_or(0);
         self.mode = Mode::SelectionPopup {
             kind: PopupKind::Tool,
             selected,
@@ -2243,7 +2339,10 @@ impl App {
 
     /// Open the color selection popup
     pub fn open_color_popup(&mut self) {
-        let selected = COLORS.iter().position(|&c| c == self.current_color).unwrap_or(0);
+        let selected = COLORS
+            .iter()
+            .position(|&c| c == self.current_color)
+            .unwrap_or(0);
         self.mode = Mode::SelectionPopup {
             kind: PopupKind::Color,
             selected,
@@ -2252,7 +2351,10 @@ impl App {
 
     /// Open the brush character selection popup
     pub fn open_brush_popup(&mut self) {
-        let selected = BRUSHES.iter().position(|&c| c == self.brush_char).unwrap_or(0);
+        let selected = BRUSHES
+            .iter()
+            .position(|&c| c == self.brush_char)
+            .unwrap_or(0);
         self.mode = Mode::SelectionPopup {
             kind: PopupKind::Brush,
             selected,
@@ -2276,7 +2378,11 @@ impl App {
                         if !self.selected.is_empty() {
                             let count = self.apply_color_to_selected(color);
                             if count > 0 {
-                                self.set_status(format!("Changed color of {} shape(s) to {}", count, color.name()));
+                                self.set_status(format!(
+                                    "Changed color of {} shape(s) to {}",
+                                    count,
+                                    color.name()
+                                ));
                             } else {
                                 self.set_status(format!("Color: {}", color.name()));
                             }
@@ -2303,10 +2409,14 @@ impl App {
 
     /// Navigate within the popup selection grid
     pub fn popup_navigate(&mut self, dx: i32, dy: i32) {
-        if let Mode::SelectionPopup { kind, ref mut selected } = self.mode {
+        if let Mode::SelectionPopup {
+            kind,
+            ref mut selected,
+        } = self.mode
+        {
             let (cols, total) = match kind {
-                PopupKind::Tool => (3, TOOLS.len()),   // 3x3 grid for 9 tools
-                PopupKind::Color => (4, COLORS.len()), // 4x4 grid for 16 colors
+                PopupKind::Tool => (3, TOOLS.len()),    // 3x3 grid for 9 tools
+                PopupKind::Color => (4, COLORS.len()),  // 4x4 grid for 16 colors
                 PopupKind::Brush => (6, BRUSHES.len()), // 6 columns for brushes
             };
             let rows = (total + cols - 1) / cols;
@@ -2363,7 +2473,8 @@ impl App {
 
         // Get layer name
         let layer_info = if let Some(layer_id) = shape.layer_id {
-            self.doc.read_layer(layer_id)
+            self.doc
+                .read_layer(layer_id)
                 .ok()
                 .flatten()
                 .map(|l| l.name.clone())
@@ -2373,7 +2484,9 @@ impl App {
         };
 
         // Check if shape is grouped
-        let group_info = self.doc.get_shape_group(id)
+        let group_info = self
+            .doc
+            .get_shape_group(id)
             .ok()
             .flatten()
             .map(|_| " | Grouped".to_string());
@@ -2429,6 +2542,10 @@ impl App {
             PendingAction::NewDocument => {
                 self.new_document();
             }
+            PendingAction::DeleteSession(session_id) => {
+                // Session deletion is handled by main.rs via session_to_delete
+                self.session_to_delete = Some(session_id);
+            }
         }
     }
 
@@ -2459,6 +2576,214 @@ impl App {
                 *scroll = scroll.saturating_add(delta as usize);
             }
         }
+    }
+
+    // ========== Session Browser Methods ==========
+
+    /// Open the session browser
+    pub fn open_session_browser(&mut self, sessions: Vec<crate::session::SessionMeta>) {
+        self.session_list = sessions;
+        self.mode = Mode::SessionBrowser {
+            selected: 0,
+            filter: String::new(),
+            show_pinned_only: false,
+        };
+    }
+
+    /// Close the session browser
+    pub fn close_session_browser(&mut self) {
+        self.mode = Mode::Normal;
+    }
+
+    /// Navigate in session browser
+    pub fn session_browser_navigate(&mut self, delta: i32) {
+        // Extract values to avoid borrow checker issues
+        let (filter, show_pinned_only) = if let Mode::SessionBrowser {
+            ref filter,
+            show_pinned_only,
+            ..
+        } = self.mode
+        {
+            (filter.clone(), show_pinned_only)
+        } else {
+            return;
+        };
+
+        let len = self.get_filtered_sessions(&filter, show_pinned_only).len();
+        if len == 0 {
+            return;
+        }
+
+        if let Mode::SessionBrowser {
+            ref mut selected, ..
+        } = self.mode
+        {
+            if delta < 0 {
+                *selected = selected.saturating_sub((-delta) as usize);
+            } else {
+                *selected = (*selected + delta as usize).min(len - 1);
+            }
+        }
+    }
+
+    /// Add character to session browser filter
+    pub fn session_browser_filter_char(&mut self, ch: char) {
+        if let Mode::SessionBrowser {
+            ref mut filter,
+            ref mut selected,
+            ..
+        } = self.mode
+        {
+            filter.push(ch);
+            *selected = 0; // Reset selection when filter changes
+        }
+    }
+
+    /// Remove character from session browser filter
+    pub fn session_browser_filter_backspace(&mut self) {
+        if let Mode::SessionBrowser {
+            ref mut filter,
+            ref mut selected,
+            ..
+        } = self.mode
+        {
+            filter.pop();
+            *selected = 0;
+        }
+    }
+
+    /// Toggle pinned-only filter in session browser
+    pub fn session_browser_toggle_pinned(&mut self) {
+        if let Mode::SessionBrowser {
+            ref mut show_pinned_only,
+            ref mut selected,
+            ..
+        } = self.mode
+        {
+            *show_pinned_only = !*show_pinned_only;
+            *selected = 0;
+        }
+    }
+
+    /// Get filtered sessions for display
+    pub fn get_filtered_sessions(
+        &self,
+        filter: &str,
+        pinned_only: bool,
+    ) -> Vec<&crate::session::SessionMeta> {
+        let filter_lower = filter.to_lowercase();
+        self.session_list
+            .iter()
+            .filter(|s| {
+                if pinned_only && !s.pinned {
+                    return false;
+                }
+                if filter.is_empty() {
+                    return true;
+                }
+                // Simple contains match for display filtering
+                s.name.to_lowercase().contains(&filter_lower)
+                    || s.id.0.contains(&filter_lower)
+                    || s.tags
+                        .iter()
+                        .any(|t| t.to_lowercase().contains(&filter_lower))
+            })
+            .collect()
+    }
+
+    /// Select the current session in browser
+    pub fn session_browser_select(&mut self) {
+        if let Mode::SessionBrowser {
+            selected,
+            ref filter,
+            show_pinned_only,
+        } = self.mode
+        {
+            let filtered = self.get_filtered_sessions(filter, show_pinned_only);
+            if let Some(session) = filtered.get(selected) {
+                self.session_to_switch = Some(session.id.clone());
+            }
+        }
+        self.mode = Mode::Normal;
+    }
+
+    /// Request to delete selected session (shows confirm dialog)
+    pub fn session_browser_request_delete(&mut self) {
+        if let Mode::SessionBrowser {
+            selected,
+            ref filter,
+            show_pinned_only,
+        } = self.mode
+        {
+            let filtered = self.get_filtered_sessions(filter, show_pinned_only);
+            if let Some(session) = filtered.get(selected) {
+                // Don't allow deleting current session
+                if self.current_session.as_ref() == Some(&session.id) {
+                    self.set_error("Cannot delete the active session");
+                    return;
+                }
+                self.mode = Mode::ConfirmDialog {
+                    action: PendingAction::DeleteSession(session.id.0.clone()),
+                };
+            }
+        }
+    }
+
+    /// Toggle pinned status of selected session
+    pub fn session_browser_toggle_pin(&mut self) -> Option<crate::session::SessionId> {
+        if let Mode::SessionBrowser {
+            selected,
+            ref filter,
+            show_pinned_only,
+        } = self.mode
+        {
+            let filtered = self.get_filtered_sessions(filter, show_pinned_only);
+            if let Some(session) = filtered.get(selected) {
+                return Some(session.id.clone());
+            }
+        }
+        None
+    }
+
+    /// Open session create dialog
+    pub fn open_session_create(&mut self) {
+        self.mode = Mode::SessionCreate {
+            name: String::new(),
+        };
+    }
+
+    /// Add character to session create name
+    pub fn session_create_char(&mut self, ch: char) {
+        if let Mode::SessionCreate { ref mut name } = self.mode {
+            name.push(ch);
+        }
+    }
+
+    /// Remove character from session create name
+    pub fn session_create_backspace(&mut self) {
+        if let Mode::SessionCreate { ref mut name } = self.mode {
+            name.pop();
+        }
+    }
+
+    /// Confirm session creation
+    pub fn session_create_confirm(&mut self) {
+        if let Mode::SessionCreate { ref name } = self.mode {
+            if !name.is_empty() {
+                self.session_to_create = Some(name.clone());
+            }
+        }
+        self.mode = Mode::Normal;
+    }
+
+    /// Cancel session creation
+    pub fn session_create_cancel(&mut self) {
+        self.mode = Mode::Normal;
+    }
+
+    /// Get the current session name for display
+    pub fn current_session_name(&self) -> Option<&str> {
+        self.current_session_meta.as_ref().map(|m| m.name.as_str())
     }
 }
 
