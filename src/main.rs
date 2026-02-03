@@ -559,6 +559,29 @@ fn run_app(
                     let cursor_pos = app.viewport.screen_to_canvas(mouse.column, mouse.row);
                     app.last_cursor_pos = cursor_pos;
 
+                    // Handle Ctrl+scroll for zoom
+                    if mouse.modifiers.contains(KeyModifiers::CONTROL) {
+                        match mouse.kind {
+                            MouseEventKind::ScrollUp => {
+                                app.viewport.zoom_in();
+                                app.set_status(format!(
+                                    "Zoom: {}%",
+                                    (app.viewport.zoom * 100.0) as i32
+                                ));
+                                continue;
+                            }
+                            MouseEventKind::ScrollDown => {
+                                app.viewport.zoom_out();
+                                app.set_status(format!(
+                                    "Zoom: {}%",
+                                    (app.viewport.zoom * 100.0) as i32
+                                ));
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+
                     // Check if click is in layer panel
                     let in_layer_panel = app.layer_panel_area.map_or(false, |area| {
                         mouse.column >= area.x
@@ -877,6 +900,25 @@ fn handle_normal_mode(
         KeyCode::Down => app.viewport.pan(0, 1),
         KeyCode::Left => app.viewport.pan(-1, 0),
         KeyCode::Right => app.viewport.pan(1, 0),
+
+        // Zoom controls (Ctrl+Plus, Ctrl+Minus, Ctrl+0)
+        KeyCode::Char('+') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.viewport.zoom_in();
+            app.set_status(format!("Zoom: {}%", (app.viewport.zoom * 100.0) as i32));
+        }
+        KeyCode::Char('=') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Ctrl+= is often pressed instead of Ctrl++ (without shift)
+            app.viewport.zoom_in();
+            app.set_status(format!("Zoom: {}%", (app.viewport.zoom * 100.0) as i32));
+        }
+        KeyCode::Char('-') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.viewport.zoom_out();
+            app.set_status(format!("Zoom: {}%", (app.viewport.zoom * 100.0) as i32));
+        }
+        KeyCode::Char('0') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.viewport.reset_zoom();
+            app.set_status("Zoom: 100%");
+        }
 
         // Help screen
         KeyCode::Char('?') | KeyCode::F(1) => app.open_help(),

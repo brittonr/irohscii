@@ -1317,11 +1317,19 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         String::new()
     };
 
+    // Zoom indicator (only show if not 100%)
+    let zoom_info = if (app.viewport.zoom - 1.0).abs() > 0.01 {
+        format!(" {}%", (app.viewport.zoom * 100.0) as i32)
+    } else {
+        String::new()
+    };
+
     let spans = vec![
         Span::styled(format!(" {} ", mode_name), mode_style),
         Span::styled(tool_info, tool_style),
         Span::raw(format!(" {}{}{}", file_name, dirty_marker, char_info)),
         Span::styled(count_info, Style::default().fg(Color::DarkGray)),
+        Span::styled(zoom_info, Style::default().fg(Color::Magenta)),
         Span::styled(peer_info, peer_style),
         Span::styled(shape_info, Style::default().fg(Color::Cyan)),
         Span::styled(status_text, Style::default().fg(status_color)),
@@ -1890,7 +1898,16 @@ fn render_help_screen(frame: &mut Frame, scroll: usize, area: Rect) {
             "COLLABORATION",
             vec![("T", "Copy sync ticket"), ("P", "Toggle participants")],
         ),
-        ("NAVIGATION", vec![("Arrow keys", "Pan viewport")]),
+        (
+            "NAVIGATION",
+            vec![
+                ("Arrow keys", "Pan viewport"),
+                ("Ctrl++/=", "Zoom in"),
+                ("Ctrl+-", "Zoom out"),
+                ("Ctrl+0", "Reset zoom"),
+                ("Ctrl+Scroll", "Mouse zoom"),
+            ],
+        ),
     ];
 
     // Build help lines

@@ -531,7 +531,16 @@ pub struct Viewport {
     pub offset_y: i32,
     pub width: u16,
     pub height: u16,
+    /// Zoom level: 1.0 = normal, 2.0 = zoomed in (each canvas cell = 2 screen cells)
+    pub zoom: f32,
 }
+
+/// Minimum zoom level (zoomed out)
+pub const MIN_ZOOM: f32 = 0.25;
+/// Maximum zoom level (zoomed in)
+pub const MAX_ZOOM: f32 = 4.0;
+/// Zoom step for keyboard shortcuts
+pub const ZOOM_STEP: f32 = 0.25;
 
 impl Viewport {
     pub fn new(width: u16, height: u16) -> Self {
@@ -540,21 +549,24 @@ impl Viewport {
             offset_y: 0,
             width,
             height,
+            zoom: 1.0,
         }
     }
 
     /// Convert screen coordinates to canvas coordinates
+    /// At zoom > 1.0, screen space is larger than canvas space
     pub fn screen_to_canvas(&self, screen_x: u16, screen_y: u16) -> Position {
         Position::new(
-            screen_x as i32 + self.offset_x,
-            screen_y as i32 + self.offset_y,
+            (screen_x as f32 / self.zoom) as i32 + self.offset_x,
+            (screen_y as f32 / self.zoom) as i32 + self.offset_y,
         )
     }
 
     /// Convert canvas coordinates to screen coordinates (if visible)
+    /// At zoom > 1.0, canvas positions map to larger screen areas
     pub fn canvas_to_screen(&self, pos: Position) -> Option<(u16, u16)> {
-        let screen_x = pos.x - self.offset_x;
-        let screen_y = pos.y - self.offset_y;
+        let screen_x = ((pos.x - self.offset_x) as f32 * self.zoom) as i32;
+        let screen_y = ((pos.y - self.offset_y) as f32 * self.zoom) as i32;
 
         if screen_x >= 0
             && screen_x < self.width as i32
@@ -577,6 +589,29 @@ impl Viewport {
     pub fn resize(&mut self, width: u16, height: u16) {
         self.width = width;
         self.height = height;
+    }
+
+    /// Zoom in (increase zoom level)
+    pub fn zoom_in(&mut self) {
+        self.zoom = (self.zoom + ZOOM_STEP).min(MAX_ZOOM);
+    }
+
+    /// Zoom out (decrease zoom level)
+    pub fn zoom_out(&mut self) {
+        self.zoom = (self.zoom - ZOOM_STEP).max(MIN_ZOOM);
+    }
+
+    /// Reset zoom to 100%
+    pub fn reset_zoom(&mut self) {
+        self.zoom = 1.0;
+    }
+
+    /// Get the visible canvas area (number of canvas cells visible)
+    pub fn visible_canvas_size(&self) -> (u16, u16) {
+        (
+            (self.width as f32 / self.zoom) as u16,
+            (self.height as f32 / self.zoom) as u16,
+        )
     }
 }
 
