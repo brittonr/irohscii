@@ -761,6 +761,17 @@ fn handle_normal_mode(
             app.toggle_active_layer_visibility()
         }
 
+        // Select all (Ctrl+A)
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => app.select_all(),
+
+        // Alignment shortcuts (Alt + key)
+        KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::ALT) => app.align_left(),
+        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::ALT) => app.align_right(),
+        KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::ALT) => app.align_top(),
+        KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::ALT) => app.align_bottom(),
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::ALT) => app.align_center_h(),
+        KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::ALT) => app.align_center_v(),
+
         // Delete selected shape
         KeyCode::Delete | KeyCode::Backspace => {
             if app.current_tool == Tool::Select {

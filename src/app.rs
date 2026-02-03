@@ -1088,6 +1088,27 @@ impl App {
         self.selected.clear();
     }
 
+    /// Select all shapes on the active layer (or all visible if no active layer)
+    pub fn select_all(&mut self) {
+        self.selected.clear();
+        for shape in self.shape_view.iter() {
+            // Only select shapes on visible layers
+            if let Some(active) = self.active_layer {
+                if shape.layer_id == Some(active) {
+                    self.selected.insert(shape.id);
+                }
+            } else {
+                self.selected.insert(shape.id);
+            }
+        }
+        let count = self.selected.len();
+        if count > 0 {
+            self.set_status(format!("Selected {} shapes", count));
+        } else {
+            self.set_status("No shapes to select");
+        }
+    }
+
     /// Check if a shape is selected
     pub fn is_selected(&self, id: ShapeId) -> bool {
         self.selected.contains(&id)
@@ -1176,6 +1197,172 @@ impl App {
         }
         self.rebuild_view();
         self.set_status("Sent backward");
+    }
+
+    // ========== Alignment Methods ==========
+
+    /// Get bounds of all selected shapes combined
+    fn get_selection_bounds(&self) -> Option<(i32, i32, i32, i32)> {
+        if self.selected.is_empty() {
+            return None;
+        }
+        let mut min_x = i32::MAX;
+        let mut min_y = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut max_y = i32::MIN;
+
+        for &id in &self.selected {
+            if let Some(shape) = self.shape_view.get(id) {
+                let (sx_min, sy_min, sx_max, sy_max) = shape.bounds();
+                min_x = min_x.min(sx_min);
+                min_y = min_y.min(sy_min);
+                max_x = max_x.max(sx_max);
+                max_y = max_y.max(sy_max);
+            }
+        }
+        Some((min_x, min_y, max_x, max_y))
+    }
+
+    /// Align selected shapes to left edge
+    pub fn align_left(&mut self) {
+        if self.selected.len() < 2 {
+            self.set_status("Select at least 2 shapes to align");
+            return;
+        }
+        let Some((target_x, _, _, _)) = self.get_selection_bounds() else {
+            return;
+        };
+        self.save_undo_state();
+        for &id in self.selected.clone().iter() {
+            if let Some(shape) = self.shape_view.get(id) {
+                let (sx_min, _, _, _) = shape.bounds();
+                let dx = target_x - sx_min;
+                if dx != 0 {
+                    let _ = self.doc.translate_shape(id, dx, 0);
+                }
+            }
+        }
+        self.rebuild_view();
+        self.set_status("Aligned left");
+    }
+
+    /// Align selected shapes to right edge
+    pub fn align_right(&mut self) {
+        if self.selected.len() < 2 {
+            self.set_status("Select at least 2 shapes to align");
+            return;
+        }
+        let Some((_, _, target_x, _)) = self.get_selection_bounds() else {
+            return;
+        };
+        self.save_undo_state();
+        for &id in self.selected.clone().iter() {
+            if let Some(shape) = self.shape_view.get(id) {
+                let (_, _, sx_max, _) = shape.bounds();
+                let dx = target_x - sx_max;
+                if dx != 0 {
+                    let _ = self.doc.translate_shape(id, dx, 0);
+                }
+            }
+        }
+        self.rebuild_view();
+        self.set_status("Aligned right");
+    }
+
+    /// Align selected shapes to top edge
+    pub fn align_top(&mut self) {
+        if self.selected.len() < 2 {
+            self.set_status("Select at least 2 shapes to align");
+            return;
+        }
+        let Some((_, target_y, _, _)) = self.get_selection_bounds() else {
+            return;
+        };
+        self.save_undo_state();
+        for &id in self.selected.clone().iter() {
+            if let Some(shape) = self.shape_view.get(id) {
+                let (_, sy_min, _, _) = shape.bounds();
+                let dy = target_y - sy_min;
+                if dy != 0 {
+                    let _ = self.doc.translate_shape(id, 0, dy);
+                }
+            }
+        }
+        self.rebuild_view();
+        self.set_status("Aligned top");
+    }
+
+    /// Align selected shapes to bottom edge
+    pub fn align_bottom(&mut self) {
+        if self.selected.len() < 2 {
+            self.set_status("Select at least 2 shapes to align");
+            return;
+        }
+        let Some((_, _, _, target_y)) = self.get_selection_bounds() else {
+            return;
+        };
+        self.save_undo_state();
+        for &id in self.selected.clone().iter() {
+            if let Some(shape) = self.shape_view.get(id) {
+                let (_, _, _, sy_max) = shape.bounds();
+                let dy = target_y - sy_max;
+                if dy != 0 {
+                    let _ = self.doc.translate_shape(id, 0, dy);
+                }
+            }
+        }
+        self.rebuild_view();
+        self.set_status("Aligned bottom");
+    }
+
+    /// Align selected shapes to horizontal center
+    pub fn align_center_h(&mut self) {
+        if self.selected.len() < 2 {
+            self.set_status("Select at least 2 shapes to align");
+            return;
+        }
+        let Some((min_x, _, max_x, _)) = self.get_selection_bounds() else {
+            return;
+        };
+        let target_center = (min_x + max_x) / 2;
+        self.save_undo_state();
+        for &id in self.selected.clone().iter() {
+            if let Some(shape) = self.shape_view.get(id) {
+                let (sx_min, _, sx_max, _) = shape.bounds();
+                let shape_center = (sx_min + sx_max) / 2;
+                let dx = target_center - shape_center;
+                if dx != 0 {
+                    let _ = self.doc.translate_shape(id, dx, 0);
+                }
+            }
+        }
+        self.rebuild_view();
+        self.set_status("Aligned center (horizontal)");
+    }
+
+    /// Align selected shapes to vertical center
+    pub fn align_center_v(&mut self) {
+        if self.selected.len() < 2 {
+            self.set_status("Select at least 2 shapes to align");
+            return;
+        }
+        let Some((_, min_y, _, max_y)) = self.get_selection_bounds() else {
+            return;
+        };
+        let target_center = (min_y + max_y) / 2;
+        self.save_undo_state();
+        for &id in self.selected.clone().iter() {
+            if let Some(shape) = self.shape_view.get(id) {
+                let (_, sy_min, _, sy_max) = shape.bounds();
+                let shape_center = (sy_min + sy_max) / 2;
+                let dy = target_center - shape_center;
+                if dy != 0 {
+                    let _ = self.doc.translate_shape(id, 0, dy);
+                }
+            }
+        }
+        self.rebuild_view();
+        self.set_status("Aligned center (vertical)");
     }
 
     // ========== Group Methods ==========

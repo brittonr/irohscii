@@ -1290,13 +1290,36 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         String::new()
     };
 
+    // Session name (right-aligned context)
+    let session_name = app
+        .current_session_meta
+        .as_ref()
+        .map(|m| m.name.as_str())
+        .unwrap_or("No session");
+
+    // Shape/selection count
+    let total_shapes = app.shape_view.shape_count();
+    let selected_count = app.selected.len();
+    let count_info = if selected_count > 0 {
+        format!(" [{}/{}]", selected_count, total_shapes)
+    } else if total_shapes > 0 {
+        format!(" [{}]", total_shapes)
+    } else {
+        String::new()
+    };
+
     let spans = vec![
         Span::styled(format!(" {} ", mode_name), mode_style),
         Span::styled(tool_info, tool_style),
         Span::raw(format!(" {}{}{}", file_name, dirty_marker, char_info)),
+        Span::styled(count_info, Style::default().fg(Color::DarkGray)),
         Span::styled(peer_info, peer_style),
         Span::styled(shape_info, Style::default().fg(Color::Cyan)),
         Span::styled(status_text, Style::default().fg(status_color)),
+        Span::styled(
+            format!(" {} ", session_name),
+            Style::default().fg(Color::DarkGray),
+        ),
     ];
 
     let paragraph = Paragraph::new(Line::from(spans))

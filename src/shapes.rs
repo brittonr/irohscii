@@ -1926,6 +1926,11 @@ impl ShapeView {
         })
     }
 
+    /// Get total number of shapes
+    pub fn shape_count(&self) -> usize {
+        self.shapes.len()
+    }
+
     /// Find shape at position (returns topmost)
     pub fn shape_at(&self, pos: Position) -> Option<ShapeId> {
         for shape in self.shapes.iter().rev() {
