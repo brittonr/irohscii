@@ -2647,58 +2647,6 @@ impl App {
         });
     }
 
-    /// Close the session browser
-    pub fn close_session_browser(&mut self) {
-        self.mode = Mode::Normal;
-    }
-
-    /// Navigate in session browser
-    pub fn session_browser_navigate(&mut self, delta: i32) {
-        // Extract values to avoid borrow checker issues
-        let (filter, show_pinned_only) = if let Mode::SessionBrowser(state) = &self.mode {
-            (state.filter.clone(), state.show_pinned_only)
-        } else {
-            return;
-        };
-
-        let len = self.get_filtered_sessions(&filter, show_pinned_only).len();
-        if len == 0 {
-            return;
-        }
-
-        if let Mode::SessionBrowser(state) = &mut self.mode {
-            if delta < 0 {
-                state.selected = state.selected.saturating_sub((-delta) as usize);
-            } else {
-                state.selected = (state.selected + delta as usize).min(len - 1);
-            }
-        }
-    }
-
-    /// Add character to session browser filter
-    pub fn session_browser_filter_char(&mut self, ch: char) {
-        if let Mode::SessionBrowser(state) = &mut self.mode {
-            state.filter.push(ch);
-            state.selected = 0; // Reset selection when filter changes
-        }
-    }
-
-    /// Remove character from session browser filter
-    pub fn session_browser_filter_backspace(&mut self) {
-        if let Mode::SessionBrowser(state) = &mut self.mode {
-            state.filter.pop();
-            state.selected = 0;
-        }
-    }
-
-    /// Toggle pinned-only filter in session browser
-    pub fn session_browser_toggle_pinned(&mut self) {
-        if let Mode::SessionBrowser(state) = &mut self.mode {
-            state.show_pinned_only = !state.show_pinned_only;
-            state.selected = 0;
-        }
-    }
-
     /// Get filtered sessions for display
     pub fn get_filtered_sessions(
         &self,
@@ -2725,45 +2673,6 @@ impl App {
             .collect()
     }
 
-    /// Select the current session in browser
-    pub fn session_browser_select(&mut self) {
-        if let Mode::SessionBrowser(state) = &self.mode {
-            let filtered = self.get_filtered_sessions(&state.filter, state.show_pinned_only);
-            if let Some(session) = filtered.get(state.selected) {
-                self.session_to_switch = Some(session.id.clone());
-            }
-        }
-        self.mode = Mode::Normal;
-    }
-
-    /// Request to delete selected session (shows confirm dialog)
-    pub fn session_browser_request_delete(&mut self) {
-        if let Mode::SessionBrowser(state) = &self.mode {
-            let filtered = self.get_filtered_sessions(&state.filter, state.show_pinned_only);
-            if let Some(session) = filtered.get(state.selected) {
-                // Don't allow deleting current session
-                if self.current_session.as_ref() == Some(&session.id) {
-                    self.set_error("Cannot delete the active session");
-                    return;
-                }
-                self.mode = Mode::ConfirmDialog(ConfirmDialogState {
-                    action: PendingAction::DeleteSession(session.id.0.clone()),
-                });
-            }
-        }
-    }
-
-    /// Toggle pinned status of selected session
-    pub fn session_browser_toggle_pin(&mut self) -> Option<crate::session::SessionId> {
-        if let Mode::SessionBrowser(state) = &self.mode {
-            let filtered = self.get_filtered_sessions(&state.filter, state.show_pinned_only);
-            if let Some(session) = filtered.get(state.selected) {
-                return Some(session.id.clone());
-            }
-        }
-        None
-    }
-
     /// Refresh session list and clamp selection to valid bounds
     pub fn refresh_session_list(&mut self, sessions: Vec<crate::session::SessionMeta>) {
         self.session_list = sessions;
@@ -2783,49 +2692,6 @@ impl App {
                 state.selected = state.selected.min(filtered_len - 1);
             }
         }
-    }
-
-    /// Open session create dialog
-    pub fn open_session_create(&mut self) {
-        self.mode = Mode::SessionCreate(SessionCreateState {
-            name: String::new(),
-        });
-    }
-
-    /// Add character to session create name
-    pub fn session_create_char(&mut self, ch: char) {
-        if let Mode::SessionCreate(state) = &mut self.mode {
-            state.name.push(ch);
-        }
-    }
-
-    /// Remove character from session create name
-    pub fn session_create_backspace(&mut self) {
-        if let Mode::SessionCreate(state) = &mut self.mode {
-            state.name.pop();
-        }
-    }
-
-    /// Confirm session creation
-    pub fn session_create_confirm(&mut self) {
-        if let Mode::SessionCreate(state) = &self.mode {
-            let trimmed = state.name.trim();
-            if trimmed.len() >= 2 {
-                self.session_to_create = Some(trimmed.to_string());
-                self.mode = Mode::Normal;
-            } else {
-                self.set_error("Session name must be at least 2 characters");
-                // Stay in create mode so user can fix it
-                return;
-            }
-        } else {
-            self.mode = Mode::Normal;
-        }
-    }
-
-    /// Cancel session creation
-    pub fn session_create_cancel(&mut self) {
-        self.mode = Mode::Normal;
     }
 
     /// Get the current session name for display

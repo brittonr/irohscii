@@ -16,56 +16,79 @@ impl ModeHandler for SessionBrowserState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
         match key.code {
             // Close browser
-            KeyCode::Esc | KeyCode::Tab => {
-                ctx.app.close_session_browser();
-                ModeTransition::Normal
-            }
-            // Navigate
+            KeyCode::Esc | KeyCode::Tab => ModeTransition::Normal,
+            // Navigate down
             KeyCode::Char('j') | KeyCode::Down => {
-                ctx.app.session_browser_navigate(1);
+                let len = ctx
+                    .app
+                    .get_filtered_sessions(&self.filter, self.show_pinned_only)
+                    .len();
+                if len > 0 {
+                    self.selected = (self.selected + 1).min(len - 1);
+                }
                 ModeTransition::Stay
             }
+            // Navigate up
             KeyCode::Char('k') | KeyCode::Up => {
-                ctx.app.session_browser_navigate(-1);
+                self.selected = self.selected.saturating_sub(1);
                 ModeTransition::Stay
             }
             // Select session
             KeyCode::Enter => {
-                ctx.app.session_browser_select();
-                // The app will set a flag for the main loop to handle session switching
-                ModeTransition::Normal
+                let filtered =
+                    ctx.app.get_filtered_sessions(&self.filter, self.show_pinned_only);
+                if let Some(session) = filtered.get(self.selected) {
+                    ModeTransition::Action(ModeAction::SwitchSession(session.id.clone()))
+                } else {
+                    ModeTransition::Normal
+                }
             }
             // Create new session
-            KeyCode::Char('n') => {
-                ctx.app.open_session_create();
-                ModeTransition::to(Mode::session_create())
-            }
+            KeyCode::Char('n') => ModeTransition::to(Mode::SessionCreate(SessionCreateState {
+                name: String::new(),
+            })),
             // Delete session
             KeyCode::Char('d') | KeyCode::Delete => {
-                ctx.app.session_browser_request_delete();
-                ModeTransition::Stay
+                let filtered =
+                    ctx.app.get_filtered_sessions(&self.filter, self.show_pinned_only);
+                if let Some(session) = filtered.get(self.selected) {
+                    // Don't allow deleting current session
+                    if ctx.app.current_session.as_ref() == Some(&session.id) {
+                        ctx.app.set_error("Cannot delete the active session");
+                        ModeTransition::Stay
+                    } else {
+                        ModeTransition::Action(ModeAction::DeleteSession(session.id.clone()))
+                    }
+                } else {
+                    ModeTransition::Stay
+                }
             }
             // Toggle pinned - returns action for main loop to handle
             KeyCode::Char('p') => {
-                if let Some(session_id) = ctx.app.session_browser_toggle_pin() {
-                    ModeTransition::Action(ModeAction::ToggleSessionPin(session_id))
+                let filtered =
+                    ctx.app.get_filtered_sessions(&self.filter, self.show_pinned_only);
+                if let Some(session) = filtered.get(self.selected) {
+                    ModeTransition::Action(ModeAction::ToggleSessionPin(session.id.clone()))
                 } else {
                     ModeTransition::Stay
                 }
             }
             // Toggle pinned-only filter
             KeyCode::Char('*') => {
-                ctx.app.session_browser_toggle_pinned();
+                self.show_pinned_only = !self.show_pinned_only;
+                self.selected = 0;
                 ModeTransition::Stay
             }
             // Backspace for filter
             KeyCode::Backspace => {
-                ctx.app.session_browser_filter_backspace();
+                self.filter.pop();
+                self.selected = 0;
                 ModeTransition::Stay
             }
             // Type to filter
             KeyCode::Char(c) if c.is_alphanumeric() || c == '-' || c == '_' => {
-                ctx.app.session_browser_filter_char(c);
+                self.filter.push(c);
+                self.selected = 0;
                 ModeTransition::Stay
             }
             _ => ModeTransition::Stay,
@@ -92,20 +115,22 @@ impl ModeHandler for SessionBrowserState {
 impl ModeHandler for SessionCreateState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
         match key.code {
-            KeyCode::Esc => {
-                ctx.app.session_create_cancel();
-                ModeTransition::Normal
-            }
+            KeyCode::Esc => ModeTransition::Normal,
             KeyCode::Enter => {
-                ctx.app.session_create_confirm();
-                ModeTransition::Normal
+                let trimmed = self.name.trim();
+                if trimmed.len() >= 2 {
+                    ModeTransition::Action(ModeAction::CreateSession(trimmed.to_string()))
+                } else {
+                    ctx.app.set_error("Session name must be at least 2 characters");
+                    ModeTransition::Stay
+                }
             }
             KeyCode::Backspace => {
-                ctx.app.session_create_backspace();
+                self.name.pop();
                 ModeTransition::Stay
             }
             KeyCode::Char(c) => {
-                ctx.app.session_create_char(c);
+                self.name.push(c);
                 ModeTransition::Stay
             }
             _ => ModeTransition::Stay,
@@ -241,7 +266,10 @@ mod tests {
         let mut ctx = ModeContext { app: &mut app };
 
         let result = state.handle_key(&mut ctx, key(KeyCode::Enter));
-        assert!(matches!(result, ModeTransition::Normal));
+        assert!(matches!(
+            result,
+            ModeTransition::Action(ModeAction::CreateSession(_))
+        ));
     }
 
     #[test]

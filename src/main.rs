@@ -57,7 +57,7 @@ use crossterm::{
 };
 use ratatui::prelude::*;
 
-use app::{App, Mode, Tool};
+use app::{App, ConfirmDialogState, Mode, PendingAction, Tool};
 
 /// ASCII art drawing tool with real-time collaboration
 #[derive(Parser, Debug)]
@@ -461,8 +461,10 @@ fn run_app(
                                                     app.mode = Mode::Normal;
                                                 }
                                                 ModeAction::DeleteSession(session_id) => {
-                                                    app.session_to_delete = Some(session_id.0.clone());
-                                                    app.mode = Mode::Normal;
+                                                    // Open confirm dialog before deleting
+                                                    app.mode = Mode::ConfirmDialog(ConfirmDialogState {
+                                                        action: PendingAction::DeleteSession(session_id.0.clone()),
+                                                    });
                                                 }
                                                 ModeAction::ToggleSessionPin(session_id) => {
                                                     let _ = session_manager.toggle_pinned(&session_id);
