@@ -14,8 +14,7 @@ use crate::canvas::{LineStyle, Position, Viewport};
 // Re-export Mode and state types from the modes module
 pub use crate::modes::{
     ConfirmDialogState, HelpScreenState, KeyboardShapeState, LabelInputState, LayerRenameState,
-    Mode, PathInputKind, PathInputState, SelectionPopupState, SessionBrowserState,
-    SessionCreateState, TextInputState,
+    Mode, PathInputKind, PathInputState, SelectionPopupState, SessionBrowserState, TextInputState,
 };
 use crate::document::{Document, GroupId, ShapeId, default_storage_path};
 use crate::layers::{Layer, LayerId};

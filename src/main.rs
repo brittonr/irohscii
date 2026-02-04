@@ -640,7 +640,7 @@ fn run_app(
                     }
 
                     // Check if click is in layer panel
-                    let in_layer_panel = app.layer_panel_area.map_or(false, |area| {
+                    let in_layer_panel = app.layer_panel_area.is_some_and(|area| {
                         mouse.column >= area.x
                             && mouse.column < area.x + area.width
                             && mouse.row >= area.y

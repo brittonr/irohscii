@@ -71,6 +71,7 @@ pub struct ModeContext<'a> {
 }
 
 /// Trait for handling key events in a mode.
+#[allow(dead_code)]
 pub trait ModeHandler {
     /// Handle a key event and return the transition result.
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition;
@@ -225,6 +226,8 @@ impl Default for Mode {
     }
 }
 
+// Query methods for Mode - kept for future UI use (status bar display)
+#[allow(dead_code)]
 impl Mode {
     /// Get the display name for this mode.
     pub fn name(&self) -> &'static str {
@@ -322,7 +325,8 @@ impl Mode {
     }
 }
 
-// Convenience constructors for common mode transitions
+// Convenience constructors for common mode transitions - kept for API completeness
+#[allow(dead_code)]
 impl Mode {
     /// Create a new text input mode at the given position.
     pub fn text_input(start_pos: Position) -> Self {
