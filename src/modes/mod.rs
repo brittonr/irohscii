@@ -18,9 +18,7 @@ mod text_input;
 pub use normal::NormalModeState;
 
 use crossterm::event::KeyEvent;
-use ratatui::layout::Rect;
 use ratatui::style::Color;
-use ratatui::Frame;
 
 use irohscii_core::{LayerId, Position, ShapeId};
 use irohscii_session::SessionId;
@@ -85,12 +83,6 @@ pub trait ModeHandler {
 
     /// Get help text for this mode.
     fn help_text(&self) -> &'static str;
-}
-
-/// Trait for rendering a mode's UI.
-pub trait ModeRenderer {
-    /// Render this mode's UI elements.
-    fn render(&self, frame: &mut Frame, app: &App, area: Rect);
 }
 
 /// Text input mode state - for typing text at a position.

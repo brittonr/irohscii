@@ -11,15 +11,6 @@ use ratatui::style::Color;
 
 use super::{ModeContext, ModeHandler, ModeTransition, PathInputKind, PathInputState};
 
-/// Result from a path input operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PathInputResult {
-    /// User cancelled the operation
-    Cancelled,
-    /// User confirmed with this path
-    Confirmed(String, PathInputKind),
-}
-
 impl ModeHandler for PathInputState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
         match key.code {

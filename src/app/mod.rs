@@ -14,8 +14,8 @@ use crate::canvas::{LineStyle, Position, Viewport};
 // Re-export Mode and state types from the modes module
 pub use crate::modes::{
     ConfirmDialogState, HelpScreenState, KeyboardShapeState, LabelInputState, LayerRenameState,
-    Mode, ModeAction, ModeTransition, PathInputKind, PathInputState, RecentFilesState,
-    SelectionPopupState, SessionBrowserState, SessionCreateState, TextInputState,
+    Mode, PathInputKind, PathInputState, SelectionPopupState, SessionBrowserState,
+    SessionCreateState, TextInputState,
 };
 use crate::document::{Document, GroupId, ShapeId, default_storage_path};
 use crate::layers::{Layer, LayerId};
@@ -2502,29 +2502,6 @@ impl App {
         self.mode = Mode::Normal;
     }
 
-    /// Cancel the popup without changing selection
-    pub fn cancel_popup(&mut self) {
-        self.mode = Mode::Normal;
-    }
-
-    /// Navigate within the popup selection grid
-    pub fn popup_navigate(&mut self, dx: i32, dy: i32) {
-        if let Mode::SelectionPopup(state) = &mut self.mode {
-            let (cols, total) = match state.kind {
-                PopupKind::Tool => (3, TOOLS.len()),    // 3x3 grid for 9 tools
-                PopupKind::Color => (4, COLORS.len()),  // 4x4 grid for 16 colors
-                PopupKind::Brush => (6, BRUSHES.len()), // 6 columns for brushes
-            };
-            let rows = (total + cols - 1) / cols;
-            let row = state.selected / cols;
-            let col = state.selected % cols;
-            let new_col = (col as i32 + dx).clamp(0, cols as i32 - 1) as usize;
-            let new_row = (row as i32 + dy).clamp(0, rows as i32 - 1) as usize;
-            let new_selected = new_row * cols + new_col;
-            state.selected = new_selected.min(total - 1);
-        }
-    }
-
     /// Apply a color to all selected shapes
     pub fn apply_color_to_selected(&mut self, color: ShapeColor) -> usize {
         if self.selected.is_empty() {
@@ -2656,22 +2633,6 @@ impl App {
     /// Open the help screen
     pub fn open_help(&mut self) {
         self.mode = Mode::HelpScreen(HelpScreenState { scroll: 0 });
-    }
-
-    /// Close the help screen
-    pub fn close_help(&mut self) {
-        self.mode = Mode::Normal;
-    }
-
-    /// Scroll the help screen
-    pub fn scroll_help(&mut self, delta: i32) {
-        if let Mode::HelpScreen(state) = &mut self.mode {
-            if delta < 0 {
-                state.scroll = state.scroll.saturating_sub((-delta) as usize);
-            } else {
-                state.scroll = state.scroll.saturating_add(delta as usize);
-            }
-        }
     }
 
     // ========== Session Browser Methods ==========
