@@ -2020,6 +2020,34 @@ impl App {
         ));
     }
 
+    /// Nudge selected shapes by (dx, dy)
+    pub fn nudge_selection(&mut self, dx: i32, dy: i32) {
+        if self.selected.is_empty() {
+            return;
+        }
+
+        // Check if any selected shapes are on locked layers
+        let locked_count = self
+            .selected
+            .iter()
+            .filter(|&&id| self.is_shape_locked(id))
+            .count();
+
+        if locked_count > 0 && locked_count == self.selected.len() {
+            self.set_error("Cannot move - all selected shapes are on locked layers");
+            return;
+        }
+
+        self.save_undo_state();
+        for &id in self.selected.clone().iter() {
+            if !self.is_shape_locked(id) {
+                let _ = self.doc.translate_shape(id, dx, dy);
+            }
+        }
+        self.rebuild_view();
+        self.doc.mark_dirty();
+    }
+
     /// Start text input at a position
     pub fn start_text_input(&mut self, pos: Position) {
         self.mode = Mode::TextInput(TextInputState {
@@ -2429,38 +2457,45 @@ impl App {
         if let Mode::SelectionPopup(state) = &self.mode {
             let kind = state.kind;
             let selected = state.selected;
-            match kind {
-                PopupKind::Tool => {
-                    if let Some(&tool) = TOOLS.get(selected) {
-                        self.current_tool = tool;
-                        self.set_status(format!("Tool: {}", tool.name()));
-                    }
+            self.confirm_popup_selection_with_index(kind, selected);
+        } else {
+            self.mode = Mode::Normal;
+        }
+    }
+
+    /// Confirm popup selection with explicit kind and index
+    pub fn confirm_popup_selection_with_index(&mut self, kind: PopupKind, selected: usize) {
+        match kind {
+            PopupKind::Tool => {
+                if let Some(&tool) = TOOLS.get(selected) {
+                    self.current_tool = tool;
+                    self.set_status(format!("Tool: {}", tool.name()));
                 }
-                PopupKind::Color => {
-                    if let Some(&color) = COLORS.get(selected) {
-                        self.current_color = color;
-                        // Also apply color to selected shapes
-                        if !self.selected.is_empty() {
-                            let count = self.apply_color_to_selected(color);
-                            if count > 0 {
-                                self.set_status(format!(
-                                    "Changed color of {} shape(s) to {}",
-                                    count,
-                                    color.name()
-                                ));
-                            } else {
-                                self.set_status(format!("Color: {}", color.name()));
-                            }
+            }
+            PopupKind::Color => {
+                if let Some(&color) = COLORS.get(selected) {
+                    self.current_color = color;
+                    // Also apply color to selected shapes
+                    if !self.selected.is_empty() {
+                        let count = self.apply_color_to_selected(color);
+                        if count > 0 {
+                            self.set_status(format!(
+                                "Changed color of {} shape(s) to {}",
+                                count,
+                                color.name()
+                            ));
                         } else {
                             self.set_status(format!("Color: {}", color.name()));
                         }
+                    } else {
+                        self.set_status(format!("Color: {}", color.name()));
                     }
                 }
-                PopupKind::Brush => {
-                    if let Some(&brush) = BRUSHES.get(selected) {
-                        self.brush_char = brush;
-                        self.set_status(format!("Brush: '{}'", brush));
-                    }
+            }
+            PopupKind::Brush => {
+                if let Some(&brush) = BRUSHES.get(selected) {
+                    self.brush_char = brush;
+                    self.set_status(format!("Brush: '{}'", brush));
                 }
             }
         }

@@ -4,36 +4,53 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::style::Color;
 
 use super::{ModeContext, ModeHandler, ModeTransition, SelectionPopupState};
-use crate::app::PopupKind;
+use crate::app::{PopupKind, BRUSHES, COLORS, TOOLS};
+
+impl SelectionPopupState {
+    /// Navigate within the popup grid
+    fn navigate(&mut self, dx: i32, dy: i32) {
+        let (cols, total) = match self.kind {
+            PopupKind::Tool => (3, TOOLS.len()),
+            PopupKind::Color => (4, COLORS.len()),
+            PopupKind::Brush => (6, BRUSHES.len()),
+        };
+        let rows = (total + cols - 1) / cols;
+        let row = self.selected / cols;
+        let col = self.selected % cols;
+        let new_col = (col as i32 + dx).clamp(0, cols as i32 - 1) as usize;
+        let new_row = (row as i32 + dy).clamp(0, rows as i32 - 1) as usize;
+        let new_selected = new_row * cols + new_col;
+        self.selected = new_selected.min(total - 1);
+    }
+}
 
 impl ModeHandler for SelectionPopupState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
         match key.code {
             // hjkl navigation
             KeyCode::Char('h') | KeyCode::Left => {
-                ctx.app.popup_navigate(-1, 0);
+                self.navigate(-1, 0);
                 ModeTransition::Stay
             }
             KeyCode::Char('l') | KeyCode::Right => {
-                ctx.app.popup_navigate(1, 0);
+                self.navigate(1, 0);
                 ModeTransition::Stay
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                ctx.app.popup_navigate(0, 1);
+                self.navigate(0, 1);
                 ModeTransition::Stay
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                ctx.app.popup_navigate(0, -1);
+                self.navigate(0, -1);
                 ModeTransition::Stay
             }
             // Enter to confirm
             KeyCode::Enter => {
-                ctx.app.confirm_popup_selection();
+                ctx.app.confirm_popup_selection_with_index(self.kind, self.selected);
                 ModeTransition::Normal
             }
             // Escape to cancel
             KeyCode::Esc => {
-                ctx.app.cancel_popup();
                 ModeTransition::Normal
             }
             _ => ModeTransition::Stay,

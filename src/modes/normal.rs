@@ -259,6 +259,42 @@ impl ModeHandler for NormalModeState {
             }
 
             // =========================================================
+            // Nudge selected shapes with hjkl (vim-style)
+            // =========================================================
+            KeyCode::Char('h')
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+                    && ctx.app.current_tool == Tool::Select
+                    && !ctx.app.selected.is_empty() =>
+            {
+                ctx.app.nudge_selection(-1, 0);
+            }
+            KeyCode::Char('j')
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+                    && ctx.app.current_tool == Tool::Select
+                    && !ctx.app.selected.is_empty() =>
+            {
+                ctx.app.nudge_selection(0, 1);
+            }
+            KeyCode::Char('k')
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+                    && ctx.app.current_tool == Tool::Select
+                    && !ctx.app.selected.is_empty() =>
+            {
+                ctx.app.nudge_selection(0, -1);
+            }
+            KeyCode::Char('l')
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+                    && ctx.app.current_tool == Tool::Select
+                    && !ctx.app.selected.is_empty() =>
+            {
+                ctx.app.nudge_selection(1, 0);
+            }
+
+            // =========================================================
             // File operations
             // =========================================================
             KeyCode::Char('s')
