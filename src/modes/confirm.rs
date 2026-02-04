@@ -40,7 +40,6 @@ mod tests {
     use super::*;
     use crate::app::PendingAction;
     use crossterm::event::KeyModifiers;
-    use irohscii_core::LayerId;
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::empty())
