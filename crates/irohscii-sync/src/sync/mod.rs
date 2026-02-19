@@ -88,6 +88,8 @@ pub enum SyncCommand {
     SyncDoc { doc: Box<Automerge> },
     /// Broadcast local presence to all peers
     BroadcastPresence(PeerPresence),
+    /// Connect to an aspen cluster node for document persistence
+    ConnectCluster { ticket: String },
     /// Shutdown sync
     Shutdown,
 }
@@ -293,16 +295,11 @@ async fn run_sync(
             // Establish a persistent connection to the aspen cluster node (if configured).
             // This is independent of peer sync — the cluster provides durable storage
             // while peer sync provides real-time collaboration.
-            let cluster_conn: Option<Connection> = if let Some(ref cluster_ticket) = config.cluster_ticket {
+            // Mutable so ConnectCluster can attach one mid-session.
+            let mut cluster_conn: Option<Connection> = if let Some(ref cluster_ticket) = config.cluster_ticket {
                 let cluster_addr = decode_ticket(cluster_ticket)?;
                 match endpoint.connect(cluster_addr, AUTOMERGE_SYNC_ALPN).await {
-                    Ok(conn) => {
-                        let _ = event_tx.send(SyncEvent::Ready {
-                            endpoint_id: ticket_string.clone(),
-                            local_peer_id,
-                        });
-                        Some(conn)
-                    }
+                    Ok(conn) => Some(conn),
                     Err(e) => {
                         let _ = event_tx.send(SyncEvent::Error(format!(
                             "Failed to connect to cluster: {}", e
@@ -447,6 +444,29 @@ async fn run_sync(
                             }
                             Ok(SyncCommand::BroadcastPresence(presence)) => {
                                 presence_protocol.broadcast(presence);
+                            }
+                            Ok(SyncCommand::ConnectCluster { ticket }) => {
+                                match decode_ticket(&ticket) {
+                                    Ok(addr) => {
+                                        match endpoint.connect(addr, AUTOMERGE_SYNC_ALPN).await {
+                                            Ok(conn) => {
+                                                // Pull existing state from cluster
+                                                do_sync(&store, &doc_id, &conn).await;
+                                                cluster_conn = Some(conn);
+                                            }
+                                            Err(e) => {
+                                                let _ = event_tx.send(SyncEvent::Error(
+                                                    format!("Failed to connect to cluster: {}", e),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        let _ = event_tx.send(SyncEvent::Error(
+                                            format!("Invalid cluster ticket: {}", e),
+                                        ));
+                                    }
+                                }
                             }
                             Ok(SyncCommand::Shutdown) => {
                                 // Signal all spawned tasks to stop

@@ -73,6 +73,9 @@ impl PathInputState {
             PathInputKind::SvgExport => {
                 ctx.app.execute_svg_export(&self.path);
             }
+            PathInputKind::ClusterConnect => {
+                ctx.app.execute_cluster_connect(&self.path);
+            }
         }
     }
 }
@@ -154,6 +157,10 @@ mod tests {
         assert_eq!(
             test_state(PathInputKind::SvgExport).mode_name(),
             "SVG EXPORT"
+        );
+        assert_eq!(
+            test_state(PathInputKind::ClusterConnect).mode_name(),
+            "CLUSTER"
         );
     }
 }

@@ -280,6 +280,8 @@ pub struct App {
     clipboard: Vec<ShapeKind>,
     /// Sync session ticket for sharing
     pub sync_ticket: Option<String>,
+    /// Pending cluster connection (set by UI, consumed by main loop)
+    pub pending_cluster_ticket: Option<String>,
     /// Presence manager for remote cursors
     pub presence: Option<PresenceManager>,
     /// Our local peer ID (if syncing)
@@ -338,6 +340,7 @@ impl App {
             hover_grid_snap: None,
             clipboard: Vec::new(),
             sync_ticket: None,
+            pending_cluster_ticket: None,
             presence: None,
             local_peer_id: None,
             last_cursor_pos: Position::new(0, 0),
@@ -2788,6 +2791,23 @@ impl App {
                 self.set_error(format!("SVG export error: {}", e));
             }
         }
+    }
+
+    pub fn start_cluster_connect(&mut self) {
+        self.mode = Mode::PathInput(PathInputState {
+            path: String::new(),
+            kind: PathInputKind::ClusterConnect,
+        });
+    }
+
+    pub fn execute_cluster_connect(&mut self, ticket: &str) {
+        let ticket = ticket.trim().to_string();
+        if ticket.is_empty() {
+            self.set_error("No cluster ticket provided");
+            return;
+        }
+        self.pending_cluster_ticket = Some(ticket.clone());
+        self.set_status(format!("Connecting to cluster..."));
     }
 
     /// Open a file from the recent files list by index

@@ -588,6 +588,17 @@ fn run_app(
                                     }
                                 }
                             }
+
+                            // Handle pending cluster connection
+                            if let Some(ticket) = app.pending_cluster_ticket.take() {
+                                if let Some(handle) = sync_handle {
+                                    let _ = handle.send_command(
+                                        sync::SyncCommand::ConnectCluster { ticket },
+                                    );
+                                } else {
+                                    app.set_error("Sync is disabled (--offline)");
+                                }
+                            }
                         }
                         KeyEventKind::Release => {
                             // Check if this is the release of the popup trigger key

@@ -123,6 +123,7 @@ pub enum PathInputKind {
     DocSave,
     DocOpen,
     SvgExport,
+    ClusterConnect,
 }
 
 impl PathInputKind {
@@ -133,6 +134,7 @@ impl PathInputKind {
             PathInputKind::DocSave => "SAVE DOC",
             PathInputKind::DocOpen => "OPEN DOC",
             PathInputKind::SvgExport => "SVG EXPORT",
+            PathInputKind::ClusterConnect => "CLUSTER",
         }
     }
 
@@ -143,6 +145,7 @@ impl PathInputKind {
             PathInputKind::DocSave => "Save document:",
             PathInputKind::DocOpen => "Open document:",
             PathInputKind::SvgExport => "Export SVG:",
+            PathInputKind::ClusterConnect => "Cluster ticket:",
         }
     }
 }
