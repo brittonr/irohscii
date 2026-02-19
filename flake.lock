@@ -1,5 +1,21 @@
 {
   "nodes": {
+    "aspen-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1771508333,
+        "narHash": "sha256-EWBxMFsgYWXwI6dNA7FVUwN/wA+/4KUFaxE6w8te4c0=",
+        "owner": "brittonr",
+        "repo": "aspen",
+        "rev": "7a257c04662ca1a3910c98a54b7b38a74f64a515",
+        "type": "github"
+      },
+      "original": {
+        "owner": "brittonr",
+        "repo": "aspen",
+        "type": "github"
+      }
+    },
     "crane": {
       "locked": {
         "lastModified": 1766774972,
@@ -51,6 +67,7 @@
     },
     "root": {
       "inputs": {
+        "aspen-src": "aspen-src",
         "crane": "crane",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs",

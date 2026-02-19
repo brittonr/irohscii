@@ -1,0 +1,4 @@
+# Override aspen-automerge with the local sibling checkout for development.
+# Cargo silently ignores this if the path doesn't exist.
+[patch."https://github.com/brittonr/aspen.git"]
+aspen-automerge = { path = "../aspen/crates/aspen-automerge" }

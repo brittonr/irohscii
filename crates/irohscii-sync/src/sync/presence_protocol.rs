@@ -12,7 +12,8 @@ use iroh::protocol::{AcceptError, ProtocolHandler};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{RwLock, broadcast, mpsc};
 
-use crate::{PeerId, PeerPresence, PresenceMessage};
+use crate::peer::PeerId;
+use crate::presence::{PeerPresence, PresenceMessage};
 
 /// Protocol identifier for presence sync
 pub const PRESENCE_ALPN: &[u8] = b"irohscii/presence/1";

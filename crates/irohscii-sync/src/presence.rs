@@ -3,7 +3,7 @@
 //! This module handles ephemeral presence data (cursor positions, selections, activities)
 //! which is synced separately from the automerge document for efficiency.
 //!
-//! Uses [`iroh_collab::PresenceData`] trait for generic presence support.
+//! Presence data is synced separately from the automerge document via a lightweight protocol.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 
 use irohscii_core::{LayerId, Position, ShapeId};
 
-// Re-export PeerId from iroh-collab for compatibility
-pub use iroh_collab::PeerId;
+// Re-export PeerId from peer module for compatibility
+pub use crate::peer::PeerId;
 
 /// Staleness threshold - remove cursors not updated in 5 seconds
 const STALE_THRESHOLD: Duration = Duration::from_secs(5);
@@ -145,22 +145,7 @@ impl PeerPresence {
     }
 }
 
-/// Implement the generic PresenceData trait from iroh-collab
-impl iroh_collab::PresenceData for PeerPresence {
-    fn peer_id(&self) -> PeerId {
-        self.peer_id
-    }
 
-    fn timestamp_ms(&self) -> u64 {
-        self.timestamp_ms
-    }
-
-    fn with_peer_id(mut self, peer_id: PeerId) -> Self {
-        self.peer_id = peer_id;
-        self.color_index = peer_id.color_index(PEER_COLORS.len()) as u8;
-        self
-    }
-}
 
 /// Presence message types for network protocol
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,7 +166,7 @@ pub fn peer_color(presence: &PeerPresence) -> Color {
 /// Manages all peer presence states
 ///
 /// This is an irohscii-specific presence manager with methods for querying
-/// drag/resize state. For generic presence management, see [`iroh_collab::PresenceManager`].
+/// drag/resize state.
 #[derive(Debug)]
 pub struct PresenceManager {
     /// Our own peer ID
@@ -535,25 +520,5 @@ mod tests {
         );
     }
 
-    #[test]
-    fn peer_presence_implements_presence_data() {
-        use iroh_collab::PresenceData;
 
-        let peer_id = PeerId([42u8; 32]);
-        let presence = PeerPresence::new(
-            peer_id,
-            Position::new(10, 20),
-            CursorActivity::Idle,
-            None,
-            None,
-        );
-
-        // Test PresenceData trait methods
-        assert_eq!(presence.peer_id(), peer_id);
-        assert!(presence.timestamp_ms() > 0);
-
-        let new_peer_id = PeerId([99u8; 32]);
-        let updated = presence.with_peer_id(new_peer_id);
-        assert_eq!(updated.peer_id(), new_peer_id);
-    }
 }

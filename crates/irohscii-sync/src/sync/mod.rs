@@ -2,14 +2,17 @@
 //!
 //! This module provides real-time collaborative editing via:
 //! - iroh: P2P networking with cryptographic identity
-//! - automerge: CRDT-based conflict-free data synchronization
+//! - aspen-automerge: CRDT-based conflict-free data synchronization
 //!
 //! The automerge document IS the source of truth - this module just syncs it.
 
+pub mod local_store;
 pub mod presence_protocol;
 pub mod protocol;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc as std_mpsc;
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -17,12 +20,19 @@ use anyhow::Result;
 use automerge::Automerge;
 use iroh::Endpoint;
 use iroh::discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher};
+use iroh::endpoint::Connection;
 use iroh_base::EndpointAddr;
 use tokio::sync::mpsc as tokio_mpsc;
 
+use aspen_automerge::{DocumentId, DocumentStore};
+
 use crate::{PeerId, PeerPresence, PresenceMessage};
+use local_store::LocalDocumentStore;
 use presence_protocol::PresenceProtocol;
-use protocol::IrohAutomergeProtocol;
+use protocol::{AUTOMERGE_SYNC_ALPN, AutomergeSyncHandler, sync_with_peer};
+
+/// Fixed document ID for the irohscii session
+const IROHSCII_DOC_ID: &str = "irohscii-session";
 
 /// Configuration for sync behavior
 #[derive(Debug, Clone)]
@@ -169,6 +179,26 @@ pub fn decode_ticket(ticket: &str) -> Result<EndpointAddr> {
     }
 }
 
+/// Trigger a sync with a peer, silently ignoring errors.
+/// Clones the connection handle (cheap, QUIC connections are multiplexed).
+async fn do_sync(
+    store: &Arc<LocalDocumentStore>,
+    doc_id: &DocumentId,
+    conn: &Connection,
+) {
+    if let Err(e) = sync_with_peer(
+        store.as_ref(),
+        doc_id,
+        conn,
+    ).await {
+        // Only log non-connection errors (connection errors are expected during shutdown)
+        let msg = e.to_string();
+        if !msg.contains("closed") && !msg.contains("refused") {
+            eprintln!("Sync error: {}", e);
+        }
+    }
+}
+
 /// Main async sync loop
 async fn run_sync(
     config: SyncConfig,
@@ -190,7 +220,6 @@ async fn run_sync(
     let ticket_string = encode_ticket(&addr);
 
     // Derive our local peer ID from the endpoint's public key
-    // SAFETY: iroh::base::PublicKey is always exactly 32 bytes by type invariant
     let public_key = endpoint.id();
     let local_peer_id = PeerId::from_bytes(public_key.as_bytes())
         .ok_or_else(|| anyhow::anyhow!("PublicKey must be 32 bytes"))?;
@@ -198,9 +227,20 @@ async fn run_sync(
     // Send our ticket string back to main thread
     let _ = endpoint_id_tx.send(ticket_string.clone());
 
-    // Create the automerge protocol handler
-    let (sync_tx, mut sync_rx) = tokio_mpsc::channel(10);
-    let protocol = IrohAutomergeProtocol::new(Automerge::new(), sync_tx);
+    // Create the document store with a channel for sync notifications
+    let (store_change_tx, mut store_change_rx) = tokio_mpsc::channel(10);
+    let store = Arc::new(LocalDocumentStore::new(store_change_tx));
+
+    // Create the document ID for our session
+    let doc_id = DocumentId::from_string(IROHSCII_DOC_ID)?;
+
+    // Initialize an empty document in the store if it doesn't exist
+    if !store.as_ref().exists(&doc_id).await? {
+        store.as_ref().create(Some(doc_id.clone()), None).await?;
+    }
+
+    // Create the automerge sync handler (for accepting incoming connections via router)
+    let sync_handler = Arc::new(AutomergeSyncHandler::new(store.clone()));
 
     // Create the presence protocol handler
     let (presence_tx, mut presence_rx) = tokio_mpsc::channel(64);
@@ -208,7 +248,7 @@ async fn run_sync(
 
     // Build the router with both protocols
     let router = iroh::protocol::Router::builder(endpoint.clone())
-        .accept(IrohAutomergeProtocol::ALPN, protocol.clone())
+        .accept(AUTOMERGE_SYNC_ALPN, sync_handler.clone())
         .accept(PresenceProtocol::ALPN, presence_protocol.clone())
         .spawn();
 
@@ -220,46 +260,80 @@ async fn run_sync(
 
     match config.mode {
         SyncMode::Active { join_ticket } => {
-            // If we have a ticket to join, connect to that peer for both protocols
-            let sync_handle = if let Some(ref remote_ticket) = join_ticket {
-                let endpoint_addr = decode_ticket(remote_ticket)?;
-                let conn = endpoint
-                    .connect(endpoint_addr.clone(), IrohAutomergeProtocol::ALPN)
-                    .await?;
+            // Shutdown flag for clean periodic sync termination
+            let shutting_down = Arc::new(AtomicBool::new(false));
 
-                let protocol_clone = protocol.clone();
-                Some(tokio::spawn(async move {
-                    if let Err(e) = protocol_clone.run_sync_loop(conn).await {
-                        eprintln!("Sync loop error: {}", e);
-                    }
-                }))
+            // Resolve peer address (if joining)
+            let peer_endpoint_addr = if let Some(ref remote_ticket) = join_ticket {
+                Some(decode_ticket(remote_ticket)?)
             } else {
                 None
             };
 
-            // Also connect presence protocol if joining a peer
-            let presence_handle = if let Some(ref remote_ticket) = join_ticket {
-                let endpoint_addr = decode_ticket(remote_ticket)?;
-                let conn = endpoint
-                    .connect(endpoint_addr, PresenceProtocol::ALPN)
-                    .await?;
-
-                let presence_clone = presence_protocol.clone();
-                Some(tokio::spawn(async move {
-                    if let Err(e) = presence_clone.run_presence_loop(conn).await {
-                        eprintln!("Presence loop error: {}", e);
+            // Establish a persistent sync connection to the peer (reused for all syncs).
+            // QUIC connections support multiplexed streams, so sync_with_peer() opens
+            // a new bi-stream each time on this same connection.
+            let sync_conn: Option<Connection> = if let Some(ref endpoint_addr) = peer_endpoint_addr {
+                match endpoint.connect(endpoint_addr.clone(), AUTOMERGE_SYNC_ALPN).await {
+                    Ok(conn) => Some(conn),
+                    Err(e) => {
+                        let _ = event_tx.send(SyncEvent::Error(format!(
+                            "Failed to connect to peer: {}", e
+                        )));
+                        None
                     }
-                }))
+                }
             } else {
                 None
             };
 
-            // Main loop: accept connections (via router) and handle local changes
+            // Do initial sync to pull any existing state from the peer
+            if let Some(ref conn) = sync_conn {
+                do_sync(&store, &doc_id, conn).await;
+            }
+
+            // Connect presence protocol on a separate connection (different ALPN)
+            let presence_handle = if let Some(ref endpoint_addr) = peer_endpoint_addr {
+                match endpoint.connect(endpoint_addr.clone(), PresenceProtocol::ALPN).await {
+                    Ok(conn) => {
+                        let presence_clone = presence_protocol.clone();
+                        Some(tokio::spawn(async move {
+                            if let Err(e) = presence_clone.run_presence_loop(conn).await {
+                                eprintln!("Presence loop error: {}", e);
+                            }
+                        }))
+                    }
+                    Err(_) => None,
+                }
+            } else {
+                None
+            };
+
+            // Periodic sync timer (every 200ms) to pull remote changes
+            let mut sync_interval = tokio::time::interval(Duration::from_millis(200));
+            sync_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            // Main loop
             loop {
                 tokio::select! {
-                    Some(doc) = sync_rx.recv() => {
-                        let _ = event_tx.send(SyncEvent::RemoteChanges { doc: Box::new(doc) });
+                    // Store notified us of changes from sync
+                    Some(_doc_id_str) = store_change_rx.recv() => {
+                        if let Some(bytes) = store.get_bytes(&doc_id).await {
+                            match Automerge::load(&bytes) {
+                                Ok(doc) => {
+                                    let _ = event_tx.send(SyncEvent::RemoteChanges {
+                                        doc: Box::new(doc),
+                                    });
+                                }
+                                Err(e) => {
+                                    let _ = event_tx.send(SyncEvent::Error(
+                                        format!("Failed to load doc: {}", e),
+                                    ));
+                                }
+                            }
+                        }
                     }
+                    // Presence messages from peers
                     Some(msg) = presence_rx.recv() => {
                         match msg {
                             PresenceMessage::Update(presence) => {
@@ -268,38 +342,71 @@ async fn run_sync(
                             PresenceMessage::Leave { peer_id } => {
                                 let _ = event_tx.send(SyncEvent::PresenceRemoved { peer_id });
                             }
-                            PresenceMessage::RequestAll => {
-                                // Handled internally by presence protocol
+                            PresenceMessage::RequestAll => {}
+                        }
+                    }
+                    // Periodic sync with peer (reuses persistent connection)
+                    _ = sync_interval.tick() => {
+                        if !shutting_down.load(Ordering::Relaxed) {
+                            if let Some(ref conn) = sync_conn {
+                                let store_clone = store.clone();
+                                let doc_id_clone = doc_id.clone();
+                                let conn_clone = conn.clone();
+                                let shutting_down_clone = shutting_down.clone();
+                                tokio::spawn(async move {
+                                    if !shutting_down_clone.load(Ordering::Relaxed) {
+                                        do_sync(&store_clone, &doc_id_clone, &conn_clone).await;
+                                    }
+                                });
                             }
                         }
                     }
+                    // Commands from main thread
                     _ = tokio::time::sleep(Duration::from_millis(50)) => {
                         match command_rx.try_recv() {
                             Ok(SyncCommand::SyncDoc { doc }) => {
-                                if let Err(e) = protocol.merge_and_notify(&doc).await {
-                                    let _ = event_tx.send(SyncEvent::Error(e.to_string()));
+                                // Update the local store (no notification to avoid feedback loop)
+                                let bytes = doc.save();
+                                if let Err(e) = store.update_from_app(&doc_id, &bytes).await {
+                                    let _ = event_tx.send(SyncEvent::Error(
+                                        format!("Failed to update store: {}", e),
+                                    ));
+                                }
+
+                                // Push changes to peer via the persistent connection
+                                if let Some(ref conn) = sync_conn {
+                                    let store_clone = store.clone();
+                                    let doc_id_clone = doc_id.clone();
+                                    let conn_clone = conn.clone();
+                                    tokio::spawn(async move {
+                                        do_sync(&store_clone, &doc_id_clone, &conn_clone).await;
+                                    });
                                 }
                             }
                             Ok(SyncCommand::BroadcastPresence(presence)) => {
                                 presence_protocol.broadcast(presence);
                             }
                             Ok(SyncCommand::Shutdown) => {
+                                // Signal all spawned tasks to stop
+                                shutting_down.store(true, Ordering::Relaxed);
                                 presence_protocol.broadcast_leave();
-                                if let Some(h) = &sync_handle {
-                                    h.abort();
-                                }
                                 if let Some(h) = &presence_handle {
                                     h.abort();
+                                }
+                                // Close the sync connection gracefully
+                                if let Some(ref conn) = sync_conn {
+                                    conn.close(0u32.into(), b"shutdown");
                                 }
                                 break;
                             }
                             Err(std_mpsc::TryRecvError::Empty) => {}
                             Err(std_mpsc::TryRecvError::Disconnected) => {
-                                if let Some(h) = &sync_handle {
-                                    h.abort();
-                                }
+                                shutting_down.store(true, Ordering::Relaxed);
                                 if let Some(h) = &presence_handle {
                                     h.abort();
+                                }
+                                if let Some(ref conn) = sync_conn {
+                                    conn.close(0u32.into(), b"shutdown");
                                 }
                                 break;
                             }
@@ -309,7 +416,6 @@ async fn run_sync(
             }
         }
         SyncMode::Disabled => {
-            // Should not reach here, but just wait for shutdown
             loop {
                 if let Ok(SyncCommand::Shutdown) = command_rx.recv() {
                     break;

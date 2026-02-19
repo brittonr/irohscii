@@ -5,11 +5,13 @@
 //! - Automerge CRDT-based conflict-free data synchronization
 //! - Presence tracking for cursor/activity visibility
 
+pub mod peer;
 pub mod presence;
 mod sync;
 
+pub use peer::PeerId;
 pub use presence::{
-    CursorActivity, PEER_COLORS, PeerId, PeerPresence, PresenceManager, PresenceMessage, ToolKind,
+    CursorActivity, PEER_COLORS, PeerPresence, PresenceManager, PresenceMessage, ToolKind,
     peer_color,
 };
 pub use sync::{
