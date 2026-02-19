@@ -146,6 +146,7 @@ dependencies = [
  "bytes",
  "hex",
  "iroh",
+ "iroh-base",
  "postcard",
  "serde",
  "serde_json",
