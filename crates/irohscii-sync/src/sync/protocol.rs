@@ -4,6 +4,7 @@
 
 pub use aspen_automerge::AUTOMERGE_SYNC_ALPN;
 pub use aspen_automerge::AutomergeSyncHandler;
+pub use aspen_automerge::AutomergeSyncTicket;
 pub use aspen_automerge::CapabilityToken;
 pub use aspen_automerge::sync_with_peer;
 pub use aspen_automerge::sync_with_peer_cap;

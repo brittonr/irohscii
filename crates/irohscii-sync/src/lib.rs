@@ -16,7 +16,7 @@ pub use presence::{
 };
 pub use sync::{
     CapabilityToken, SyncCommand, SyncConfig, SyncEvent, SyncHandle, SyncMode,
-    decode_capability, decode_ticket, encode_ticket, start_sync_thread,
+    decode_cluster_ticket, decode_ticket, encode_ticket, start_sync_thread,
 };
 
 // Re-export core types for convenience

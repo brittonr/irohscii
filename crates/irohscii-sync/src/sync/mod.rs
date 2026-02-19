@@ -18,7 +18,6 @@ use std::time::Duration;
 
 use anyhow::Result;
 use automerge::Automerge;
-use base64::Engine as _;
 use iroh::Endpoint;
 use iroh::discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher};
 use iroh::endpoint::Connection;
@@ -30,6 +29,7 @@ use aspen_automerge::{DocumentId, DocumentStore};
 use crate::{PeerId, PeerPresence, PresenceMessage};
 use local_store::LocalDocumentStore;
 use presence_protocol::PresenceProtocol;
+pub use protocol::AutomergeSyncTicket;
 pub use protocol::CapabilityToken;
 use protocol::{AUTOMERGE_SYNC_ALPN, AutomergeSyncHandler, sync_with_peer, sync_with_peer_cap};
 
@@ -169,16 +169,22 @@ pub fn start_sync_thread(config: SyncConfig) -> Result<SyncHandle> {
     })
 }
 
-/// Decode a capability token string (aspen-cap1...) into a CapabilityToken.
-pub fn decode_capability(token: &str) -> Result<CapabilityToken> {
-    if let Some(data) = token.strip_prefix("aspen-cap1") {
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(data)
-            .map_err(|e| anyhow::anyhow!("Invalid capability encoding: {}", e))?;
-        CapabilityToken::decode(&bytes)
-            .map_err(|e| anyhow::anyhow!("Invalid capability data: {}", e))
+/// Decode a cluster ticket string into an endpoint address and optional capability.
+///
+/// Accepts two formats:
+/// - `amsync1...` — automerge sync ticket (address + capability in one string)
+/// - `irohscii1...` — bare endpoint address (no auth, for legacy/peer use)
+pub fn decode_cluster_ticket(ticket: &str) -> Result<(EndpointAddr, Option<CapabilityToken>)> {
+    if ticket.starts_with("amsync1") {
+        let sync_ticket = AutomergeSyncTicket::deserialize(ticket)
+            .map_err(|e| anyhow::anyhow!("Invalid sync ticket: {}", e))?;
+        let token = sync_ticket
+            .capability_token()
+            .map_err(|e| anyhow::anyhow!("Invalid capability in ticket: {}", e))?;
+        Ok((sync_ticket.addr, Some(token)))
     } else {
-        anyhow::bail!("Capability token must start with 'aspen-cap1'")
+        let addr = decode_ticket(ticket)?;
+        Ok((addr, None))
     }
 }
 
@@ -324,7 +330,11 @@ async fn run_sync(
             // while peer sync provides real-time collaboration.
             // Mutable so ConnectCluster can attach one mid-session.
             let mut cluster_conn: Option<Connection> = if let Some(ref cluster_ticket) = config.cluster_ticket {
-                let cluster_addr = decode_ticket(cluster_ticket)?;
+                // Parse the ticket — amsync1 tickets include the capability token
+                let (cluster_addr, ticket_cap) = decode_cluster_ticket(cluster_ticket)?;
+                if ticket_cap.is_some() {
+                    cluster_cap = ticket_cap;
+                }
                 match endpoint.connect(cluster_addr, AUTOMERGE_SYNC_ALPN).await {
                     Ok(conn) => Some(conn),
                     Err(e) => {
@@ -475,12 +485,12 @@ async fn run_sync(
                                 presence_protocol.broadcast(presence);
                             }
                             Ok(SyncCommand::ConnectCluster { ticket, capability }) => {
-                                match decode_ticket(&ticket) {
-                                    Ok(addr) => {
+                                match decode_cluster_ticket(&ticket) {
+                                    Ok((addr, ticket_cap)) => {
                                         match endpoint.connect(addr, AUTOMERGE_SYNC_ALPN).await {
                                             Ok(conn) => {
-                                                // Update the stored capability
-                                                cluster_cap = capability;
+                                                // Prefer explicit capability, fall back to ticket's
+                                                cluster_cap = capability.or(ticket_cap);
                                                 // Pull existing state from cluster
                                                 do_sync(&store, &doc_id, &conn, cluster_cap.as_ref()).await;
                                                 cluster_conn = Some(conn);

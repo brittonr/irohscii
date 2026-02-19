@@ -68,13 +68,9 @@ struct Args {
     #[arg(long, value_name = "TICKET")]
     join: Option<String>,
 
-    /// Sync documents to an aspen cluster node
+    /// Sync documents to an aspen cluster node (amsync1... ticket)
     #[arg(long, value_name = "TICKET")]
     cluster: Option<String>,
-
-    /// Capability token for cluster auth (aspen-cap1... string)
-    #[arg(long, value_name = "TOKEN")]
-    cap: Option<String>,
 
     /// Disable sync (offline mode)
     #[arg(long)]
@@ -125,12 +121,6 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Parse capability token if provided
-    let cluster_capability = args.cap.as_deref().map(|token| {
-        sync::decode_capability(token)
-            .unwrap_or_else(|e| panic!("Invalid capability token: {}", e))
-    });
-
     // Determine sync configuration - always active unless --offline
     let sync_config = if args.offline {
         SyncConfig {
@@ -145,7 +135,7 @@ fn main() -> Result<()> {
                 join_ticket: args.join,
             },
             cluster_ticket: args.cluster,
-            cluster_capability,
+            cluster_capability: None,
             disable_discovery: false,
         }
     };

@@ -2309,7 +2309,6 @@ dependencies = [
  "aspen-automerge",
  "async-trait",
  "automerge",
- "base64",
  "data-encoding",
  "hex",
  "iroh",
