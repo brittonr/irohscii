@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use automerge::Automerge;
+use base64::Engine as _;
 use iroh::Endpoint;
 use iroh::discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher};
 use iroh::endpoint::Connection;
@@ -29,7 +30,8 @@ use aspen_automerge::{DocumentId, DocumentStore};
 use crate::{PeerId, PeerPresence, PresenceMessage};
 use local_store::LocalDocumentStore;
 use presence_protocol::PresenceProtocol;
-use protocol::{AUTOMERGE_SYNC_ALPN, AutomergeSyncHandler, sync_with_peer};
+pub use protocol::SignedCapability;
+use protocol::{AUTOMERGE_SYNC_ALPN, AutomergeSyncHandler, sync_with_peer, sync_with_peer_cap};
 
 /// Fixed document ID for the irohscii session
 const IROHSCII_DOC_ID: &str = "irohscii-session";
@@ -40,6 +42,9 @@ pub struct SyncConfig {
     pub mode: SyncMode,
     /// Ticket for an aspen cluster node to persist documents to
     pub cluster_ticket: Option<String>,
+    /// Capability token for authenticating with the cluster node.
+    /// Required when the cluster enforces capability-based auth.
+    pub cluster_capability: Option<SignedCapability>,
     /// Disable DNS/Pkarr discovery (for test isolation)
     pub disable_discovery: bool,
 }
@@ -49,6 +54,7 @@ impl Default for SyncConfig {
         Self {
             mode: SyncMode::Active { join_ticket: None },
             cluster_ticket: None,
+            cluster_capability: None,
             disable_discovery: false,
         }
     }
@@ -89,7 +95,10 @@ pub enum SyncCommand {
     /// Broadcast local presence to all peers
     BroadcastPresence(PeerPresence),
     /// Connect to an aspen cluster node for document persistence
-    ConnectCluster { ticket: String },
+    ConnectCluster {
+        ticket: String,
+        capability: Option<SignedCapability>,
+    },
     /// Shutdown sync
     Shutdown,
 }
@@ -160,6 +169,19 @@ pub fn start_sync_thread(config: SyncConfig) -> Result<SyncHandle> {
     })
 }
 
+/// Decode a capability token string (aspen-cap1...) into a SignedCapability.
+pub fn decode_capability(token: &str) -> Result<SignedCapability> {
+    if let Some(data) = token.strip_prefix("aspen-cap1") {
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(data)
+            .map_err(|e| anyhow::anyhow!("Invalid capability encoding: {}", e))?;
+        SignedCapability::from_bytes(&bytes)
+            .map_err(|e| anyhow::anyhow!("Invalid capability data: {}", e))
+    } else {
+        anyhow::bail!("Capability token must start with 'aspen-cap1'")
+    }
+}
+
 /// Encode an EndpointAddr as a shareable ticket string
 pub fn encode_ticket(addr: &EndpointAddr) -> String {
     let bytes = postcard::to_stdvec(addr).expect("EndpointAddr serialization should not fail");
@@ -190,12 +212,13 @@ async fn do_sync(
     store: &Arc<LocalDocumentStore>,
     doc_id: &DocumentId,
     conn: &Connection,
+    capability: Option<&SignedCapability>,
 ) {
-    if let Err(e) = sync_with_peer(
-        store.as_ref(),
-        doc_id,
-        conn,
-    ).await {
+    let result = match capability {
+        Some(cap) => sync_with_peer_cap(store.as_ref(), doc_id, conn, Some(cap)).await,
+        None => sync_with_peer(store.as_ref(), doc_id, conn).await,
+    };
+    if let Err(e) = result {
         // Only log non-connection errors (connection errors are expected during shutdown)
         let msg = e.to_string();
         if !msg.contains("closed") && !msg.contains("refused") {
@@ -292,6 +315,10 @@ async fn run_sync(
                 None
             };
 
+            // Capability token for authenticating with the cluster. Mutable so
+            // ConnectCluster can replace it mid-session.
+            let mut cluster_cap: Option<SignedCapability> = config.cluster_capability.clone();
+
             // Establish a persistent connection to the aspen cluster node (if configured).
             // This is independent of peer sync — the cluster provides durable storage
             // while peer sync provides real-time collaboration.
@@ -313,12 +340,12 @@ async fn run_sync(
 
             // Do initial sync to pull any existing state from the peer
             if let Some(ref conn) = sync_conn {
-                do_sync(&store, &doc_id, conn).await;
+                do_sync(&store, &doc_id, conn, None).await;
             }
 
             // Pull any existing state from the cluster
             if let Some(ref conn) = cluster_conn {
-                do_sync(&store, &doc_id, conn).await;
+                do_sync(&store, &doc_id, conn, cluster_cap.as_ref()).await;
             }
 
             // Connect presence protocol on a separate connection (different ALPN)
@@ -388,7 +415,7 @@ async fn run_sync(
                                 let shutting_down_clone = shutting_down.clone();
                                 tokio::spawn(async move {
                                     if !shutting_down_clone.load(Ordering::Relaxed) {
-                                        do_sync(&store_clone, &doc_id_clone, &conn_clone).await;
+                                        do_sync(&store_clone, &doc_id_clone, &conn_clone, None).await;
                                     }
                                 });
                             }
@@ -401,10 +428,11 @@ async fn run_sync(
                                 let store_clone = store.clone();
                                 let doc_id_clone = doc_id.clone();
                                 let conn_clone = conn.clone();
+                                let cap_clone = cluster_cap.clone();
                                 let shutting_down_clone = shutting_down.clone();
                                 tokio::spawn(async move {
                                     if !shutting_down_clone.load(Ordering::Relaxed) {
-                                        do_sync(&store_clone, &doc_id_clone, &conn_clone).await;
+                                        do_sync(&store_clone, &doc_id_clone, &conn_clone, cap_clone.as_ref()).await;
                                     }
                                 });
                             }
@@ -428,7 +456,7 @@ async fn run_sync(
                                     let doc_id_clone = doc_id.clone();
                                     let conn_clone = conn.clone();
                                     tokio::spawn(async move {
-                                        do_sync(&store_clone, &doc_id_clone, &conn_clone).await;
+                                        do_sync(&store_clone, &doc_id_clone, &conn_clone, None).await;
                                     });
                                 }
 
@@ -437,21 +465,24 @@ async fn run_sync(
                                     let store_clone = store.clone();
                                     let doc_id_clone = doc_id.clone();
                                     let conn_clone = conn.clone();
+                                    let cap_clone = cluster_cap.clone();
                                     tokio::spawn(async move {
-                                        do_sync(&store_clone, &doc_id_clone, &conn_clone).await;
+                                        do_sync(&store_clone, &doc_id_clone, &conn_clone, cap_clone.as_ref()).await;
                                     });
                                 }
                             }
                             Ok(SyncCommand::BroadcastPresence(presence)) => {
                                 presence_protocol.broadcast(presence);
                             }
-                            Ok(SyncCommand::ConnectCluster { ticket }) => {
+                            Ok(SyncCommand::ConnectCluster { ticket, capability }) => {
                                 match decode_ticket(&ticket) {
                                     Ok(addr) => {
                                         match endpoint.connect(addr, AUTOMERGE_SYNC_ALPN).await {
                                             Ok(conn) => {
+                                                // Update the stored capability
+                                                cluster_cap = capability;
                                                 // Pull existing state from cluster
-                                                do_sync(&store, &doc_id, &conn).await;
+                                                do_sync(&store, &doc_id, &conn, cluster_cap.as_ref()).await;
                                                 cluster_conn = Some(conn);
                                             }
                                             Err(e) => {

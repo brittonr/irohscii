@@ -72,6 +72,10 @@ struct Args {
     #[arg(long, value_name = "TICKET")]
     cluster: Option<String>,
 
+    /// Capability token for cluster auth (aspen-cap1... string)
+    #[arg(long, value_name = "TOKEN")]
+    cap: Option<String>,
+
     /// Disable sync (offline mode)
     #[arg(long)]
     offline: bool,
@@ -121,11 +125,18 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Parse capability token if provided
+    let cluster_capability = args.cap.as_deref().map(|token| {
+        sync::decode_capability(token)
+            .unwrap_or_else(|e| panic!("Invalid capability token: {}", e))
+    });
+
     // Determine sync configuration - always active unless --offline
     let sync_config = if args.offline {
         SyncConfig {
             mode: SyncMode::Disabled,
             cluster_ticket: None,
+            cluster_capability: None,
             disable_discovery: false,
         }
     } else {
@@ -134,6 +145,7 @@ fn main() -> Result<()> {
                 join_ticket: args.join,
             },
             cluster_ticket: args.cluster,
+            cluster_capability,
             disable_discovery: false,
         }
     };
@@ -593,7 +605,10 @@ fn run_app(
                             if let Some(ticket) = app.pending_cluster_ticket.take() {
                                 if let Some(handle) = sync_handle {
                                     let _ = handle.send_command(
-                                        sync::SyncCommand::ConnectCluster { ticket },
+                                        sync::SyncCommand::ConnectCluster {
+                                            ticket,
+                                            capability: None,
+                                        },
                                     );
                                 } else {
                                     app.set_error("Sync is disabled (--offline)");

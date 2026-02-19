@@ -15,8 +15,8 @@ pub use presence::{
     peer_color,
 };
 pub use sync::{
-    SyncCommand, SyncConfig, SyncEvent, SyncHandle, SyncMode, decode_ticket, encode_ticket,
-    start_sync_thread,
+    SignedCapability, SyncCommand, SyncConfig, SyncEvent, SyncHandle, SyncMode,
+    decode_capability, decode_ticket, encode_ticket, start_sync_thread,
 };
 
 // Re-export core types for convenience

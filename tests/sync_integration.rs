@@ -124,6 +124,7 @@ fn setup_host_peer() -> (SyncHandle, String, PeerId) {
     let config = SyncConfig {
         mode: SyncMode::Active { join_ticket: None },
         cluster_ticket: None,
+        cluster_capability: None,
         disable_discovery: true,
     };
     let handle = start_sync_thread(config).expect("Failed to start host peer");
@@ -141,6 +142,7 @@ fn setup_joining_peer(ticket: &str) -> (SyncHandle, PeerId) {
             join_ticket: Some(ticket.to_string()),
         },
         cluster_ticket: None,
+        cluster_capability: None,
         disable_discovery: true,
     };
     let handle = start_sync_thread(config).expect("Failed to start joining peer");
