@@ -99,6 +99,7 @@ fn drain_remote(h: &SyncHandle, timeout: Duration) -> Option<Automerge> {
 fn host() -> (SyncHandle, String, PeerId) {
     let cfg = SyncConfig {
         mode: SyncMode::Active { join_ticket: None },
+        cluster_ticket: None,
         disable_discovery: true,
     };
     let h = start_sync_thread(cfg).expect("start host");
@@ -111,6 +112,7 @@ fn join(ticket: &str) -> (SyncHandle, PeerId) {
         mode: SyncMode::Active {
             join_ticket: Some(ticket.into()),
         },
+        cluster_ticket: None,
         disable_discovery: true,
     };
     let h = start_sync_thread(cfg).expect("start joiner");

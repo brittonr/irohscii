@@ -38,6 +38,8 @@ const IROHSCII_DOC_ID: &str = "irohscii-session";
 #[derive(Debug, Clone)]
 pub struct SyncConfig {
     pub mode: SyncMode,
+    /// Ticket for an aspen cluster node to persist documents to
+    pub cluster_ticket: Option<String>,
     /// Disable DNS/Pkarr discovery (for test isolation)
     pub disable_discovery: bool,
 }
@@ -46,6 +48,7 @@ impl Default for SyncConfig {
     fn default() -> Self {
         Self {
             mode: SyncMode::Active { join_ticket: None },
+            cluster_ticket: None,
             disable_discovery: false,
         }
     }
@@ -287,8 +290,37 @@ async fn run_sync(
                 None
             };
 
+            // Establish a persistent connection to the aspen cluster node (if configured).
+            // This is independent of peer sync — the cluster provides durable storage
+            // while peer sync provides real-time collaboration.
+            let cluster_conn: Option<Connection> = if let Some(ref cluster_ticket) = config.cluster_ticket {
+                let cluster_addr = decode_ticket(cluster_ticket)?;
+                match endpoint.connect(cluster_addr, AUTOMERGE_SYNC_ALPN).await {
+                    Ok(conn) => {
+                        let _ = event_tx.send(SyncEvent::Ready {
+                            endpoint_id: ticket_string.clone(),
+                            local_peer_id,
+                        });
+                        Some(conn)
+                    }
+                    Err(e) => {
+                        let _ = event_tx.send(SyncEvent::Error(format!(
+                            "Failed to connect to cluster: {}", e
+                        )));
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
             // Do initial sync to pull any existing state from the peer
             if let Some(ref conn) = sync_conn {
+                do_sync(&store, &doc_id, conn).await;
+            }
+
+            // Pull any existing state from the cluster
+            if let Some(ref conn) = cluster_conn {
                 do_sync(&store, &doc_id, conn).await;
             }
 
@@ -309,9 +341,13 @@ async fn run_sync(
                 None
             };
 
-            // Periodic sync timer (every 200ms) to pull remote changes
+            // Periodic sync timer (every 200ms) to pull remote changes from peers
             let mut sync_interval = tokio::time::interval(Duration::from_millis(200));
             sync_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            // Cluster sync timer (every 2s) — less frequent since it's for persistence
+            let mut cluster_interval = tokio::time::interval(Duration::from_secs(2));
+            cluster_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             // Main loop
             loop {
@@ -361,6 +397,22 @@ async fn run_sync(
                             }
                         }
                     }
+                    // Periodic sync with cluster (less frequent, for persistence)
+                    _ = cluster_interval.tick() => {
+                        if !shutting_down.load(Ordering::Relaxed) {
+                            if let Some(ref conn) = cluster_conn {
+                                let store_clone = store.clone();
+                                let doc_id_clone = doc_id.clone();
+                                let conn_clone = conn.clone();
+                                let shutting_down_clone = shutting_down.clone();
+                                tokio::spawn(async move {
+                                    if !shutting_down_clone.load(Ordering::Relaxed) {
+                                        do_sync(&store_clone, &doc_id_clone, &conn_clone).await;
+                                    }
+                                });
+                            }
+                        }
+                    }
                     // Commands from main thread
                     _ = tokio::time::sleep(Duration::from_millis(50)) => {
                         match command_rx.try_recv() {
@@ -382,6 +434,16 @@ async fn run_sync(
                                         do_sync(&store_clone, &doc_id_clone, &conn_clone).await;
                                     });
                                 }
+
+                                // Push changes to cluster
+                                if let Some(ref conn) = cluster_conn {
+                                    let store_clone = store.clone();
+                                    let doc_id_clone = doc_id.clone();
+                                    let conn_clone = conn.clone();
+                                    tokio::spawn(async move {
+                                        do_sync(&store_clone, &doc_id_clone, &conn_clone).await;
+                                    });
+                                }
                             }
                             Ok(SyncCommand::BroadcastPresence(presence)) => {
                                 presence_protocol.broadcast(presence);
@@ -393,8 +455,11 @@ async fn run_sync(
                                 if let Some(h) = &presence_handle {
                                     h.abort();
                                 }
-                                // Close the sync connection gracefully
+                                // Close connections gracefully
                                 if let Some(ref conn) = sync_conn {
+                                    conn.close(0u32.into(), b"shutdown");
+                                }
+                                if let Some(ref conn) = cluster_conn {
                                     conn.close(0u32.into(), b"shutdown");
                                 }
                                 break;
@@ -406,6 +471,9 @@ async fn run_sync(
                                     h.abort();
                                 }
                                 if let Some(ref conn) = sync_conn {
+                                    conn.close(0u32.into(), b"shutdown");
+                                }
+                                if let Some(ref conn) = cluster_conn {
                                     conn.close(0u32.into(), b"shutdown");
                                 }
                                 break;

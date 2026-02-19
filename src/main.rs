@@ -68,6 +68,10 @@ struct Args {
     #[arg(long, value_name = "TICKET")]
     join: Option<String>,
 
+    /// Sync documents to an aspen cluster node
+    #[arg(long, value_name = "TICKET")]
+    cluster: Option<String>,
+
     /// Disable sync (offline mode)
     #[arg(long)]
     offline: bool,
@@ -121,6 +125,7 @@ fn main() -> Result<()> {
     let sync_config = if args.offline {
         SyncConfig {
             mode: SyncMode::Disabled,
+            cluster_ticket: None,
             disable_discovery: false,
         }
     } else {
@@ -128,6 +133,7 @@ fn main() -> Result<()> {
             mode: SyncMode::Active {
                 join_ticket: args.join,
             },
+            cluster_ticket: args.cluster,
             disable_discovery: false,
         }
     };
