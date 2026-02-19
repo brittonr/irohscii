@@ -15,7 +15,7 @@ pub use presence::{
     peer_color,
 };
 pub use sync::{
-    SignedCapability, SyncCommand, SyncConfig, SyncEvent, SyncHandle, SyncMode,
+    CapabilityToken, SyncCommand, SyncConfig, SyncEvent, SyncHandle, SyncMode,
     decode_capability, decode_ticket, encode_ticket, start_sync_thread,
 };
 

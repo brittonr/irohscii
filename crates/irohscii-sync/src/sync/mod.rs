@@ -30,7 +30,7 @@ use aspen_automerge::{DocumentId, DocumentStore};
 use crate::{PeerId, PeerPresence, PresenceMessage};
 use local_store::LocalDocumentStore;
 use presence_protocol::PresenceProtocol;
-pub use protocol::SignedCapability;
+pub use protocol::CapabilityToken;
 use protocol::{AUTOMERGE_SYNC_ALPN, AutomergeSyncHandler, sync_with_peer, sync_with_peer_cap};
 
 /// Fixed document ID for the irohscii session
@@ -44,7 +44,7 @@ pub struct SyncConfig {
     pub cluster_ticket: Option<String>,
     /// Capability token for authenticating with the cluster node.
     /// Required when the cluster enforces capability-based auth.
-    pub cluster_capability: Option<SignedCapability>,
+    pub cluster_capability: Option<CapabilityToken>,
     /// Disable DNS/Pkarr discovery (for test isolation)
     pub disable_discovery: bool,
 }
@@ -97,7 +97,7 @@ pub enum SyncCommand {
     /// Connect to an aspen cluster node for document persistence
     ConnectCluster {
         ticket: String,
-        capability: Option<SignedCapability>,
+        capability: Option<CapabilityToken>,
     },
     /// Shutdown sync
     Shutdown,
@@ -169,13 +169,13 @@ pub fn start_sync_thread(config: SyncConfig) -> Result<SyncHandle> {
     })
 }
 
-/// Decode a capability token string (aspen-cap1...) into a SignedCapability.
-pub fn decode_capability(token: &str) -> Result<SignedCapability> {
+/// Decode a capability token string (aspen-cap1...) into a CapabilityToken.
+pub fn decode_capability(token: &str) -> Result<CapabilityToken> {
     if let Some(data) = token.strip_prefix("aspen-cap1") {
         let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(data)
             .map_err(|e| anyhow::anyhow!("Invalid capability encoding: {}", e))?;
-        SignedCapability::from_bytes(&bytes)
+        CapabilityToken::decode(&bytes)
             .map_err(|e| anyhow::anyhow!("Invalid capability data: {}", e))
     } else {
         anyhow::bail!("Capability token must start with 'aspen-cap1'")
@@ -212,7 +212,7 @@ async fn do_sync(
     store: &Arc<LocalDocumentStore>,
     doc_id: &DocumentId,
     conn: &Connection,
-    capability: Option<&SignedCapability>,
+    capability: Option<&CapabilityToken>,
 ) {
     let result = match capability {
         Some(cap) => sync_with_peer_cap(store.as_ref(), doc_id, conn, Some(cap)).await,
@@ -317,7 +317,7 @@ async fn run_sync(
 
             // Capability token for authenticating with the cluster. Mutable so
             // ConnectCluster can replace it mid-session.
-            let mut cluster_cap: Option<SignedCapability> = config.cluster_capability.clone();
+            let mut cluster_cap: Option<CapabilityToken> = config.cluster_capability.clone();
 
             // Establish a persistent connection to the aspen cluster node (if configured).
             // This is independent of peer sync — the cluster provides durable storage
