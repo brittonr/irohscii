@@ -3,11 +3,11 @@
     "aspen-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1771508333,
-        "narHash": "sha256-EWBxMFsgYWXwI6dNA7FVUwN/wA+/4KUFaxE6w8te4c0=",
+        "lastModified": 1771556833,
+        "narHash": "sha256-0jURONHwaQn9RgrQOBwWdt+2cUsC4VpEPDCy/q5p2Ek=",
         "owner": "brittonr",
         "repo": "aspen",
-        "rev": "7a257c04662ca1a3910c98a54b7b38a74f64a515",
+        "rev": "f20f22349fcdeefab1978bbe90c8f1d4029c9c97",
         "type": "github"
       },
       "original": {
