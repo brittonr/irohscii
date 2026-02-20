@@ -288,11 +288,20 @@ impl Document {
     pub fn update_shape(&mut self, id: ShapeId, kind: ShapeKind) -> Result<()> {
         let shapes_obj = self.get_shapes_map()?;
 
+        // Preserve layer_id before destroying the old shape object
+        let layer_id = self.get_shape_layer(id)?;
+
         // Delete old shape object and create new one with updated data
         let mut tx = self.doc.transaction();
         tx.delete(&shapes_obj, id.to_string())?;
         let shape_obj = tx.put_object(&shapes_obj, id.to_string(), ObjType::Map)?;
         write_shape_kind(&mut tx, &shape_obj, &kind)?;
+
+        // Restore layer_id (group membership lives in the groups map, not on shapes)
+        if let Some(lid) = layer_id {
+            tx.put(&shape_obj, "layer_id", lid.to_string())?;
+        }
+
         tx.commit();
 
         self.dirty = true;
@@ -541,24 +550,12 @@ impl Document {
 
         tx.commit();
 
-        // Update shapes to reference this group
-        for member_id in members {
-            self.set_shape_group(*member_id, Some(id))?;
-        }
-
         self.dirty = true;
         Ok(id)
     }
 
     /// Delete a group (ungroups all shapes)
     pub fn delete_group(&mut self, id: GroupId) -> Result<()> {
-        // First, clear group reference from all member shapes
-        if let Some(group) = self.read_group(id)? {
-            for member_id in group.members {
-                let _ = self.set_shape_group(member_id, None);
-            }
-        }
-
         // Remove the group from the groups map
         let groups_obj = self.get_groups_map()?;
 
@@ -637,43 +634,14 @@ impl Document {
         Ok(groups)
     }
 
-    /// Get the group a shape belongs to (reads from shape's group_id field)
+    /// Get the group a shape belongs to (scans the groups map)
     pub fn get_shape_group(&self, id: ShapeId) -> Result<Option<GroupId>> {
-        let shapes_obj = self.get_shapes_map()?;
-
-        match self.doc.get(&shapes_obj, id.to_string())? {
-            Some((_, shape_obj)) => match self.doc.get(&shape_obj, "group_id")? {
-                Some((automerge::Value::Scalar(s), _)) => {
-                    let id_str = s.to_string().trim_matches('"').to_string();
-                    Ok(Uuid::parse_str(&id_str).ok().map(GroupId))
-                }
-                _ => Ok(None),
-            },
-            None => Ok(None),
-        }
-    }
-
-    /// Set or clear the group a shape belongs to
-    pub fn set_shape_group(&mut self, id: ShapeId, group_id: Option<GroupId>) -> Result<()> {
-        let shapes_obj = self.get_shapes_map()?;
-
-        let mut tx = self.doc.transaction();
-
-        if let Some((_, shape_obj)) = tx.get(&shapes_obj, id.to_string())? {
-            match group_id {
-                Some(gid) => {
-                    tx.put(&shape_obj, "group_id", gid.to_string())?;
-                }
-                None => {
-                    // Try to delete the group_id field if it exists
-                    let _ = tx.delete(&shape_obj, "group_id");
-                }
+        for group in self.read_all_groups()? {
+            if group.members.contains(&id) {
+                return Ok(Some(group.id));
             }
         }
-
-        tx.commit();
-        self.dirty = true;
-        Ok(())
+        Ok(None)
     }
 
     /// Get the root group of a group (traverse up the parent chain)
@@ -2401,6 +2369,87 @@ mod tests {
 
         let groups = doc.read_all_groups().unwrap();
         assert_eq!(groups.len(), 2);
+    }
+
+    #[test]
+    fn group_survives_update_shape() {
+        let mut doc = Document::new();
+        let id1 = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        let id2 = doc.add_shape(make_rect(20, 20, 10, 5)).unwrap();
+
+        let group_id = doc.create_group(&[id1, id2], None).unwrap();
+        assert_eq!(doc.get_shape_group(id1).unwrap(), Some(group_id));
+        assert_eq!(doc.get_shape_group(id2).unwrap(), Some(group_id));
+
+        // update_shape rewrites the shape object — group must survive
+        // because membership lives in the groups map, not on the shape
+        let kind1 = doc.read_shape(id1).unwrap().unwrap();
+        doc.update_shape(id1, kind1).unwrap();
+
+        assert_eq!(doc.get_shape_group(id1).unwrap(), Some(group_id));
+        assert_eq!(doc.get_shape_group(id2).unwrap(), Some(group_id));
+    }
+
+    #[test]
+    fn group_survives_translate_shape() {
+        let mut doc = Document::new();
+        let id1 = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        let id2 = doc.add_shape(make_rect(20, 20, 10, 5)).unwrap();
+
+        let group_id = doc.create_group(&[id1, id2], None).unwrap();
+
+        doc.translate_shape(id1, 5, 5).unwrap();
+
+        assert_eq!(doc.get_shape_group(id1).unwrap(), Some(group_id));
+        assert_eq!(doc.get_shape_group(id2).unwrap(), Some(group_id));
+    }
+
+    #[test]
+    fn layer_id_survives_update_shape() {
+        let mut doc = Document::new();
+        let id1 = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+
+        let layers = doc.read_all_layers().unwrap();
+        let layer_id = layers[0].id;
+        doc.set_shape_layer(id1, layer_id).unwrap();
+        assert_eq!(doc.get_shape_layer(id1).unwrap(), Some(layer_id));
+
+        let kind1 = doc.read_shape(id1).unwrap().unwrap();
+        doc.update_shape(id1, kind1).unwrap();
+
+        assert_eq!(doc.get_shape_layer(id1).unwrap(), Some(layer_id));
+    }
+
+    #[test]
+    fn group_and_layer_survive_update_shape() {
+        let mut doc = Document::new();
+        let id1 = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        let id2 = doc.add_shape(make_rect(20, 20, 10, 5)).unwrap();
+
+        let group_id = doc.create_group(&[id1, id2], None).unwrap();
+        let layers = doc.read_all_layers().unwrap();
+        let layer_id = layers[0].id;
+        doc.set_shape_layer(id1, layer_id).unwrap();
+
+        doc.update_shape(id1, make_rect(5, 5, 10, 5)).unwrap();
+
+        assert_eq!(doc.get_shape_group(id1).unwrap(), Some(group_id));
+        assert_eq!(doc.get_shape_layer(id1).unwrap(), Some(layer_id));
+    }
+
+    #[test]
+    fn delete_group_removes_membership() {
+        let mut doc = Document::new();
+        let id1 = doc.add_shape(make_rect(0, 0, 10, 5)).unwrap();
+        let id2 = doc.add_shape(make_rect(20, 20, 10, 5)).unwrap();
+
+        let group_id = doc.create_group(&[id1, id2], None).unwrap();
+        assert_eq!(doc.get_shape_group(id1).unwrap(), Some(group_id));
+
+        doc.delete_group(group_id).unwrap();
+
+        assert_eq!(doc.get_shape_group(id1).unwrap(), None);
+        assert_eq!(doc.get_shape_group(id2).unwrap(), None);
     }
 
     // --- Persistence tests ---
