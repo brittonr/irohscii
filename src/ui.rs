@@ -1090,8 +1090,9 @@ fn render_layer_panel(frame: &mut Frame, app: &App, area: Rect) {
 
         // Layer name (truncate if needed) or rename input
         let max_name_len = 10;
-        let (name_span, vis_span, lock_span) = if is_renaming {
-            let text = renaming.unwrap().1;
+        let (name_span, vis_span, lock_span) = if is_renaming
+            && let Some((_, text)) = renaming
+        {
             let display: String = text.chars().take(max_name_len).collect();
             let input_style = Style::default().fg(Color::Black).bg(Color::Yellow);
             (

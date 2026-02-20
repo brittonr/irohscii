@@ -422,8 +422,9 @@ impl App {
             CursorActivity::Typing {
                 position: state.start_pos,
             }
-        } else if self.selected.len() == 1 {
-            let id = *self.selected.iter().next().unwrap();
+        } else if let Some(&id) = self.selected.iter().next()
+            && self.selected.len() == 1
+        {
             CursorActivity::Selected { shape_id: id }
         } else {
             CursorActivity::Idle
@@ -1862,10 +1863,12 @@ impl App {
     /// Try to start resizing at a position (only works with single selection)
     pub fn try_start_resize(&mut self, pos: Position) -> bool {
         // Only allow resize with single selection
+        let Some(&id) = self.selected.iter().next() else {
+            return false;
+        };
         if self.selected.len() != 1 {
             return false;
         }
-        let id = *self.selected.iter().next().unwrap();
 
         // Check if shape is on a locked layer
         if self.is_shape_locked(id) {
@@ -2219,20 +2222,19 @@ impl App {
 
     /// Start label input for the selected shape (only works with single selection)
     pub fn start_label_input(&mut self) -> bool {
-        if self.selected.len() == 1 {
-            let id = *self.selected.iter().next().unwrap();
-            if let Some(shape) = self.shape_view.get(id)
-                && shape.supports_label()
-            {
-                let existing_label = shape.label().unwrap_or("").to_string();
-                let cursor = existing_label.chars().count();
-                self.mode = Mode::LabelInput(LabelInputState {
-                    shape_id: id,
-                    text: existing_label,
-                    cursor,
-                });
-                return true;
-            }
+        if self.selected.len() == 1
+            && let Some(&id) = self.selected.iter().next()
+            && let Some(shape) = self.shape_view.get(id)
+            && shape.supports_label()
+        {
+            let existing_label = shape.label().unwrap_or("").to_string();
+            let cursor = existing_label.chars().count();
+            self.mode = Mode::LabelInput(LabelInputState {
+                shape_id: id,
+                text: existing_label,
+                cursor,
+            });
+            return true;
         }
         false
     }
