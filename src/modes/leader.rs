@@ -129,6 +129,12 @@ impl ModeHandler for LeaderMenuState {
                 ModeTransition::Normal
             }
 
+            // Connect to cluster
+            KeyCode::Char('K') => ModeTransition::to(Mode::PathInput(PathInputState {
+                path: String::new(),
+                kind: PathInputKind::ClusterConnect,
+            })),
+
             // Quit
             KeyCode::Char('q') => ModeTransition::Action(ModeAction::Quit),
 
@@ -149,7 +155,7 @@ impl ModeHandler for LeaderMenuState {
     }
 
     fn help_text(&self) -> &'static str {
-        "t:tool c:color b:brush s:save o:open e:export g:grid l:layers T:ticket ?:help q:quit"
+        "t:tool c:color b:brush s:save o:open e:export n:new g:grid l:layers p:peers T:ticket K:cluster ?:help q:quit"
     }
 }
 
@@ -289,6 +295,25 @@ mod tests {
         let result = state.handle_key(&mut ctx, key(KeyCode::Char('p')));
         assert!(matches!(result, ModeTransition::Normal));
         assert_eq!(ctx.app.show_participants, !initial_participants);
+    }
+
+    #[test]
+    fn test_shift_k_opens_cluster_connect() {
+        let mut state = LeaderMenuState;
+        let mut app = crate::app::App::new(80, 24);
+        let mut ctx = ModeContext { app: &mut app };
+
+        let result = state.handle_key(&mut ctx, key(KeyCode::Char('K')));
+        match result {
+            ModeTransition::To(mode) => match *mode {
+                Mode::PathInput(PathInputState {
+                    kind: PathInputKind::ClusterConnect,
+                    ..
+                }) => (),
+                _ => panic!("Expected cluster connect mode"),
+            },
+            _ => panic!("Expected To transition"),
+        }
     }
 
     #[test]

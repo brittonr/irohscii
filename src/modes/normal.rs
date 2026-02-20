@@ -314,30 +314,9 @@ impl ModeHandler for NormalModeState {
             }
 
             // =========================================================
-            // Sync operations
-            // =========================================================
-            KeyCode::Char('T') => ctx.app.copy_ticket_to_clipboard(),
-            KeyCode::Char('K') => ctx.app.start_cluster_connect(),
-            KeyCode::Char('P') => {
-                ctx.app.show_participants = !ctx.app.show_participants;
-                let status = if ctx.app.show_participants {
-                    "Participants panel shown"
-                } else {
-                    "Participants panel hidden"
-                };
-                ctx.app.set_status(status);
-            }
-
-            // =========================================================
-            // SVG export
-            // =========================================================
-            KeyCode::Char('E') => ctx.app.start_svg_export(),
-
-            // =========================================================
-            // Grid and document
+            // Grid
             // =========================================================
             KeyCode::Char('g') => ctx.app.toggle_grid(),
-            KeyCode::Char('N') => ctx.app.request_new_document(),
 
             // =========================================================
             // Recent files

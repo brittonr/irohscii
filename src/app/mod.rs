@@ -2094,23 +2094,6 @@ impl App {
         });
     }
 
-    /// Enter SVG export mode
-    pub fn start_svg_export(&mut self) {
-        let initial_path = self
-            .file_path
-            .as_ref()
-            .map(|p| {
-                let mut path = p.clone();
-                path.set_extension("svg");
-                path.to_string_lossy().to_string()
-            })
-            .unwrap_or_else(|| "drawing.svg".to_string());
-        self.mode = Mode::PathInput(PathInputState {
-            path: initial_path,
-            kind: PathInputKind::SvgExport,
-        });
-    }
-
     /// Enter document save mode (saves full .automerge document)
     pub fn start_doc_save(&mut self) {
         let initial_path = self
@@ -2735,13 +2718,6 @@ impl App {
                 self.set_error(format!("SVG export error: {}", e));
             }
         }
-    }
-
-    pub fn start_cluster_connect(&mut self) {
-        self.mode = Mode::PathInput(PathInputState {
-            path: String::new(),
-            kind: PathInputKind::ClusterConnect,
-        });
     }
 
     pub fn execute_cluster_connect(&mut self, ticket: &str) {

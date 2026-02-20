@@ -43,10 +43,10 @@ Each session generates a shareable ticket. When peers connect, they sync documen
 
 Use the mouse to draw shapes. Click and drag to create or select.
 
+### Drawing
+
 | Key | Action |
 |-----|--------|
-| Arrow keys | Pan viewport |
-| `Del`/`Backspace` | Delete selection |
 | `s` | Select tool |
 | `f` | Freehand tool |
 | `t` | Text tool |
@@ -56,15 +56,40 @@ Use the mouse to draw shapes. Click and drag to create or select.
 | `b` | Double-border box |
 | `d` | Diamond tool |
 | `e` | Ellipse tool |
-| `c` | Cycle brush character |
 | `v` | Cycle line style |
 | `g` | Toggle grid |
 | `u` / `U` | Undo / Redo |
 | `y` / `p` | Yank / Paste |
-| `T` | Copy ticket to clipboard |
-| `P` | Toggle participants panel |
-| `E` | Export to SVG |
-| `Ctrl+s` | Save |
-| `Ctrl+o` | Open |
-| `N` | New document |
+| `Del`/`Backspace` | Delete selection |
+| Arrow keys | Pan viewport |
+
+### Leader menu (`Space` or `:`)
+
+Press `Space` or `:` to open the leader menu (Helix-style), then a second key:
+
+| Key | Action |
+|-----|--------|
+| `t` / `Space` | Tool picker |
+| `c` | Color picker |
+| `b` | Brush picker |
+| `s` | Save file |
+| `o` | Open file |
+| `e` | Export SVG |
+| `n` | New document |
+| `g` | Toggle grid |
+| `l` | Toggle layer panel |
+| `p` | Toggle participants panel |
+| `T` | Copy sync ticket to clipboard |
+| `K` | Connect to cluster |
+| `?` / `h` | Help |
 | `q` | Quit |
+
+### Other shortcuts
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+s` | Save (direct) |
+| `Ctrl+o` | Open (direct) |
+| `Ctrl+c` | Quit (emergency) |
+| `Tab` | Session browser |
+| `?` / `F1` | Help screen |
