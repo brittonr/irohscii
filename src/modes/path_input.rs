@@ -24,16 +24,19 @@ impl ModeHandler for PathInputState {
                 ModeTransition::Normal
             }
             KeyCode::Tab => {
-                // Path completion
-                ctx.app.complete_path();
+                // Path completion — operates on self.path directly since
+                // app.mode is temporarily taken during handle_key dispatch
+                self.complete_path(ctx);
                 ModeTransition::Stay
             }
             KeyCode::Backspace => {
-                ctx.app.backspace_path();
+                // Modify self.path directly (app.mode is taken during dispatch)
+                self.path.pop();
                 ModeTransition::Stay
             }
             KeyCode::Char(c) => {
-                ctx.app.add_path_char(c);
+                // Modify self.path directly (app.mode is taken during dispatch)
+                self.path.push(c);
                 ModeTransition::Stay
             }
             _ => ModeTransition::Stay,
@@ -54,6 +57,78 @@ impl ModeHandler for PathInputState {
 }
 
 impl PathInputState {
+    /// Tab-complete the current path, updating self.path directly.
+    fn complete_path(&mut self, ctx: &mut ModeContext<'_>) {
+        let current_path = &self.path;
+
+        let path = std::path::Path::new(current_path);
+
+        let (dir, prefix) = if current_path.ends_with('/')
+            || current_path.ends_with(std::path::MAIN_SEPARATOR)
+        {
+            (std::path::PathBuf::from(current_path), String::new())
+        } else if let Some(parent) = path.parent() {
+            let parent_path = if parent.as_os_str().is_empty() {
+                std::path::PathBuf::from(".")
+            } else {
+                parent.to_path_buf()
+            };
+            let file_name = path
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            (parent_path, file_name)
+        } else {
+            (std::path::PathBuf::from("."), current_path.clone())
+        };
+
+        let matches: Vec<String> = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries
+                .filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if name.to_lowercase().starts_with(&prefix.to_lowercase()) {
+                        let full_path = if dir.as_os_str() == "." {
+                            name.clone()
+                        } else {
+                            dir.join(&name).to_string_lossy().to_string()
+                        };
+                        if e.path().is_dir() {
+                            Some(full_path + "/")
+                        } else {
+                            Some(full_path)
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            Err(_) => return,
+        };
+
+        if matches.is_empty() {
+            ctx.app.set_status("No matches");
+            return;
+        }
+
+        self.path = if matches.len() == 1 {
+            matches[0].clone()
+        } else {
+            let first = &matches[0];
+            let common_len = matches.iter().skip(1).fold(first.len(), |len, s| {
+                first
+                    .chars()
+                    .zip(s.chars())
+                    .take(len)
+                    .take_while(|(a, b)| a == b)
+                    .count()
+            });
+            let common: String = first.chars().take(common_len).collect();
+            ctx.app.set_status(format!("{} matches", matches.len()));
+            common
+        };
+    }
+
     /// Execute the path operation based on the kind.
     /// This delegates to App methods that handle the actual I/O.
     fn execute_path_operation(&self, ctx: &mut ModeContext<'_>) {
