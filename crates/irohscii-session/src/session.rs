@@ -529,10 +529,8 @@ fn fuzzy_score(text: &str, query_chars: &[char]) -> Option<i32> {
     for (i, &c) in text_chars.iter().enumerate() {
         if query_idx < query_chars.len() && c == query_chars[query_idx] {
             // Bonus for consecutive matches
-            if let Some(last) = last_match_idx {
-                if i == last + 1 {
-                    score += 10;
-                }
+            if let Some(last) = last_match_idx && i == last + 1 {
+                score += 10;
             }
             // Bonus for matching at word boundaries
             if i == 0 || !text_chars[i - 1].is_alphanumeric() {

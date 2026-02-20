@@ -116,11 +116,9 @@ impl DocumentStore for LocalDocumentStore {
         };
 
         // Update metadata
-        if changed {
-            if let Some(meta) = self.metas.write().await.get_mut(&id.to_string()) {
-                meta.touch();
-                meta.size_bytes = doc.save().len() as u64;
-            }
+        if changed && let Some(meta) = self.metas.write().await.get_mut(&id.to_string()) {
+            meta.touch();
+            meta.size_bytes = doc.save().len() as u64;
         }
 
         // Notify application only when document content actually changed
@@ -147,9 +145,8 @@ impl DocumentStore for LocalDocumentStore {
         let mut doc = self.get(id).await?.unwrap_or_else(AutoCommit::new);
         let mut applied: u32 = 0;
         for change in &changes {
-            match doc.load_incremental(&change.bytes) {
-                Ok(n) => applied += n as u32,
-                Err(_) => {} // skip invalid changes
+            if let Ok(n) = doc.load_incremental(&change.bytes) {
+                applied += n as u32;
             }
         }
         self.save(id, &mut doc).await?;

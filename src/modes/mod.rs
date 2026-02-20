@@ -212,8 +212,9 @@ pub struct KeyboardShapeState {
 /// - No heap allocation on mode transitions
 /// - Exhaustive pattern matching
 /// - Better type inference
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Mode {
+    #[default]
     Normal,
     TextInput(TextInputState),
     LabelInput(LabelInputState),
@@ -227,12 +228,6 @@ pub enum Mode {
     SessionBrowser(SessionBrowserState),
     SessionCreate(SessionCreateState),
     KeyboardShapeCreate(KeyboardShapeState),
-}
-
-impl Default for Mode {
-    fn default() -> Self {
-        Mode::Normal
-    }
 }
 
 // Query methods for Mode - kept for future UI use (status bar display)

@@ -245,10 +245,10 @@ impl ModeHandler for NormalModeState {
             // Edit label of selected shape
             // =========================================================
             KeyCode::Enter => {
-                if ctx.app.current_tool == Tool::Select && !ctx.app.selected.is_empty() {
-                    if ctx.app.start_label_input() {
-                        ctx.app.set_status("Editing label - type text, Enter/Esc to finish");
-                    }
+                if ctx.app.current_tool == Tool::Select && !ctx.app.selected.is_empty()
+                    && ctx.app.start_label_input()
+                {
+                    ctx.app.set_status("Editing label - type text, Enter/Esc to finish");
                 }
             }
 

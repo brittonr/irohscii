@@ -208,7 +208,7 @@ impl UndoManager {
             UndoStorage::Memory { stack, .. } => stack.clear(),
             UndoStorage::Disk { dir, count, cache } => {
                 // Delete all snapshot files
-                if let Ok(entries) = fs::read_dir(&dir) {
+                if let Ok(entries) = fs::read_dir(dir) {
                     for entry in entries.filter_map(|e| e.ok()) {
                         if entry.path().extension().is_some_and(|ext| ext == "snap") {
                             let _ = fs::remove_file(entry.path());

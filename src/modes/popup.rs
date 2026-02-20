@@ -14,7 +14,7 @@ impl SelectionPopupState {
             PopupKind::Color => (4, COLORS.len()),
             PopupKind::Brush => (6, BRUSHES.len()),
         };
-        let rows = (total + cols - 1) / cols;
+        let rows = total.div_ceil(cols);
         let row = self.selected / cols;
         let col = self.selected % cols;
         let new_col = (col as i32 + dx).clamp(0, cols as i32 - 1) as usize;

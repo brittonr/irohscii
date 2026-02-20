@@ -485,10 +485,10 @@ impl App {
 
     /// Save document to storage if dirty
     pub fn autosave(&mut self) {
-        if self.doc.is_dirty() {
-            if let Err(e) = self.doc.save() {
-                self.set_status(format!("Autosave error: {}", e));
-            }
+        if self.doc.is_dirty()
+            && let Err(e) = self.doc.save()
+        {
+            self.set_status(format!("Autosave error: {}", e));
         }
     }
 
@@ -509,10 +509,10 @@ impl App {
 
     /// Clear the status message (only if it's an Info message)
     pub fn clear_status(&mut self) {
-        if let Some((_, severity)) = &self.status_message {
-            if !severity.is_persistent() {
-                self.status_message = None;
-            }
+        if let Some((_, severity)) = &self.status_message
+            && !severity.is_persistent()
+        {
+            self.status_message = None;
         }
     }
 
@@ -647,21 +647,21 @@ impl App {
 
     /// Finish freehand drawing and create shape
     pub fn finish_freehand(&mut self) {
-        if let Some(state) = self.freehand_state.take() {
-            if !state.points.is_empty() {
-                self.save_undo_state();
-                if self
-                    .add_shape_to_active_layer(ShapeKind::Freehand {
-                        points: state.points,
-                        char: self.brush_char,
-                        label: None,
-                        color: self.current_color,
-                    })
-                    .is_ok()
-                {
-                    self.rebuild_view();
-                    self.doc.mark_dirty();
-                }
+        if let Some(state) = self.freehand_state.take()
+            && !state.points.is_empty()
+        {
+            self.save_undo_state();
+            if self
+                .add_shape_to_active_layer(ShapeKind::Freehand {
+                    points: state.points,
+                    char: self.brush_char,
+                    label: None,
+                    color: self.current_color,
+                })
+                .is_ok()
+            {
+                self.rebuild_view();
+                self.doc.mark_dirty();
             }
         }
     }
@@ -1131,23 +1131,23 @@ impl App {
         self.selected.insert(id);
 
         // Expand selection to include all shapes in the same group
-        if let Ok(Some(group_id)) = self.doc.get_shape_group(id) {
-            if let Ok(all_shapes) = self.doc.get_all_group_shapes(group_id) {
-                for shape_id in all_shapes {
-                    self.selected.insert(shape_id);
-                }
+        if let Ok(Some(group_id)) = self.doc.get_shape_group(id)
+            && let Ok(all_shapes) = self.doc.get_all_group_shapes(group_id)
+        {
+            for shape_id in all_shapes {
+                self.selected.insert(shape_id);
             }
         }
 
         // Check if shape is on a locked layer and warn
-        if let Some((layer_name, _visible, locked)) = self.get_shape_layer_info(id) {
-            if locked {
-                self.set_warning(format!(
-                    "Shape on locked layer '{}' (read-only)",
-                    layer_name
-                ));
-                return;
-            }
+        if let Some((layer_name, _visible, locked)) = self.get_shape_layer_info(id)
+            && locked
+        {
+            self.set_warning(format!(
+                "Shape on locked layer '{}' (read-only)",
+                layer_name
+            ));
+            return;
         }
 
         let count = self.selected.len();
@@ -1465,46 +1465,44 @@ impl App {
 
     /// Check if a shape is on a locked layer
     pub fn is_shape_locked(&self, id: ShapeId) -> bool {
-        if let Ok(Some(layer_id)) = self.doc.get_shape_layer(id) {
-            if let Ok(Some(layer)) = self.doc.read_layer(layer_id) {
-                return layer.locked;
-            }
+        if let Ok(Some(layer_id)) = self.doc.get_shape_layer(id)
+            && let Ok(Some(layer)) = self.doc.read_layer(layer_id)
+        {
+            return layer.locked;
         }
         false
     }
 
     /// Check if the active layer is hidden and show warning if so
     pub fn check_active_layer_hidden(&mut self) -> bool {
-        if let Some(layer_id) = self.active_layer {
-            if let Ok(Some(layer)) = self.doc.read_layer(layer_id) {
-                if !layer.visible {
-                    self.set_warning(format!("Active layer '{}' is hidden", layer.name));
-                    return true;
-                }
-            }
+        if let Some(layer_id) = self.active_layer
+            && let Ok(Some(layer)) = self.doc.read_layer(layer_id)
+            && !layer.visible
+        {
+            self.set_warning(format!("Active layer '{}' is hidden", layer.name));
+            return true;
         }
         false
     }
 
     /// Check if the active layer is locked and show error if so
     pub fn check_active_layer_locked(&mut self) -> bool {
-        if let Some(layer_id) = self.active_layer {
-            if let Ok(Some(layer)) = self.doc.read_layer(layer_id) {
-                if layer.locked {
-                    self.set_error(format!("Cannot draw on locked layer '{}'", layer.name));
-                    return true;
-                }
-            }
+        if let Some(layer_id) = self.active_layer
+            && let Ok(Some(layer)) = self.doc.read_layer(layer_id)
+            && layer.locked
+        {
+            self.set_error(format!("Cannot draw on locked layer '{}'", layer.name));
+            return true;
         }
         false
     }
 
     /// Get info about the layer a shape is on (for warnings)
     pub fn get_shape_layer_info(&self, id: ShapeId) -> Option<(String, bool, bool)> {
-        if let Ok(Some(layer_id)) = self.doc.get_shape_layer(id) {
-            if let Ok(Some(layer)) = self.doc.read_layer(layer_id) {
-                return Some((layer.name.clone(), layer.visible, layer.locked));
-            }
+        if let Ok(Some(layer_id)) = self.doc.get_shape_layer(id)
+            && let Ok(Some(layer)) = self.doc.read_layer(layer_id)
+        {
+            return Some((layer.name.clone(), layer.visible, layer.locked));
         }
         None
     }
@@ -1522,13 +1520,13 @@ impl App {
 
     /// Start renaming the active layer
     pub fn start_layer_rename(&mut self) {
-        if let Some(layer_id) = self.active_layer {
-            if let Ok(Some(layer)) = self.doc.read_layer(layer_id) {
-                self.mode = Mode::LayerRename(LayerRenameState {
-                    layer_id,
-                    text: layer.name.clone(),
-                });
-            }
+        if let Some(layer_id) = self.active_layer
+            && let Ok(Some(layer)) = self.doc.read_layer(layer_id)
+        {
+            self.mode = Mode::LayerRename(LayerRenameState {
+                layer_id,
+                text: layer.name.clone(),
+            });
         }
     }
 
@@ -1844,19 +1842,17 @@ impl App {
 
     /// Finish dragging - write final positions to document
     pub fn finish_drag(&mut self) {
-        if let Some(drag) = self.drag_state.take() {
-            if drag.total_dx != 0 || drag.total_dy != 0 {
-                // Dedupe modified shapes and write final positions to document
-                let mut written = std::collections::HashSet::new();
-                for id in drag.modified_shapes {
-                    if written.insert(id) {
-                        if let Some(shape) = self.shape_view.get(id) {
-                            let _ = self.doc.update_shape(id, shape.kind.clone());
-                        }
-                    }
+        if let Some(drag) = self.drag_state.take()
+            && (drag.total_dx != 0 || drag.total_dy != 0)
+        {
+            // Dedupe modified shapes and write final positions to document
+            let mut written = std::collections::HashSet::new();
+            for id in drag.modified_shapes {
+                if written.insert(id) && let Some(shape) = self.shape_view.get(id) {
+                    let _ = self.doc.update_shape(id, shape.kind.clone());
                 }
-                self.doc.mark_dirty();
             }
+            self.doc.mark_dirty();
         }
         self.shape_snap_guides.clear();
     }
@@ -1888,13 +1884,13 @@ impl App {
                     .as_millis() as u64;
 
                 // Check if any remote peer is already resizing this shape (soft lock)
-                if let Some(ref presence_mgr) = self.presence {
-                    if let Some(peer) = presence_mgr.get_dragger_for_shape(id) {
-                        self.set_warning(format!(
-                            "{} is already manipulating this shape",
-                            peer.display_name()
-                        ));
-                    }
+                if let Some(ref presence_mgr) = self.presence
+                    && let Some(peer) = presence_mgr.get_dragger_for_shape(id)
+                {
+                    self.set_warning(format!(
+                        "{} is already manipulating this shape",
+                        peer.display_name()
+                    ));
                 }
 
                 // Get initial preview bounds
@@ -1967,10 +1963,8 @@ impl App {
             // Dedupe modified shapes and write final positions to document
             let mut written = std::collections::HashSet::new();
             for id in resize.modified_shapes {
-                if written.insert(id) {
-                    if let Some(shape) = self.shape_view.get(id) {
-                        let _ = self.doc.update_shape(id, shape.kind.clone());
-                    }
+                if written.insert(id) && let Some(shape) = self.shape_view.get(id) {
+                    let _ = self.doc.update_shape(id, shape.kind.clone());
                 }
             }
             self.doc.mark_dirty();
@@ -2166,7 +2160,7 @@ impl App {
                     .filter_map(|e| {
                         let name = e.file_name().to_string_lossy().to_string();
                         if name.to_lowercase().starts_with(&prefix.to_lowercase()) {
-                            let full_path = if dir == std::path::PathBuf::from(".") {
+                            let full_path = if dir.as_os_str() == "." {
                                 name.clone()
                             } else {
                                 dir.join(&name).to_string_lossy().to_string()
@@ -2227,17 +2221,17 @@ impl App {
     pub fn start_label_input(&mut self) -> bool {
         if self.selected.len() == 1 {
             let id = *self.selected.iter().next().unwrap();
-            if let Some(shape) = self.shape_view.get(id) {
-                if shape.supports_label() {
-                    let existing_label = shape.label().unwrap_or("").to_string();
-                    let cursor = existing_label.chars().count();
-                    self.mode = Mode::LabelInput(LabelInputState {
-                        shape_id: id,
-                        text: existing_label,
-                        cursor,
-                    });
-                    return true;
-                }
+            if let Some(shape) = self.shape_view.get(id)
+                && shape.supports_label()
+            {
+                let existing_label = shape.label().unwrap_or("").to_string();
+                let cursor = existing_label.chars().count();
+                self.mode = Mode::LabelInput(LabelInputState {
+                    shape_id: id,
+                    text: existing_label,
+                    cursor,
+                });
+                return true;
             }
         }
         false
@@ -2258,22 +2252,22 @@ impl App {
 
     /// Remove character before cursor in label input
     pub fn backspace_label(&mut self) {
-        if let Mode::LabelInput(state) = &mut self.mode {
-            if state.cursor > 0 {
-                let mut chars: Vec<char> = state.text.chars().collect();
-                chars.remove(state.cursor - 1);
-                state.text = chars.into_iter().collect();
-                state.cursor -= 1;
-            }
+        if let Mode::LabelInput(state) = &mut self.mode
+            && state.cursor > 0
+        {
+            let mut chars: Vec<char> = state.text.chars().collect();
+            chars.remove(state.cursor - 1);
+            state.text = chars.into_iter().collect();
+            state.cursor -= 1;
         }
     }
 
     /// Move label cursor left
     pub fn move_label_cursor_left(&mut self) {
-        if let Mode::LabelInput(state) = &mut self.mode {
-            if state.cursor > 0 {
-                state.cursor -= 1;
-            }
+        if let Mode::LabelInput(state) = &mut self.mode
+            && state.cursor > 0
+        {
+            state.cursor -= 1;
         }
     }
 
@@ -2727,7 +2721,7 @@ impl App {
             return;
         }
         self.pending_cluster_ticket = Some(ticket.clone());
-        self.set_status(format!("Connecting to cluster..."));
+        self.set_status("Connecting to cluster...");
     }
 
     /// Open a file from the recent files list by index

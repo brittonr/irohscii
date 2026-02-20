@@ -107,7 +107,7 @@ fn main() -> Result<()> {
             println!("No sessions found. Create one with --new-session <name>");
         } else {
             println!("Available sessions:");
-            println!("{:<30} {:<20} {}", "NAME", "ID", "LAST ACCESSED");
+            println!("{:<30} {:<20} LAST ACCESSED", "NAME", "ID");
             println!("{}", "-".repeat(70));
             for session in sessions {
                 let pinned = if session.pinned { "*" } else { " " };
@@ -358,7 +358,7 @@ fn run_app(
                         app.set_status(format!("Session ready: {}", endpoint_id));
                     }
                     sync::SyncEvent::RemoteChanges { mut doc } => {
-                        app.merge_remote(&mut *doc);
+                        app.merge_remote(&mut doc);
                     }
                     sync::SyncEvent::PresenceUpdate(presence) => {
                         if let Some(ref mut mgr) = app.presence {
@@ -597,9 +597,10 @@ fn run_app(
                     });
 
                     if in_layer_panel {
-                        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
-                            if let Some(area) = app.layer_panel_area {
-                                // Calculate which layer was clicked (accounting for border)
+                        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind
+                            && let Some(area) = app.layer_panel_area
+                        {
+                            // Calculate which layer was clicked (accounting for border)
                                 let row_in_panel = mouse.row.saturating_sub(area.y + 1); // +1 for top border
                                 let layers = app.get_layers();
                                 if (row_in_panel as usize) < layers.len() {
@@ -621,7 +622,6 @@ fn run_app(
                                     }
                                 }
                             }
-                        }
                     } else if matches!(app.mode, Mode::Normal) {
                         match app.current_tool {
                             Tool::Select => tools::handle_select_event(app, mouse),
@@ -657,14 +657,14 @@ fn run_app(
                     }
 
                     // Broadcast presence (throttled)
-                    if let Some(handle) = sync_handle {
-                        if last_presence_broadcast.elapsed() >= PRESENCE_BROADCAST_INTERVAL {
-                            if let Some(presence) = app.build_presence(cursor_pos) {
-                                let _ = handle
-                                    .send_command(sync::SyncCommand::BroadcastPresence(presence));
-                            }
-                            last_presence_broadcast = Instant::now();
+                    if let Some(handle) = sync_handle
+                        && last_presence_broadcast.elapsed() >= PRESENCE_BROADCAST_INTERVAL
+                    {
+                        if let Some(presence) = app.build_presence(cursor_pos) {
+                            let _ = handle
+                                .send_command(sync::SyncCommand::BroadcastPresence(presence));
                         }
+                        last_presence_broadcast = Instant::now();
                     }
                 }
                 Event::Resize(w, h) => {

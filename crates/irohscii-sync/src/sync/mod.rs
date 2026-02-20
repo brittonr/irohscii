@@ -417,35 +417,31 @@ async fn run_sync(
                     }
                     // Periodic sync with peer (reuses persistent connection)
                     _ = sync_interval.tick() => {
-                        if !shutting_down.load(Ordering::Relaxed) {
-                            if let Some(ref conn) = sync_conn {
-                                let store_clone = store.clone();
-                                let doc_id_clone = doc_id.clone();
-                                let conn_clone = conn.clone();
-                                let shutting_down_clone = shutting_down.clone();
-                                tokio::spawn(async move {
-                                    if !shutting_down_clone.load(Ordering::Relaxed) {
-                                        do_sync(&store_clone, &doc_id_clone, &conn_clone, None).await;
-                                    }
-                                });
-                            }
+                        if !shutting_down.load(Ordering::Relaxed) && let Some(ref conn) = sync_conn {
+                            let store_clone = store.clone();
+                            let doc_id_clone = doc_id.clone();
+                            let conn_clone = conn.clone();
+                            let shutting_down_clone = shutting_down.clone();
+                            tokio::spawn(async move {
+                                if !shutting_down_clone.load(Ordering::Relaxed) {
+                                    do_sync(&store_clone, &doc_id_clone, &conn_clone, None).await;
+                                }
+                            });
                         }
                     }
                     // Periodic sync with cluster (less frequent, for persistence)
                     _ = cluster_interval.tick() => {
-                        if !shutting_down.load(Ordering::Relaxed) {
-                            if let Some(ref conn) = cluster_conn {
-                                let store_clone = store.clone();
-                                let doc_id_clone = doc_id.clone();
-                                let conn_clone = conn.clone();
-                                let cap_clone = cluster_cap.clone();
-                                let shutting_down_clone = shutting_down.clone();
-                                tokio::spawn(async move {
-                                    if !shutting_down_clone.load(Ordering::Relaxed) {
-                                        do_sync(&store_clone, &doc_id_clone, &conn_clone, cap_clone.as_ref()).await;
-                                    }
-                                });
-                            }
+                        if !shutting_down.load(Ordering::Relaxed) && let Some(ref conn) = cluster_conn {
+                            let store_clone = store.clone();
+                            let doc_id_clone = doc_id.clone();
+                            let conn_clone = conn.clone();
+                            let cap_clone = cluster_cap.clone();
+                            let shutting_down_clone = shutting_down.clone();
+                            tokio::spawn(async move {
+                                if !shutting_down_clone.load(Ordering::Relaxed) {
+                                    do_sync(&store_clone, &doc_id_clone, &conn_clone, cap_clone.as_ref()).await;
+                                }
+                            });
                         }
                     }
                     // Commands from main thread

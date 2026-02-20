@@ -144,47 +144,47 @@ fn render_active_layer_indicator(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    if let Some(layer_id) = app.active_layer {
-        if let Ok(Some(layer)) = app.doc.read_layer(layer_id) {
-            // Build indicator text
-            let mut text = layer.name.clone();
-            if text.len() > 12 {
-                text = text.chars().take(10).collect::<String>() + "..";
-            }
+    if let Some(layer_id) = app.active_layer
+        && let Ok(Some(layer)) = app.doc.read_layer(layer_id)
+    {
+        // Build indicator text
+        let mut text = layer.name.clone();
+        if text.len() > 12 {
+            text = text.chars().take(10).collect::<String>() + "..";
+        }
 
-            // Add status icons
-            let mut icons = String::new();
-            if !layer.visible {
-                icons.push_str(" [H]");
-            }
-            if layer.locked {
-                icons.push_str(" [L]");
-            }
+        // Add status icons
+        let mut icons = String::new();
+        if !layer.visible {
+            icons.push_str(" [H]");
+        }
+        if layer.locked {
+            icons.push_str(" [L]");
+        }
 
-            let full_text = format!(" {} {}", text, icons);
-            let text_len = full_text.len() as u16;
+        let full_text = format!(" {} {}", text, icons);
+        let text_len = full_text.len() as u16;
 
-            // Position in top-right corner
-            if area.width > text_len + 2 && area.height > 0 {
-                let x = area.x + area.width - text_len - 1;
-                let y = area.y;
+        // Position in top-right corner
+        if area.width > text_len + 2 && area.height > 0 {
+            let x = area.x + area.width - text_len - 1;
+            let y = area.y;
 
-                // Choose color based on layer state
-                let (fg, bg) = if layer.locked {
-                    (Color::Black, Color::Yellow)
-                } else if !layer.visible {
-                    (Color::White, Color::DarkGray)
-                } else {
-                    (Color::Black, Color::Cyan)
-                };
+            // Choose color based on layer state
+            let (fg, bg) = if layer.locked {
+                (Color::Black, Color::Yellow)
+            } else if !layer.visible {
+                (Color::White, Color::DarkGray)
+            } else {
+                (Color::Black, Color::Cyan)
+            };
 
-                let style = Style::default().fg(fg).bg(bg);
+            let style = Style::default().fg(fg).bg(bg);
 
-                for (i, ch) in full_text.chars().enumerate() {
-                    let px = x + i as u16;
-                    if px < area.x + area.width {
-                        frame.buffer_mut()[(px, y)].set_char(ch).set_style(style);
-                    }
+            for (i, ch) in full_text.chars().enumerate() {
+                let px = x + i as u16;
+                if px < area.x + area.width {
+                    frame.buffer_mut()[(px, y)].set_char(ch).set_style(style);
                 }
             }
         }
@@ -220,12 +220,15 @@ impl CanvasWidget<'_> {
         &self,
         buf: &mut Buffer,
         area: Rect,
-        min_x: i32,
-        min_y: i32,
-        max_x: i32,
-        max_y: i32,
+        min_pos: Position,
+        max_pos: Position,
         style: Style,
     ) {
+        let min_x = min_pos.x;
+        let min_y = min_pos.y;
+        let max_x = max_pos.x;
+        let max_y = max_pos.y;
+        
         // Top edge (dashed horizontal line)
         for x in min_x..=max_x {
             let ch = if (x - min_x) % 2 == 0 { '╌' } else { ' ' };
@@ -801,24 +804,20 @@ impl CanvasWidget<'_> {
                     let (orig_min_x, orig_min_y, orig_max_x, orig_max_y) = shape.bounds();
                     let (dx, dy) = *delta;
                     // Ghost bounds at new position
-                    let ghost_min_x = orig_min_x + dx;
-                    let ghost_min_y = orig_min_y + dy;
-                    let ghost_max_x = orig_max_x + dx;
-                    let ghost_max_y = orig_max_y + dy;
+                    let ghost_min_pos = Position::new(orig_min_x + dx, orig_min_y + dy);
+                    let ghost_max_pos = Position::new(orig_max_x + dx, orig_max_y + dy);
                     let ghost_style = Style::default().fg(color);
                     // Draw dashed outline for the ghost shape
                     self.render_dashed_rect(
                         buf,
                         area,
-                        ghost_min_x,
-                        ghost_min_y,
-                        ghost_max_x,
-                        ghost_max_y,
+                        ghost_min_pos,
+                        ghost_max_pos,
                         ghost_style,
                     );
                     // Show peer label above ghost
                     let label = format!("{} moving", peer.display_name());
-                    let label_pos = Position::new(ghost_min_x, ghost_min_y.saturating_sub(1));
+                    let label_pos = Position::new(ghost_min_pos.x, ghost_min_pos.y.saturating_sub(1));
                     self.render_text(buf, area, label_pos, &label, ghost_style);
                 }
             }
@@ -828,16 +827,14 @@ impl CanvasWidget<'_> {
             } => {
                 // Render ghost shape at the resized bounds
                 if let Some(bounds) = preview_bounds {
-                    let (min_pos, max_pos) = bounds;
+                    let (min_pos, max_pos) = *bounds;
                     let ghost_style = Style::default().fg(color);
                     // Draw dashed outline for the ghost shape
                     self.render_dashed_rect(
                         buf,
                         area,
-                        min_pos.x,
-                        min_pos.y,
-                        max_pos.x,
-                        max_pos.y,
+                        min_pos,
+                        max_pos,
                         ghost_style,
                     );
                     // Show peer label above ghost
@@ -1082,7 +1079,7 @@ fn render_layer_panel(frame: &mut Frame, app: &App, area: Rect) {
 
     for layer in &layers {
         let is_active = app.active_layer == Some(layer.id);
-        let is_renaming = renaming.map_or(false, |(id, _)| id == layer.id);
+        let is_renaming = renaming.is_some_and(|(id, _)| id == layer.id);
 
         // Active indicator
         let active_indicator = if is_active {
@@ -1551,9 +1548,11 @@ fn render_recent_files_menu(frame: &mut Frame, app: &App, selected: usize, area:
     frame.render_widget(paragraph, popup_area);
 }
 
+type PopupGridInfo = (&'static str, usize, Vec<(String, Option<Color>)>, &'static str);
+
 /// Render selection popup for tools, colors, or brushes
 fn render_selection_popup(frame: &mut Frame, kind: PopupKind, selected: usize, area: Rect) {
-    let (title, cols, items, hint): (&str, usize, Vec<(String, Option<Color>)>, &str) = match kind {
+    let (title, cols, items, hint): PopupGridInfo = match kind {
         PopupKind::Tool => {
             let items: Vec<_> = TOOLS.iter().map(|t| (t.name().to_string(), None)).collect();
             (" Select Tool ", 3, items, "hjkl: move, release key: select")
@@ -1581,7 +1580,7 @@ fn render_selection_popup(frame: &mut Frame, kind: PopupKind, selected: usize, a
         }
     };
 
-    let rows = (items.len() + cols - 1) / cols;
+    let rows = items.len().div_ceil(cols);
 
     // Calculate popup size based on grid
     let cell_width: u16 = match kind {
@@ -1768,7 +1767,7 @@ fn render_leader_menu(frame: &mut Frame, area: Rect) {
 
     let col_width = 14usize; // width of each column
     let cols = 2;
-    let rows = (entries.len() + cols - 1) / cols;
+    let rows = entries.len().div_ceil(cols);
 
     let mut lines: Vec<Line<'_>> = Vec::new();
     for row in 0..rows {

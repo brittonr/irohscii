@@ -34,17 +34,16 @@ impl App {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()
+                && let Some(mut stdin) = child.stdin.take()
             {
-                if let Some(mut stdin) = child.stdin.take() {
-                    let ticket_clone = ticket.clone();
-                    std::thread::spawn(move || {
-                        let _ = stdin.write_all(ticket_clone.as_bytes());
-                        drop(stdin);
-                        let _ = child.wait();
-                    });
-                    self.set_status(format!("Copied: {}", ticket));
-                    return;
-                }
+                let ticket_clone = ticket.clone();
+                std::thread::spawn(move || {
+                    let _ = stdin.write_all(ticket_clone.as_bytes());
+                    drop(stdin);
+                    let _ = child.wait();
+                });
+                self.set_status(format!("Copied: {}", ticket));
+                return;
             }
 
             self.set_status("Install wl-copy or xsel for clipboard");
