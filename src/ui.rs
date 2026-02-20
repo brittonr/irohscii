@@ -1335,7 +1335,7 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
                     } else if app.selected.len() == 1 {
                         "[Enter] label [y]ank [Del] delete | []/{}:z-order | [Space] menu"
                     } else {
-                        "click to select | [Space] menu [?] help"
+                        "[Ctrl+A] select all | click to select | [Space] menu [?] help"
                     }
                 }
                 Tool::Freehand => "drag to draw | [Space] menu [?] help",
@@ -1901,6 +1901,7 @@ pub fn help_sections() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)>
                 ("Click", "Select shape"),
                 ("Shift+Click", "Toggle selection"),
                 ("Drag", "Marquee select"),
+                ("Ctrl+A", "Select all"),
                 ("y", "Yank (copy)"),
                 ("p", "Paste"),
                 ("Del/Backspace", "Delete selected"),

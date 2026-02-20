@@ -675,22 +675,23 @@ fn run_app(
                         }
                     }
 
-                    // Broadcast presence (throttled)
-                    if let Some(handle) = sync_handle
-                        && last_presence_broadcast.elapsed() >= PRESENCE_BROADCAST_INTERVAL
-                    {
-                        if let Some(presence) = app.build_presence(cursor_pos) {
-                            let _ = handle
-                                .send_command(sync::SyncCommand::BroadcastPresence(presence));
-                        }
-                        last_presence_broadcast = Instant::now();
-                    }
                 }
                 Event::Resize(w, h) => {
                     app.viewport.resize(w, h.saturating_sub(2));
                 }
                 _ => {}
             }
+        }
+
+        // Broadcast presence (throttled) - runs every tick so idle peers stay visible
+        if let Some(handle) = sync_handle
+            && last_presence_broadcast.elapsed() >= PRESENCE_BROADCAST_INTERVAL
+        {
+            if let Some(presence) = app.build_presence(app.last_cursor_pos) {
+                let _ = handle
+                    .send_command(sync::SyncCommand::BroadcastPresence(presence));
+            }
+            last_presence_broadcast = Instant::now();
         }
     }
 
