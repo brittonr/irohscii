@@ -1848,7 +1848,7 @@ fn render_help_screen(frame: &mut Frame, scroll: usize, area: Rect) {
         (
             "TOOLS",
             vec![
-                ("s", "Select tool"),
+                ("Space Space", "Select tool"),
                 ("f", "Freehand draw"),
                 ("t", "Text tool"),
                 ("l", "Line tool"),

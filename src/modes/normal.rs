@@ -46,9 +46,6 @@ impl ModeHandler for NormalModeState {
             // =========================================================
             // Tool selection
             // =========================================================
-            KeyCode::Char('s') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                ctx.app.set_tool(Tool::Select);
-            }
             KeyCode::Char('f') => ctx.app.set_tool(Tool::Freehand),
             KeyCode::Char('t') if !key.modifiers.contains(KeyModifiers::ALT) => {
                 ctx.app.set_tool(Tool::Text);
@@ -471,11 +468,6 @@ mod tests {
         let mut state = NormalModeState;
         let mut app = crate::app::App::new(80, 24);
         let mut ctx = super::ModeContext { app: &mut app };
-
-        // s = Select tool
-        let result = state.handle_key(&mut ctx, key(KeyCode::Char('s')));
-        assert!(matches!(result, ModeTransition::Stay));
-        assert_eq!(ctx.app.current_tool, Tool::Select);
 
         // f = Freehand tool
         let result = state.handle_key(&mut ctx, key(KeyCode::Char('f')));

@@ -10,13 +10,19 @@ use super::{
     HelpScreenState, LeaderMenuState, Mode, ModeAction, ModeContext, ModeHandler, ModeTransition,
     PathInputKind, PathInputState, SelectionPopupState,
 };
-use crate::app::{PopupKind, BRUSHES, COLORS, TOOLS};
+use crate::app::{PopupKind, Tool, BRUSHES, COLORS, TOOLS};
 
 impl ModeHandler for LeaderMenuState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
         match key.code {
+            // Space Space → Select tool directly
+            KeyCode::Char(' ') => {
+                ctx.app.set_tool(Tool::Select);
+                ModeTransition::Normal
+            }
+
             // Tool selection popup
-            KeyCode::Char('t') | KeyCode::Char(' ') => {
+            KeyCode::Char('t') => {
                 let idx = TOOLS
                     .iter()
                     .position(|&t| t == ctx.app.current_tool)
@@ -155,7 +161,7 @@ impl ModeHandler for LeaderMenuState {
     }
 
     fn help_text(&self) -> &'static str {
-        "t:tool c:color b:brush s:save o:open e:export n:new g:grid l:layers p:peers T:ticket K:cluster ?:help q:quit"
+        "Space:select t:tool c:color b:brush s:save o:open e:export n:new g:grid l:layers p:peers T:ticket K:cluster ?:help q:quit"
     }
 }
 
@@ -198,22 +204,16 @@ mod tests {
     }
 
     #[test]
-    fn test_space_returns_tool_popup() {
+    fn test_space_sets_select_tool() {
         let mut state = LeaderMenuState;
         let mut app = crate::app::App::new(80, 24);
         let mut ctx = ModeContext { app: &mut app };
 
+        // Set a different tool first
+        ctx.app.set_tool(crate::app::Tool::Freehand);
         let result = state.handle_key(&mut ctx, key(KeyCode::Char(' ')));
-        match result {
-            ModeTransition::To(mode) => match *mode {
-                Mode::SelectionPopup(SelectionPopupState {
-                    kind: PopupKind::Tool,
-                    ..
-                }) => (),
-                _ => panic!("Expected tool popup mode"),
-            },
-            _ => panic!("Expected To transition"),
-        }
+        assert!(matches!(result, ModeTransition::Normal));
+        assert_eq!(ctx.app.current_tool, crate::app::Tool::Select);
     }
 
     #[test]
