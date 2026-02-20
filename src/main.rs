@@ -555,6 +555,12 @@ fn run_app(
                                     app.set_error("Sync is disabled (--offline)");
                                 }
                             }
+
+                            // Handle QR-decoded ticket — copy to clipboard for --join use
+                            if let Some(ticket) = app.pending_qr_decoded_ticket.take() {
+                                app.sync_ticket = Some(ticket);
+                                app.copy_ticket_to_clipboard();
+                            }
                         }
                         KeyEventKind::Release => {}
                         KeyEventKind::Repeat => {}

@@ -76,6 +76,9 @@ impl PathInputState {
             PathInputKind::ClusterConnect => {
                 ctx.app.execute_cluster_connect(&self.path);
             }
+            PathInputKind::QrDecode => {
+                ctx.app.execute_qr_decode(&self.path);
+            }
         }
     }
 }
@@ -161,6 +164,10 @@ mod tests {
         assert_eq!(
             test_state(PathInputKind::ClusterConnect).mode_name(),
             "CLUSTER"
+        );
+        assert_eq!(
+            test_state(PathInputKind::QrDecode).mode_name(),
+            "QR DECODE"
         );
     }
 }

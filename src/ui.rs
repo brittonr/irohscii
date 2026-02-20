@@ -123,6 +123,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Mode::KeyboardShapeCreate(state) => {
             render_keyboard_shape_create(frame, state.tool, &state.width, &state.height, state.focus, canvas_area);
         }
+        Mode::QrCodeDisplay(state) => {
+            render_qr_code_display(frame, &state.ticket, canvas_area);
+        }
         Mode::Normal => {}
         Mode::LeaderMenu(_) => {
             render_leader_menu(frame, canvas_area);
@@ -1187,6 +1190,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         Mode::LeaderMenu(_) => ("SPACE", Color::Cyan),
         Mode::SessionBrowser(_) | Mode::SessionCreate(_) => ("SESS", Color::Magenta),
         Mode::KeyboardShapeCreate(_) => ("CREATE", Color::Cyan),
+        Mode::QrCodeDisplay(_) => ("QR", Color::Magenta),
     };
 
     let mode_style = Style::default()
@@ -1370,6 +1374,7 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
         Mode::KeyboardShapeCreate(_) => {
             "[Tab] switch field | type dimensions | [Enter] create [Esc] cancel"
         }
+        Mode::QrCodeDisplay(_) => "[y] copy ticket | any key: close",
     };
 
     let paragraph = Paragraph::new(help_text).style(Style::default().fg(Color::DarkGray));
@@ -1762,6 +1767,10 @@ fn render_leader_menu(frame: &mut Frame, area: Rect) {
         ("o", "open"),
         ("e", "export"),
         ("n", "new"),
+        ("T", "ticket"),
+        ("Q", "qr code"),
+        ("D", "decode qr"),
+        ("K", "cluster"),
         ("?", "help"),
         ("q", "quit"),
     ];
@@ -1954,7 +1963,12 @@ pub fn help_sections() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)>
         ),
         (
             "COLLABORATION",
-            vec![("T", "Copy sync ticket"), ("P", "Toggle participants")],
+            vec![
+                ("T", "Copy sync ticket"),
+                ("Q", "Show ticket as QR code"),
+                ("D", "Decode QR code from image"),
+                ("P", "Toggle participants"),
+            ],
         ),
         (
             "NAVIGATION",
@@ -2295,6 +2309,98 @@ fn render_keyboard_shape_create(
         .style(Style::default().bg(Color::Black));
 
     frame.render_widget(paragraph, popup_area);
+}
+
+/// Render a QR code display popup showing a ticket as a scannable QR code.
+fn render_qr_code_display(frame: &mut Frame, ticket: &str, area: Rect) {
+    use crate::app::qr::ticket_to_qr_lines;
+
+    let qr_lines = match ticket_to_qr_lines(ticket) {
+        Ok(lines) => lines,
+        Err(e) => {
+            // Fall back to error display
+            let block = Block::default()
+                .title(" QR Code Error ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Red));
+            let paragraph = Paragraph::new(e).block(block);
+            let popup_area = centered_rect_fixed(40, 5, area);
+            frame.render_widget(paragraph, popup_area);
+            return;
+        }
+    };
+
+    // Calculate popup dimensions: QR width + 2 (border) + 2 (padding),
+    // QR height + 2 (border) + 3 (title line + ticket line + help line)
+    let qr_width = qr_lines.first().map(|l| l.text.chars().count()).unwrap_or(0);
+    let qr_height = qr_lines.len();
+    let popup_w = (qr_width + 4) as u16;
+    let popup_h = (qr_height + 6) as u16; // border(2) + title(1) + ticket(1) + blank(1) + help(1)
+
+    // Center the popup
+    let popup_area = centered_rect_fixed(popup_w, popup_h, area);
+
+    // Build the content lines
+    let mut lines: Vec<Line> = Vec::with_capacity(qr_height + 4);
+
+    // Title line
+    lines.push(Line::styled(
+        " Scan to join session ",
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+    ));
+
+    // Blank separator
+    lines.push(Line::raw(""));
+
+    // QR code lines — white-on-black for proper contrast
+    let qr_style = Style::default().fg(Color::White).bg(Color::Black);
+    for qr_line in &qr_lines {
+        // Pad each QR line with a space on each side for quiet zone
+        let padded = format!(" {} ", qr_line.text);
+        lines.push(Line::styled(padded, qr_style));
+    }
+
+    // Blank separator
+    lines.push(Line::raw(""));
+
+    // Truncated ticket display
+    let display_ticket = if ticket.len() > (popup_w as usize).saturating_sub(4) {
+        let max = (popup_w as usize).saturating_sub(7);
+        format!("{}...", &ticket[..max])
+    } else {
+        ticket.to_string()
+    };
+    lines.push(Line::styled(
+        display_ticket,
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    // Help line
+    lines.push(Line::styled(
+        " y:copy  any key:close ",
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    let block = Block::default()
+        .title(" QR Code ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Magenta));
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .style(Style::default().bg(Color::Black))
+        .alignment(ratatui::layout::Alignment::Center);
+
+    frame.render_widget(paragraph, popup_area);
+}
+
+/// Create a fixed-size centered rectangle within the given area.
+fn centered_rect_fixed(width: u16, height: u16, area: Rect) -> Rect {
+    let w = width.min(area.width);
+    let h = height.min(area.height);
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    Rect::new(x, y, w, h)
 }
 
 #[cfg(test)]

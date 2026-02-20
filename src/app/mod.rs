@@ -1,5 +1,6 @@
 mod alignment;
 mod clipboard;
+pub mod qr;
 mod transform;
 mod zorder;
 
@@ -283,6 +284,8 @@ pub struct App {
     pub sync_ticket: Option<String>,
     /// Pending cluster connection (set by UI, consumed by main loop)
     pub pending_cluster_ticket: Option<String>,
+    /// Ticket decoded from a QR code image (set by UI, consumed by main loop)
+    pub pending_qr_decoded_ticket: Option<String>,
     /// Presence manager for remote cursors
     pub presence: Option<PresenceManager>,
     /// Our local peer ID (if syncing)
@@ -342,6 +345,7 @@ impl App {
             clipboard: Vec::new(),
             sync_ticket: None,
             pending_cluster_ticket: None,
+            pending_qr_decoded_ticket: None,
             presence: None,
             local_peer_id: None,
             last_cursor_pos: Position::new(0, 0),
@@ -2724,6 +2728,36 @@ impl App {
         }
         self.pending_cluster_ticket = Some(ticket.clone());
         self.set_status("Connecting to cluster...");
+    }
+
+    /// Decode a QR code from an image file and display the ticket.
+    pub fn execute_qr_decode(&mut self, path: &str) {
+        let path = path.trim();
+        if path.is_empty() {
+            self.set_error("No image path provided");
+            return;
+        }
+
+        let path = if let Some(rest) = path.strip_prefix('~') {
+            if let Some(home) = dirs::home_dir() {
+                home.join(rest.trim_start_matches('/'))
+            } else {
+                std::path::PathBuf::from(path)
+            }
+        } else {
+            std::path::PathBuf::from(path)
+        };
+
+        match qr::decode_qr_from_file(&path) {
+            Ok(ticket) => {
+                self.set_status(format!("Decoded ticket: {ticket}"));
+                // Store as the pending join ticket for the main loop to consume
+                self.pending_qr_decoded_ticket = Some(ticket);
+            }
+            Err(e) => {
+                self.set_error(format!("QR decode failed: {e}"));
+            }
+        }
     }
 
     /// Open a file from the recent files list by index

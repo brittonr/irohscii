@@ -8,7 +8,7 @@ use ratatui::style::Color;
 
 use super::{
     HelpScreenState, LeaderMenuState, Mode, ModeAction, ModeContext, ModeHandler, ModeTransition,
-    PathInputKind, PathInputState, SelectionPopupState,
+    PathInputKind, PathInputState, QrCodeDisplayState, SelectionPopupState,
 };
 use crate::app::{PopupKind, Tool, BRUSHES, COLORS, TOOLS};
 
@@ -135,6 +135,24 @@ impl ModeHandler for LeaderMenuState {
                 ModeTransition::Normal
             }
 
+            // Show sync ticket as QR code
+            KeyCode::Char('Q') => {
+                if let Some(ref ticket) = ctx.app.sync_ticket {
+                    ModeTransition::to(Mode::QrCodeDisplay(QrCodeDisplayState {
+                        ticket: ticket.clone(),
+                    }))
+                } else {
+                    ctx.app.set_status("No sync session active");
+                    ModeTransition::Normal
+                }
+            }
+
+            // Decode QR code from image file
+            KeyCode::Char('D') => ModeTransition::to(Mode::PathInput(PathInputState {
+                path: String::new(),
+                kind: PathInputKind::QrDecode,
+            })),
+
             // Connect to cluster
             KeyCode::Char('K') => ModeTransition::to(Mode::PathInput(PathInputState {
                 path: String::new(),
@@ -161,7 +179,7 @@ impl ModeHandler for LeaderMenuState {
     }
 
     fn help_text(&self) -> &'static str {
-        "Space:select t:tool c:color b:brush s:save o:open e:export n:new g:grid l:layers p:peers T:ticket K:cluster ?:help q:quit"
+        "Space:select t:tool c:color b:brush s:save o:open e:export n:new g:grid l:layers p:peers T:ticket Q:qr D:decode K:cluster ?:help q:quit"
     }
 }
 
@@ -324,6 +342,54 @@ mod tests {
 
         let result = state.handle_key(&mut ctx, key(KeyCode::Char('T')));
         assert!(matches!(result, ModeTransition::Normal));
+    }
+
+    #[test]
+    fn test_shift_q_shows_qr_with_ticket() {
+        let mut state = LeaderMenuState;
+        let mut app = crate::app::App::new(80, 24);
+        app.sync_ticket = Some("irohscii1TESTDATA".to_string());
+        let mut ctx = ModeContext { app: &mut app };
+
+        let result = state.handle_key(&mut ctx, key(KeyCode::Char('Q')));
+        match result {
+            ModeTransition::To(mode) => match *mode {
+                Mode::QrCodeDisplay(QrCodeDisplayState { ref ticket }) => {
+                    assert_eq!(ticket, "irohscii1TESTDATA");
+                }
+                _ => panic!("Expected QR code display mode"),
+            },
+            _ => panic!("Expected To transition"),
+        }
+    }
+
+    #[test]
+    fn test_shift_q_no_ticket_returns_normal() {
+        let mut state = LeaderMenuState;
+        let mut app = crate::app::App::new(80, 24);
+        let mut ctx = ModeContext { app: &mut app };
+
+        let result = state.handle_key(&mut ctx, key(KeyCode::Char('Q')));
+        assert!(matches!(result, ModeTransition::Normal));
+    }
+
+    #[test]
+    fn test_shift_d_opens_qr_decode() {
+        let mut state = LeaderMenuState;
+        let mut app = crate::app::App::new(80, 24);
+        let mut ctx = ModeContext { app: &mut app };
+
+        let result = state.handle_key(&mut ctx, key(KeyCode::Char('D')));
+        match result {
+            ModeTransition::To(mode) => match *mode {
+                Mode::PathInput(PathInputState {
+                    kind: PathInputKind::QrDecode,
+                    ..
+                }) => (),
+                _ => panic!("Expected QR decode path input mode"),
+            },
+            _ => panic!("Expected To transition"),
+        }
     }
 
     #[test]

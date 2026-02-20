@@ -12,6 +12,7 @@ mod leader;
 mod normal;
 mod path_input;
 mod popup;
+mod qr_code;
 mod recent_files;
 mod session;
 mod text_input;
@@ -125,6 +126,7 @@ pub enum PathInputKind {
     DocOpen,
     SvgExport,
     ClusterConnect,
+    QrDecode,
 }
 
 impl PathInputKind {
@@ -136,6 +138,7 @@ impl PathInputKind {
             PathInputKind::DocOpen => "OPEN DOC",
             PathInputKind::SvgExport => "SVG EXPORT",
             PathInputKind::ClusterConnect => "CLUSTER",
+            PathInputKind::QrDecode => "QR DECODE",
         }
     }
 
@@ -147,6 +150,7 @@ impl PathInputKind {
             PathInputKind::DocOpen => "Open document:",
             PathInputKind::SvgExport => "Export SVG:",
             PathInputKind::ClusterConnect => "Cluster ticket:",
+            PathInputKind::QrDecode => "QR image path:",
         }
     }
 }
@@ -205,6 +209,13 @@ pub struct KeyboardShapeState {
     pub focus: KeyboardShapeField,
 }
 
+/// QR code display state - shows a sync ticket as a QR code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QrCodeDisplayState {
+    /// The ticket string being displayed
+    pub ticket: String,
+}
+
 /// Application mode state machine.
 ///
 /// Each variant contains the state needed for that mode.
@@ -228,6 +239,7 @@ pub enum Mode {
     SessionBrowser(SessionBrowserState),
     SessionCreate(SessionCreateState),
     KeyboardShapeCreate(KeyboardShapeState),
+    QrCodeDisplay(QrCodeDisplayState),
 }
 
 // Query methods for Mode - kept for future UI use (status bar display)
@@ -253,6 +265,7 @@ impl Mode {
             Mode::SessionBrowser(_) => "SESSIONS",
             Mode::SessionCreate(_) => "NEW SESSION",
             Mode::KeyboardShapeCreate(_) => "CREATE",
+            Mode::QrCodeDisplay(_) => "QR CODE",
         }
     }
 
@@ -272,6 +285,7 @@ impl Mode {
             Mode::SessionBrowser(_) => Color::Cyan,
             Mode::SessionCreate(_) => Color::Green,
             Mode::KeyboardShapeCreate(_) => Color::Yellow,
+            Mode::QrCodeDisplay(_) => Color::Magenta,
         }
     }
 
@@ -328,6 +342,7 @@ impl Mode {
             Mode::SessionBrowser(state) => state.handle_key(&mut ctx, key),
             Mode::SessionCreate(state) => state.handle_key(&mut ctx, key),
             Mode::KeyboardShapeCreate(state) => state.handle_key(&mut ctx, key),
+            Mode::QrCodeDisplay(state) => state.handle_key(&mut ctx, key),
         }
     }
 }
@@ -471,6 +486,19 @@ impl Mode {
             width: String::new(),
             height: String::new(),
             focus: KeyboardShapeField::Width,
+        })
+    }
+
+    /// Create a QR code display mode for a ticket.
+    pub fn qr_code_display(ticket: String) -> Self {
+        Mode::QrCodeDisplay(QrCodeDisplayState { ticket })
+    }
+
+    /// Create a QR decode input mode.
+    pub fn qr_decode() -> Self {
+        Mode::PathInput(PathInputState {
+            path: String::new(),
+            kind: PathInputKind::QrDecode,
         })
     }
 }
