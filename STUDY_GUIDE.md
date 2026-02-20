@@ -543,7 +543,7 @@ The UI uses **ratatui** (Rust TUI framework) with **crossterm** as the terminal 
 ├──────────────────────────────────────────────────────┤
 │ SEL  [unsaved]  [3]  [SYNC 1]               Default │ ← Status bar (Helix-style)
 ├──────────────────────────────────────────────────────┤
-│ s:select f:freehand t:text l:line r:rect ?:help     │ ← Help bar
+│ click to select | [Space] menu [?] help              │ ← Help bar
 └──────────────────────────────────────────────────────┘
 ```
 

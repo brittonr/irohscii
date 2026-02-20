@@ -1364,7 +1364,7 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
         Mode::SelectionPopup(_) => "[hjkl] navigate [Enter] select [Esc] cancel",
         Mode::ConfirmDialog(_) => "[y] Yes [n] No | [Enter] confirm [Esc] cancel",
         Mode::HelpScreen(_) => "[j/k] scroll [Space] page down [Esc/q/?] close",
-        Mode::LeaderMenu(_) => "t:tool c:color b:brush s:save o:open e:export g:grid l:layers ?:help q:quit",
+        Mode::LeaderMenu(_) => "Space:select t:tool c:color b:brush s:save o:open e:export g:grid l:layers ?:help q:quit",
         Mode::SessionBrowser(_) => {
             "[j/k] navigate [n]ew [d]elete [p]in [*] pinned filter [Tab/Esc] close"
         }
@@ -1812,10 +1812,10 @@ fn render_leader_menu(frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, popup_area);
 }
 
-/// Render the help screen overlay
-fn render_help_screen(frame: &mut Frame, scroll: usize, area: Rect) {
-    // Help content with all keyboard shortcuts
-    let help_sections = vec![
+/// Single source of truth for all documented keybindings.
+/// Used by the help screen and verified by tests.
+pub fn help_sections() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
+    vec![
         (
             "GENERAL",
             vec![
@@ -1854,9 +1854,17 @@ fn render_help_screen(frame: &mut Frame, scroll: usize, area: Rect) {
                 ("l", "Line tool"),
                 ("a", "Arrow tool"),
                 ("r", "Rectangle tool"),
-                ("b", "Double box tool"),
+                ("b", "DoubleBox tool"),
                 ("d", "Diamond tool"),
                 ("e", "Ellipse tool"),
+                ("Space t", "Triangle (picker)"),
+                ("Space t", "Parallelogram (picker)"),
+                ("Space t", "Hexagon (picker)"),
+                ("Space t", "Trapezoid (picker)"),
+                ("Space t", "RoundedRect (picker)"),
+                ("Space t", "Cylinder (picker)"),
+                ("Space t", "Cloud (picker)"),
+                ("Space t", "Star (picker)"),
             ],
         ),
         (
@@ -1958,7 +1966,12 @@ fn render_help_screen(frame: &mut Frame, scroll: usize, area: Rect) {
                 ("Ctrl+Scroll", "Mouse zoom"),
             ],
         ),
-    ];
+    ]
+}
+
+/// Render the help screen overlay
+fn render_help_screen(frame: &mut Frame, scroll: usize, area: Rect) {
+    let help_sections = help_sections();
 
     // Build help lines
     let mut lines: Vec<Line> = Vec::new();
@@ -2287,6 +2300,50 @@ fn render_keyboard_shape_create(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn help_covers_all_tools() {
+        use crate::app::TOOLS;
+        let sections = help_sections();
+        let tools_section = sections
+            .iter()
+            .find(|(name, _)| *name == "TOOLS")
+            .expect("TOOLS section must exist in help");
+
+        for tool in TOOLS {
+            let tool_name_lower = tool.name().to_lowercase();
+            let found = tools_section
+                .1
+                .iter()
+                .any(|(_, desc)| desc.to_lowercase().contains(&tool_name_lower));
+            assert!(
+                found,
+                "Tool {:?} (name='{}') not found in help TOOLS section",
+                tool,
+                tool.name()
+            );
+        }
+    }
+
+    #[test]
+    fn help_has_leader_menu_section() {
+        let sections = help_sections();
+        let leader = sections
+            .iter()
+            .find(|(name, _)| name.contains("LEADER"))
+            .expect("LEADER section must exist in help");
+
+        // These keys are handled in leader.rs and must be documented
+        let expected_keys = ["t", "c", "b", "s", "o", "e", "n", "g", "l", "p", "?", "q"];
+        for key in expected_keys {
+            let found = leader.1.iter().any(|(k, _)| k.contains(key));
+            assert!(
+                found,
+                "Leader key '{}' not documented in help LEADER section",
+                key
+            );
+        }
+    }
 
     #[test]
     fn truncate_name_short_string() {
