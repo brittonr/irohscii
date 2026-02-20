@@ -556,6 +556,19 @@ fn run_app(
                                 }
                             }
 
+                            // Handle pending join session
+                            if let Some(ticket) = app.pending_join_ticket.take() {
+                                if let Some(handle) = sync_handle {
+                                    let _ = handle.send_command(
+                                        sync::SyncCommand::ConnectPeer {
+                                            ticket,
+                                        },
+                                    );
+                                } else {
+                                    app.set_error("Sync is disabled (--offline)");
+                                }
+                            }
+
                             // Handle QR-decoded ticket — copy to clipboard for --join use
                             if let Some(ticket) = app.pending_qr_decoded_ticket.take() {
                                 app.sync_ticket = Some(ticket);

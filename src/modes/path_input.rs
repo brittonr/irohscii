@@ -154,6 +154,9 @@ impl PathInputState {
             PathInputKind::QrDecode => {
                 ctx.app.execute_qr_decode(&self.path);
             }
+            PathInputKind::JoinSession => {
+                ctx.app.execute_join_session(&self.path);
+            }
         }
     }
 }
@@ -243,6 +246,10 @@ mod tests {
         assert_eq!(
             test_state(PathInputKind::QrDecode).mode_name(),
             "QR DECODE"
+        );
+        assert_eq!(
+            test_state(PathInputKind::JoinSession).mode_name(),
+            "JOIN"
         );
     }
 }

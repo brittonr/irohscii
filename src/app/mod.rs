@@ -284,6 +284,8 @@ pub struct App {
     pub sync_ticket: Option<String>,
     /// Pending cluster connection (set by UI, consumed by main loop)
     pub pending_cluster_ticket: Option<String>,
+    /// Pending join session connection (set by UI, consumed by main loop)
+    pub pending_join_ticket: Option<String>,
     /// Ticket decoded from a QR code image (set by UI, consumed by main loop)
     pub pending_qr_decoded_ticket: Option<String>,
     /// Presence manager for remote cursors
@@ -345,6 +347,7 @@ impl App {
             clipboard: Vec::new(),
             sync_ticket: None,
             pending_cluster_ticket: None,
+            pending_join_ticket: None,
             pending_qr_decoded_ticket: None,
             presence: None,
             local_peer_id: None,
@@ -2626,6 +2629,16 @@ impl App {
         }
         self.pending_cluster_ticket = Some(ticket.clone());
         self.set_status("Connecting to cluster...");
+    }
+
+    pub fn execute_join_session(&mut self, ticket: &str) {
+        let ticket = ticket.trim().to_string();
+        if ticket.is_empty() {
+            self.set_error("No join ticket provided");
+            return;
+        }
+        self.pending_join_ticket = Some(ticket.clone());
+        self.set_status("Connecting to peer...");
     }
 
     /// Decode a QR code from an image file and display the ticket.

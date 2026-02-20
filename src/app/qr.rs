@@ -3,6 +3,7 @@
 //! Provides bidirectional conversion between ticket strings and QR codes:
 //! - `ticket_to_qr_lines()`: Encode a ticket into terminal-renderable QR lines
 //! - `decode_qr_from_file()`: Decode a QR code image back into a ticket string
+//! - `save_qr_to_png()`: Save a QR code as a PNG image file
 
 use std::path::Path;
 
@@ -112,6 +113,74 @@ pub fn decode_qr_from_file(path: &Path) -> Result<String, String> {
     Ok(content)
 }
 
+/// Save a QR code as a PNG image file.
+///
+/// Generates a QR code from the ticket string and saves it as a PNG image.
+/// Each QR module is rendered as an 8x8 pixel block for good scannability.
+/// Creates parent directories if they don't exist.
+///
+/// # Arguments
+///
+/// * `ticket` - The ticket string to encode
+/// * `output_path` - The file path where the PNG should be saved
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success, or an error message on failure.
+pub fn save_qr_to_png(ticket: &str, output_path: &Path) -> Result<(), String> {
+    use qrcode::QrCode;
+    use image::{GrayImage, Luma};
+
+    // Generate QR code
+    let code = QrCode::new(ticket.as_bytes()).map_err(|e| format!("QR encode error: {e}"))?;
+
+    let modules = code.to_colors();
+    let width = code.width();
+    let quiet = 4; // 4-module quiet zone (standard for image QR codes)
+
+    let total_size = width + 2 * quiet;
+
+    // Module size in pixels (8x8 for good scannability)
+    let module_px = 8;
+    let img_size = total_size * module_px;
+
+    // Create a white image
+    let mut img = GrayImage::from_pixel(img_size as u32, img_size as u32, Luma([255u8]));
+
+    // Draw QR modules
+    for row in 0..width {
+        for col in 0..width {
+            if modules[row * width + col] == qrcode::Color::Dark {
+                // Draw a black module (8x8 pixels)
+                let start_x = (quiet + col) * module_px;
+                let start_y = (quiet + row) * module_px;
+                
+                for dy in 0..module_px {
+                    for dx in 0..module_px {
+                        let px = start_x + dx;
+                        let py = start_y + dy;
+                        if px < img_size && py < img_size {
+                            img.put_pixel(px as u32, py as u32, Luma([0u8]));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Create parent directories if needed
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create directory: {e}"))?;
+    }
+
+    // Save to PNG
+    img.save(output_path)
+        .map_err(|e| format!("Failed to save PNG: {e}"))?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,5 +236,32 @@ mod tests {
         // Empty string should still produce a valid QR (QR codes can encode empty data)
         let result = ticket_to_qr_lines("");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_save_qr_to_png() {
+        use tempfile::TempDir;
+
+        let ticket = "irohscii1TESTTICKET";
+        let temp_dir = TempDir::new().expect("should create temp dir");
+        let path = temp_dir.path().join("test-qr.png");
+
+        // Save QR code
+        let result = save_qr_to_png(ticket, &path);
+        assert!(result.is_ok(), "save should succeed: {:?}", result);
+
+        // Verify file exists
+        assert!(path.exists(), "PNG file should exist");
+
+        // Verify it's a valid PNG by opening it
+        let img = image::open(&path);
+        assert!(img.is_ok(), "should be a valid PNG image");
+
+        // Verify dimensions are reasonable (should be multiple of 8, the module size)
+        let img = img.unwrap();
+        assert!(img.width() % 8 == 0, "width should be multiple of module size");
+        assert!(img.height() % 8 == 0, "height should be multiple of module size");
+        assert!(img.width() > 0, "image should have non-zero width");
+        assert!(img.height() > 0, "image should have non-zero height");
     }
 }

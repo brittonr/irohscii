@@ -127,6 +127,7 @@ pub enum PathInputKind {
     SvgExport,
     ClusterConnect,
     QrDecode,
+    JoinSession,
 }
 
 impl PathInputKind {
@@ -139,6 +140,7 @@ impl PathInputKind {
             PathInputKind::SvgExport => "SVG EXPORT",
             PathInputKind::ClusterConnect => "CLUSTER",
             PathInputKind::QrDecode => "QR DECODE",
+            PathInputKind::JoinSession => "JOIN",
         }
     }
 
@@ -151,6 +153,7 @@ impl PathInputKind {
             PathInputKind::SvgExport => "Export SVG:",
             PathInputKind::ClusterConnect => "Cluster ticket:",
             PathInputKind::QrDecode => "QR image path:",
+            PathInputKind::JoinSession => "Join ticket:",
         }
     }
 }

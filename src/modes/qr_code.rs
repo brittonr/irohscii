@@ -16,6 +16,42 @@ impl ModeHandler for QrCodeDisplayState {
                 ctx.app.copy_ticket_to_clipboard();
                 ModeTransition::Normal
             }
+            // Save QR code as PNG
+            KeyCode::Char('w') => {
+                use std::path::PathBuf;
+                use crate::app::qr::save_qr_to_png;
+
+                // Determine session name
+                let session_name = ctx.app.current_session_meta
+                    .as_ref()
+                    .map(|m| m.name.as_str())
+                    .unwrap_or("session");
+
+                // Build save path: ~/.local/share/irohscii/qr-<session-name>.png
+                let mut path = PathBuf::new();
+                if let Some(data_dir) = dirs::data_local_dir() {
+                    path.push(data_dir);
+                } else if let Some(home) = dirs::home_dir() {
+                    path.push(home);
+                    path.push(".local");
+                    path.push("share");
+                }
+                path.push("irohscii");
+                path.push(format!("qr-{}.png", session_name));
+
+                // Save QR code
+                match save_qr_to_png(&self.ticket, &path) {
+                    Ok(()) => {
+                        let msg = format!("QR saved to {}", path.display());
+                        ctx.app.set_status(&msg);
+                    }
+                    Err(e) => {
+                        ctx.app.set_status(&format!("Failed to save QR: {}", e));
+                    }
+                }
+
+                ModeTransition::Normal
+            }
             // Any other key dismisses the QR code display
             _ => ModeTransition::Normal,
         }
@@ -30,7 +66,7 @@ impl ModeHandler for QrCodeDisplayState {
     }
 
     fn help_text(&self) -> &'static str {
-        "y: copy ticket, any key: dismiss"
+        "y: copy ticket, w: save PNG, any key: dismiss"
     }
 }
 
@@ -77,6 +113,18 @@ mod tests {
         let mut ctx = ModeContext { app: &mut app };
 
         let result = state.handle_key(&mut ctx, key(KeyCode::Char('y')));
+        assert!(matches!(result, ModeTransition::Normal));
+    }
+
+    #[test]
+    fn test_w_saves_png_and_dismisses() {
+        let mut state = QrCodeDisplayState {
+            ticket: "irohscii1TEST".to_string(),
+        };
+        let mut app = crate::app::App::new(80, 24);
+        let mut ctx = ModeContext { app: &mut app };
+
+        let result = state.handle_key(&mut ctx, key(KeyCode::Char('w')));
         assert!(matches!(result, ModeTransition::Normal));
     }
 }

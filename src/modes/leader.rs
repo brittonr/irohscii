@@ -159,6 +159,12 @@ impl ModeHandler for LeaderMenuState {
                 kind: PathInputKind::ClusterConnect,
             })),
 
+            // Join session
+            KeyCode::Char('J') => ModeTransition::to(Mode::PathInput(PathInputState {
+                path: String::new(),
+                kind: PathInputKind::JoinSession,
+            })),
+
             // Quit
             KeyCode::Char('q') => ModeTransition::Action(ModeAction::Quit),
 
@@ -179,7 +185,7 @@ impl ModeHandler for LeaderMenuState {
     }
 
     fn help_text(&self) -> &'static str {
-        "Space:select t:tool c:color b:brush s:save o:open e:export n:new g:grid l:layers p:peers T:ticket Q:qr D:decode K:cluster ?:help q:quit"
+        "Space:select t:tool c:color b:brush s:save o:open e:export n:new g:grid l:layers p:peers T:ticket Q:qr D:decode K:cluster J:join ?:help q:quit"
     }
 }
 
@@ -329,6 +335,25 @@ mod tests {
                     ..
                 }) => (),
                 _ => panic!("Expected cluster connect mode"),
+            },
+            _ => panic!("Expected To transition"),
+        }
+    }
+
+    #[test]
+    fn test_shift_j_opens_join_session() {
+        let mut state = LeaderMenuState;
+        let mut app = crate::app::App::new(80, 24);
+        let mut ctx = ModeContext { app: &mut app };
+
+        let result = state.handle_key(&mut ctx, key(KeyCode::Char('J')));
+        match result {
+            ModeTransition::To(mode) => match *mode {
+                Mode::PathInput(PathInputState {
+                    kind: PathInputKind::JoinSession,
+                    ..
+                }) => (),
+                _ => panic!("Expected join session mode"),
             },
             _ => panic!("Expected To transition"),
         }

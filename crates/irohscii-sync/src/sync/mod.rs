@@ -99,6 +99,10 @@ pub enum SyncCommand {
         ticket: String,
         capability: Option<CapabilityToken>,
     },
+    /// Connect to a peer for real-time sync
+    ConnectPeer {
+        ticket: String,
+    },
     /// Shutdown sync
     Shutdown,
 }
@@ -307,7 +311,8 @@ async fn run_sync(
             // Establish a persistent sync connection to the peer (reused for all syncs).
             // QUIC connections support multiplexed streams, so sync_with_peer() opens
             // a new bi-stream each time on this same connection.
-            let sync_conn: Option<Connection> = if let Some(ref endpoint_addr) = peer_endpoint_addr {
+            // Mutable so ConnectPeer can replace it mid-session.
+            let mut sync_conn: Option<Connection> = if let Some(ref endpoint_addr) = peer_endpoint_addr {
                 match endpoint.connect(endpoint_addr.clone(), AUTOMERGE_SYNC_ALPN).await {
                     Ok(conn) => Some(conn),
                     Err(e) => {
@@ -359,7 +364,8 @@ async fn run_sync(
             }
 
             // Connect presence protocol on a separate connection (different ALPN)
-            let presence_handle = if let Some(ref endpoint_addr) = peer_endpoint_addr {
+            // Mutable so ConnectPeer can replace it mid-session.
+            let mut presence_handle = if let Some(ref endpoint_addr) = peer_endpoint_addr {
                 match endpoint.connect(endpoint_addr.clone(), PresenceProtocol::ALPN).await {
                     Ok(conn) => {
                         let presence_clone = presence_protocol.clone();
@@ -501,6 +507,51 @@ async fn run_sync(
                                     Err(e) => {
                                         let _ = event_tx.send(SyncEvent::Error(
                                             format!("Invalid cluster ticket: {}", e),
+                                        ));
+                                    }
+                                }
+                            }
+                            Ok(SyncCommand::ConnectPeer { ticket }) => {
+                                match decode_ticket(&ticket) {
+                                    Ok(addr) => {
+                                        // Close old presence connection if exists
+                                        if let Some(h) = &presence_handle {
+                                            h.abort();
+                                        }
+                                        // Connect to new peer for sync
+                                        match endpoint.connect(addr.clone(), AUTOMERGE_SYNC_ALPN).await {
+                                            Ok(conn) => {
+                                                // Pull existing state from peer
+                                                do_sync(&store, &doc_id, &conn, None).await;
+                                                sync_conn = Some(conn);
+                                            }
+                                            Err(e) => {
+                                                let _ = event_tx.send(SyncEvent::Error(
+                                                    format!("Failed to connect to peer: {}", e),
+                                                ));
+                                                // Don't return early, still try to connect presence
+                                            }
+                                        }
+                                        // Connect presence protocol on a separate connection
+                                        match endpoint.connect(addr, PresenceProtocol::ALPN).await {
+                                            Ok(conn) => {
+                                                let presence_clone = presence_protocol.clone();
+                                                presence_handle = Some(tokio::spawn(async move {
+                                                    if let Err(e) = presence_clone.run_presence_loop(conn).await {
+                                                        eprintln!("Presence loop error: {}", e);
+                                                    }
+                                                }));
+                                            }
+                                            Err(e) => {
+                                                let _ = event_tx.send(SyncEvent::Error(
+                                                    format!("Failed to connect presence: {}", e),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        let _ = event_tx.send(SyncEvent::Error(
+                                            format!("Invalid peer ticket: {}", e),
                                         ));
                                     }
                                 }

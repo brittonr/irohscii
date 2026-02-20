@@ -1374,7 +1374,7 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
         Mode::KeyboardShapeCreate(_) => {
             "[Tab] switch field | type dimensions | [Enter] create [Esc] cancel"
         }
-        Mode::QrCodeDisplay(_) => "[y] copy ticket | any key: close",
+        Mode::QrCodeDisplay(_) => "[y] copy ticket | [w] save PNG | any key: close",
     };
 
     let paragraph = Paragraph::new(help_text).style(Style::default().fg(Color::DarkGray));
@@ -1771,6 +1771,7 @@ fn render_leader_menu(frame: &mut Frame, area: Rect) {
         ("Q", "qr code"),
         ("D", "decode qr"),
         ("K", "cluster"),
+        ("J", "join"),
         ("?", "help"),
         ("q", "quit"),
     ];
@@ -1965,8 +1966,9 @@ pub fn help_sections() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)>
             "COLLABORATION",
             vec![
                 ("T", "Copy sync ticket"),
-                ("Q", "Show ticket as QR code"),
+                ("Q", "Show ticket as QR code (w: save PNG)"),
                 ("D", "Decode QR code from image"),
+                ("J", "Join peer session"),
                 ("P", "Toggle participants"),
             ],
         ),
