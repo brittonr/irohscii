@@ -124,6 +124,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             render_keyboard_shape_create(frame, state.tool, &state.width, &state.height, state.focus, canvas_area);
         }
         Mode::Normal => {}
+        Mode::LeaderMenu(_) => {
+            render_leader_menu(frame, canvas_area);
+        }
         Mode::LayerRename(_) => {} // Handled in layer panel
     }
 }
@@ -1183,6 +1186,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         Mode::RecentFiles(_) | Mode::SelectionPopup(_) => ("MENU", Color::Cyan),
         Mode::ConfirmDialog(_) => ("CONF", Color::Yellow),
         Mode::HelpScreen(_) => ("HELP", Color::Cyan),
+        Mode::LeaderMenu(_) => ("SPACE", Color::Cyan),
         Mode::SessionBrowser(_) | Mode::SessionCreate(_) => ("SESS", Color::Magenta),
         Mode::KeyboardShapeCreate(_) => ("CREATE", Color::Cyan),
     };
@@ -1325,22 +1329,19 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
             let base_help = match app.current_tool {
                 Tool::Select => {
                     if app.selected.len() >= 2 {
-                        // Multi-select: show group shortcuts
-                        "[Shift+G] group [y]ank [Del] delete | [?] help"
+                        "[Shift+G] group [y]ank [Del] delete | [Space] menu [?] help"
                     } else if app.selected.len() == 1 {
-                        // Single select: show shape operations
-                        "[Enter] edit label [y]ank [Del] delete | []/{}:z-order [?] help"
+                        "[Enter] label [y]ank [Del] delete | []/{}:z-order | [Space] menu"
                     } else {
-                        // No selection
-                        "[Space] tools [C] color | click to select | [?] help"
+                        "click to select | [Space] menu [?] help"
                     }
                 }
-                Tool::Freehand => "[Space] tools [c] brush [C] color | drag to draw | [?] help",
-                Tool::Text => "[Space] tools [C] color | click to place text | [?] help",
+                Tool::Freehand => "drag to draw | [Space] menu [?] help",
+                Tool::Text => "click to place text | [Space] menu [?] help",
                 Tool::Line | Tool::Arrow => {
-                    "[Space] tools [v] line style [C] color | drag to draw | [?] help"
+                    "[v] line style | drag to draw | [Space] menu [?] help"
                 }
-                _ => "[Space] tools [C] color | drag to draw | [?] help",
+                _ => "drag to draw | [Space] menu [?] help",
             };
 
             // Add layer hint if panel is visible
@@ -1360,11 +1361,10 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
         Mode::LayerRename(_) => "type layer name | [Enter] confirm [Esc] cancel",
         Mode::PathInput(_) => "type path | [Tab] complete [Enter] confirm [Esc] cancel",
         Mode::RecentFiles(_) => "[j/k] navigate [Enter] open [Esc] cancel",
-        Mode::SelectionPopup(_) => {
-            "[hjkl] navigate | release key or [Enter] to select | [Esc] cancel"
-        }
+        Mode::SelectionPopup(_) => "[hjkl] navigate [Enter] select [Esc] cancel",
         Mode::ConfirmDialog(_) => "[y] Yes [n] No | [Enter] confirm [Esc] cancel",
         Mode::HelpScreen(_) => "[j/k] scroll [Space] page down [Esc/q/?] close",
+        Mode::LeaderMenu(_) => "t:tool c:color b:brush s:save o:open e:export g:grid l:layers ?:help q:quit",
         Mode::SessionBrowser(_) => {
             "[j/k] navigate [n]ew [d]elete [p]in [*] pinned filter [Tab/Esc] close"
         }
@@ -1745,6 +1745,73 @@ fn render_confirm_dialog(frame: &mut Frame, action: &PendingAction, area: Rect) 
     frame.render_widget(paragraph, popup_area);
 }
 
+/// Render the leader menu (Helix-style which-key popup)
+fn render_leader_menu(frame: &mut Frame, area: Rect) {
+    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+    use ratatui::text::{Line, Span};
+
+    // Build two-column layout of key hints
+    let entries: Vec<(&str, &str)> = vec![
+        ("t", "tool"),
+        ("c", "color"),
+        ("b", "brush"),
+        ("g", "grid"),
+        ("l", "layers"),
+        ("p", "peers"),
+        ("s", "save"),
+        ("o", "open"),
+        ("e", "export"),
+        ("n", "new"),
+        ("?", "help"),
+        ("q", "quit"),
+    ];
+
+    let col_width = 14usize; // width of each column
+    let cols = 2;
+    let rows = (entries.len() + cols - 1) / cols;
+
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    for row in 0..rows {
+        let mut spans = Vec::new();
+        for col in 0..cols {
+            let idx = row + col * rows;
+            if let Some(&(key, label)) = entries.get(idx) {
+                spans.push(Span::styled(
+                    format!(" {} ", key),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled(
+                    format!("{:<width$}", label, width = col_width - 3),
+                    Style::default().fg(Color::White),
+                ));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+
+    let popup_width = (col_width * cols + 2) as u16;
+    let popup_height = (rows + 2) as u16; // +2 for borders
+
+    // Center the popup
+    let x = area.x + area.width.saturating_sub(popup_width) / 2;
+    let y = area.y + area.height.saturating_sub(popup_height) / 2;
+    let popup_area = Rect::new(x, y, popup_width.min(area.width), popup_height.min(area.height));
+
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" Space ")
+        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .style(Style::default().bg(Color::Black));
+
+    frame.render_widget(paragraph, popup_area);
+}
+
 /// Render the help screen overlay
 fn render_help_screen(frame: &mut Frame, scroll: usize, area: Rect) {
     // Help content with all keyboard shortcuts
@@ -1755,15 +1822,32 @@ fn render_help_screen(frame: &mut Frame, scroll: usize, area: Rect) {
                 ("q", "Quit"),
                 ("Ctrl+c", "Quit"),
                 ("Esc", "Cancel/deselect"),
+                ("Space/:", "Leader menu"),
                 ("?/F1", "Toggle help screen"),
                 ("u", "Undo"),
                 ("U", "Redo"),
             ],
         ),
         (
+            "LEADER MENU (Space/:)",
+            vec![
+                ("t", "Tool picker"),
+                ("c", "Color picker"),
+                ("b", "Brush picker"),
+                ("s", "Save file"),
+                ("o", "Open file"),
+                ("e", "Export SVG"),
+                ("n", "New document"),
+                ("g", "Toggle grid"),
+                ("l", "Toggle layers"),
+                ("p", "Toggle peers"),
+                ("?", "Help"),
+                ("q", "Quit"),
+            ],
+        ),
+        (
             "TOOLS",
             vec![
-                ("Space", "Open tool popup"),
                 ("s", "Select tool"),
                 ("f", "Freehand draw"),
                 ("t", "Text tool"),
@@ -1778,8 +1862,6 @@ fn render_help_screen(frame: &mut Frame, scroll: usize, area: Rect) {
         (
             "DRAWING",
             vec![
-                ("c", "Open brush popup"),
-                ("C", "Open color popup"),
                 ("v", "Cycle line style"),
                 ("g", "Toggle grid snap"),
             ],

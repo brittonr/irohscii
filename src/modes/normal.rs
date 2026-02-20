@@ -385,9 +385,18 @@ impl ModeHandler for NormalModeState {
             }
 
             // =========================================================
+            // Leader menu (Space / : — Helix-style)
+            // =========================================================
+            KeyCode::Char(' ') | KeyCode::Char(':') => {
+                return ModeTransition::to(Mode::leader_menu());
+            }
+
+            // =========================================================
             // Help screen
             // =========================================================
-            KeyCode::Char('?') | KeyCode::F(1) => ctx.app.open_help(),
+            KeyCode::Char('?') | KeyCode::F(1) => {
+                return ModeTransition::to(Mode::help_screen());
+            }
 
             // =========================================================
             // Keyboard shape creation
@@ -551,13 +560,12 @@ mod tests {
     }
 
     #[test]
-    fn test_help_stays_in_normal() {
+    fn test_help_transitions_to_help_screen() {
         let mut state = NormalModeState;
         let mut app = crate::app::App::new(80, 24);
         let mut ctx = super::ModeContext { app: &mut app };
 
-        // Help opens via app.open_help() which changes app.mode
         let result = state.handle_key(&mut ctx, key(KeyCode::Char('?')));
-        assert!(matches!(result, ModeTransition::Stay));
+        assert!(matches!(result, ModeTransition::To(_)));
     }
 }

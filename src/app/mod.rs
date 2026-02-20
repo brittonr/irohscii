@@ -12,6 +12,7 @@ use ratatui::layout::Rect;
 use crate::canvas::{LineStyle, Position, Viewport};
 
 // Re-export Mode and state types from the modes module
+#[allow(unused_imports)]
 pub use crate::modes::{
     ConfirmDialogState, HelpScreenState, KeyboardShapeState, LabelInputState, LayerRenameState,
     Mode, PathInputKind, PathInputState, SelectionPopupState, SessionBrowserState, TextInputState,
@@ -2415,56 +2416,6 @@ impl App {
 
     // ========== Popup Selection Methods ==========
 
-    /// Open the tool selection popup
-    pub fn open_tool_popup(&mut self) {
-        let selected = TOOLS
-            .iter()
-            .position(|&t| t == self.current_tool)
-            .unwrap_or(0);
-        self.mode = Mode::SelectionPopup(SelectionPopupState {
-            kind: PopupKind::Tool,
-            selected,
-            trigger_key: None,
-        });
-    }
-
-    /// Open the color selection popup
-    pub fn open_color_popup(&mut self) {
-        let selected = COLORS
-            .iter()
-            .position(|&c| c == self.current_color)
-            .unwrap_or(0);
-        self.mode = Mode::SelectionPopup(SelectionPopupState {
-            kind: PopupKind::Color,
-            selected,
-            trigger_key: None,
-        });
-    }
-
-    /// Open the brush character selection popup
-    pub fn open_brush_popup(&mut self) {
-        let selected = BRUSHES
-            .iter()
-            .position(|&c| c == self.brush_char)
-            .unwrap_or(0);
-        self.mode = Mode::SelectionPopup(SelectionPopupState {
-            kind: PopupKind::Brush,
-            selected,
-            trigger_key: None,
-        });
-    }
-
-    /// Confirm the current popup selection
-    pub fn confirm_popup_selection(&mut self) {
-        if let Mode::SelectionPopup(state) = &self.mode {
-            let kind = state.kind;
-            let selected = state.selected;
-            self.confirm_popup_selection_with_index(kind, selected);
-        } else {
-            self.mode = Mode::Normal;
-        }
-    }
-
     /// Confirm popup selection with explicit kind and index
     pub fn confirm_popup_selection_with_index(&mut self, kind: PopupKind, selected: usize) {
         match kind {
@@ -2628,13 +2579,6 @@ impl App {
     pub fn cancel_pending_action(&mut self) {
         self.mode = Mode::Normal;
         self.set_status("Cancelled");
-    }
-
-    // ========== Help Screen Methods ==========
-
-    /// Open the help screen
-    pub fn open_help(&mut self) {
-        self.mode = Mode::HelpScreen(HelpScreenState { scroll: 0 });
     }
 
     // ========== Session Browser Methods ==========

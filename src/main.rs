@@ -49,7 +49,7 @@ use anyhow::Result;
 use clap::Parser;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, KeyModifiers,
         MouseButton, MouseEventKind,
     },
     execute,
@@ -335,8 +335,6 @@ fn run_app(
     let mut last_presence_broadcast = Instant::now();
     let mut last_stale_prune = Instant::now();
     // Track which key triggered the current popup (for release-to-confirm)
-    let mut popup_trigger_key: Option<KeyCode> = None;
-
     while app.running {
         terminal.draw(|frame| ui::render(frame, &mut *app))?;
 
@@ -389,96 +387,49 @@ fn run_app(
                             // Clear status message on any keypress
                             app.clear_status();
 
-                            // Check if we're in a popup and this is a re-press of trigger key (fallback confirm)
-                            if let Mode::SelectionPopup(_) = &app.mode {
-                                if Some(key.code) == popup_trigger_key {
-                                    // Same key pressed again = confirm (fallback for terminals without release)
-                                    app.confirm_popup_selection();
-                                    popup_trigger_key = None;
-                                } else {
-                                    // Use new dispatch for popup navigation
-                                    // Take mode out to avoid double mutable borrow
-                                    use crate::modes::ModeTransition;
-                                    let mut mode = std::mem::take(&mut app.mode);
-                                    let transition = mode.handle_key(app, key);
-                                    match transition {
-                                        ModeTransition::Normal => app.mode = Mode::Normal,
-                                        ModeTransition::To(new_mode) => app.mode = *new_mode,
-                                        ModeTransition::Stay | ModeTransition::Action(_) => app.mode = mode,
+                            // All key handling goes through the mode system
+                            {
+                                use crate::modes::{ModeAction, ModeTransition};
+                                let mut mode = std::mem::take(&mut app.mode);
+                                let transition = mode.handle_key(app, key);
+                                match transition {
+                                    ModeTransition::Stay => {
+                                        app.mode = mode;
                                     }
-                                }
-                            } else {
-                                // Check for popup triggers in Normal mode
-                                let triggered_popup = if matches!(app.mode, Mode::Normal) {
-                                    match key.code {
-                                        KeyCode::Char(' ') => {
-                                            app.open_tool_popup();
-                                            popup_trigger_key = Some(key.code);
-                                            true
-                                        }
-                                        KeyCode::Char('C') => {
-                                            app.open_color_popup();
-                                            popup_trigger_key = Some(key.code);
-                                            true
-                                        }
-                                        KeyCode::Char('c')
-                                            if !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                                        {
-                                            app.open_brush_popup();
-                                            popup_trigger_key = Some(key.code);
-                                            true
-                                        }
-                                        _ => false,
+                                    ModeTransition::Normal => {
+                                        app.mode = Mode::Normal;
                                     }
-                                } else {
-                                    false
-                                };
-
-                                if !triggered_popup {
-                                    // Use the new Mode::handle_key dispatch
-                                    // Take mode out to avoid double mutable borrow
-                                    use crate::modes::{ModeAction, ModeTransition};
-                                    let mut mode = std::mem::take(&mut app.mode);
-                                    let transition = mode.handle_key(app, key);
-                                    match transition {
-                                        ModeTransition::Stay => {
-                                            app.mode = mode;
-                                        }
-                                        ModeTransition::Normal => {
-                                            app.mode = Mode::Normal;
-                                        }
-                                        ModeTransition::To(new_mode) => {
-                                            app.mode = *new_mode;
-                                        }
-                                        ModeTransition::Action(action) => {
-                                            match action {
-                                                ModeAction::Quit => {
-                                                    app.running = false;
+                                    ModeTransition::To(new_mode) => {
+                                        app.mode = *new_mode;
+                                    }
+                                    ModeTransition::Action(action) => {
+                                        match action {
+                                            ModeAction::Quit => {
+                                                app.running = false;
+                                            }
+                                            ModeAction::OpenSessionBrowser => {
+                                                if let Ok(sessions) = session_manager.list_sessions() {
+                                                    app.open_session_browser(sessions);
                                                 }
-                                                ModeAction::OpenSessionBrowser => {
-                                                    if let Ok(sessions) = session_manager.list_sessions() {
-                                                        app.open_session_browser(sessions);
-                                                    }
-                                                }
-                                                ModeAction::SwitchSession(session_id) => {
-                                                    app.session_to_switch = Some(session_id);
-                                                    app.mode = Mode::Normal;
-                                                }
-                                                ModeAction::CreateSession(name) => {
-                                                    app.session_to_create = Some(name);
-                                                    app.mode = Mode::Normal;
-                                                }
-                                                ModeAction::DeleteSession(session_id) => {
-                                                    // Open confirm dialog before deleting
-                                                    app.mode = Mode::ConfirmDialog(ConfirmDialogState {
-                                                        action: PendingAction::DeleteSession(session_id.0.clone()),
-                                                    });
-                                                }
-                                                ModeAction::ToggleSessionPin(session_id) => {
-                                                    let _ = session_manager.toggle_pinned(&session_id);
-                                                    if let Ok(sessions) = session_manager.list_sessions() {
-                                                        app.refresh_session_list(sessions);
-                                                    }
+                                            }
+                                            ModeAction::SwitchSession(session_id) => {
+                                                app.session_to_switch = Some(session_id);
+                                                app.mode = Mode::Normal;
+                                            }
+                                            ModeAction::CreateSession(name) => {
+                                                app.session_to_create = Some(name);
+                                                app.mode = Mode::Normal;
+                                            }
+                                            ModeAction::DeleteSession(session_id) => {
+                                                // Open confirm dialog before deleting
+                                                app.mode = Mode::ConfirmDialog(ConfirmDialogState {
+                                                    action: PendingAction::DeleteSession(session_id.0.clone()),
+                                                });
+                                            }
+                                            ModeAction::ToggleSessionPin(session_id) => {
+                                                let _ = session_manager.toggle_pinned(&session_id);
+                                                if let Ok(sessions) = session_manager.list_sessions() {
+                                                    app.refresh_session_list(sessions);
                                                 }
                                             }
                                         }
@@ -605,32 +556,8 @@ fn run_app(
                                 }
                             }
                         }
-                        KeyEventKind::Release => {
-                            // Check if this is the release of the popup trigger key
-                            if let Mode::SelectionPopup(_) = &app.mode {
-                                if Some(key.code) == popup_trigger_key {
-                                    app.confirm_popup_selection();
-                                    popup_trigger_key = None;
-                                }
-                            }
-                        }
-                        KeyEventKind::Repeat => {
-                            // Handle repeats same as press for navigation
-                            if let Mode::SelectionPopup(_) = &app.mode {
-                                if Some(key.code) != popup_trigger_key {
-                                    // Use new dispatch for popup navigation
-                                    // Take mode out to avoid double mutable borrow
-                                    use crate::modes::ModeTransition;
-                                    let mut mode = std::mem::take(&mut app.mode);
-                                    let transition = mode.handle_key(app, key);
-                                    match transition {
-                                        ModeTransition::Normal => app.mode = Mode::Normal,
-                                        ModeTransition::To(new_mode) => app.mode = *new_mode,
-                                        ModeTransition::Stay | ModeTransition::Action(_) => app.mode = mode,
-                                    }
-                                }
-                            }
-                        }
+                        KeyEventKind::Release => {}
+                        KeyEventKind::Repeat => {}
                     }
                 }
                 Event::Mouse(mouse) => {

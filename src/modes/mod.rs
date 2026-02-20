@@ -8,6 +8,7 @@ mod help;
 mod keyboard_shape;
 mod label_input;
 mod layer_rename;
+mod leader;
 mod normal;
 mod path_input;
 mod popup;
@@ -177,6 +178,10 @@ pub struct HelpScreenState {
     pub scroll: usize,
 }
 
+/// Leader menu state - Helix-style space/colon menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LeaderMenuState;
+
 /// Session browser state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionBrowserState {
@@ -218,6 +223,7 @@ pub enum Mode {
     SelectionPopup(SelectionPopupState),
     ConfirmDialog(ConfirmDialogState),
     HelpScreen(HelpScreenState),
+    LeaderMenu(LeaderMenuState),
     SessionBrowser(SessionBrowserState),
     SessionCreate(SessionCreateState),
     KeyboardShapeCreate(KeyboardShapeState),
@@ -248,6 +254,7 @@ impl Mode {
             },
             Mode::ConfirmDialog(_) => "CONFIRM",
             Mode::HelpScreen(_) => "HELP",
+            Mode::LeaderMenu(_) => "SPACE",
             Mode::SessionBrowser(_) => "SESSIONS",
             Mode::SessionCreate(_) => "NEW SESSION",
             Mode::KeyboardShapeCreate(_) => "CREATE",
@@ -266,6 +273,7 @@ impl Mode {
             Mode::SelectionPopup(_) => Color::Magenta,
             Mode::ConfirmDialog(_) => Color::Red,
             Mode::HelpScreen(_) => Color::Cyan,
+            Mode::LeaderMenu(_) => Color::Cyan,
             Mode::SessionBrowser(_) => Color::Cyan,
             Mode::SessionCreate(_) => Color::Green,
             Mode::KeyboardShapeCreate(_) => Color::Yellow,
@@ -321,6 +329,7 @@ impl Mode {
             Mode::SelectionPopup(state) => state.handle_key(&mut ctx, key),
             Mode::ConfirmDialog(state) => state.handle_key(&mut ctx, key),
             Mode::HelpScreen(state) => state.handle_key(&mut ctx, key),
+            Mode::LeaderMenu(state) => state.handle_key(&mut ctx, key),
             Mode::SessionBrowser(state) => state.handle_key(&mut ctx, key),
             Mode::SessionCreate(state) => state.handle_key(&mut ctx, key),
             Mode::KeyboardShapeCreate(state) => state.handle_key(&mut ctx, key),
@@ -432,6 +441,11 @@ impl Mode {
     /// Create a confirm dialog mode.
     pub fn confirm_dialog(action: PendingAction) -> Self {
         Mode::ConfirmDialog(ConfirmDialogState { action })
+    }
+
+    /// Create a leader menu mode (Helix-style Space/:).
+    pub fn leader_menu() -> Self {
+        Mode::LeaderMenu(LeaderMenuState)
     }
 
     /// Create a help screen mode.
