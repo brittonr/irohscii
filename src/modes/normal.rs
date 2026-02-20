@@ -25,11 +25,8 @@ impl ModeHandler for NormalModeState {
         // Route based on key + modifiers
         match key.code {
             // =========================================================
-            // Exit/Cancel
+            // Exit/Cancel (quit via leader menu: Space/: → q)
             // =========================================================
-            KeyCode::Char('q') => {
-                return ModeTransition::Action(ModeAction::Quit);
-            }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 return ModeTransition::Action(ModeAction::Quit);
             }
@@ -457,13 +454,14 @@ mod tests {
     }
 
     #[test]
-    fn test_quit_returns_action() {
+    fn test_q_does_not_quit_directly() {
         let mut state = NormalModeState;
         let mut app = crate::app::App::new(80, 24);
         let mut ctx = super::ModeContext { app: &mut app };
 
+        // q should NOT quit directly - quit goes through leader menu (Space/: → q)
         let result = state.handle_key(&mut ctx, key(KeyCode::Char('q')));
-        assert!(matches!(result, ModeTransition::Action(ModeAction::Quit)));
+        assert!(matches!(result, ModeTransition::Stay));
     }
 
     #[test]

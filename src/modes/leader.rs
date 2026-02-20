@@ -123,6 +123,12 @@ impl ModeHandler for LeaderMenuState {
                 ModeTransition::Normal
             }
 
+            // Copy sync ticket to clipboard
+            KeyCode::Char('T') => {
+                ctx.app.copy_ticket_to_clipboard();
+                ModeTransition::Normal
+            }
+
             // Quit
             KeyCode::Char('q') => ModeTransition::Action(ModeAction::Quit),
 
@@ -143,7 +149,7 @@ impl ModeHandler for LeaderMenuState {
     }
 
     fn help_text(&self) -> &'static str {
-        "t:tool c:color b:brush s:save o:open e:export g:grid l:layers ?:help q:quit"
+        "t:tool c:color b:brush s:save o:open e:export g:grid l:layers T:ticket ?:help q:quit"
     }
 }
 
@@ -283,6 +289,16 @@ mod tests {
         let result = state.handle_key(&mut ctx, key(KeyCode::Char('p')));
         assert!(matches!(result, ModeTransition::Normal));
         assert_eq!(ctx.app.show_participants, !initial_participants);
+    }
+
+    #[test]
+    fn test_shift_t_copies_ticket() {
+        let mut state = LeaderMenuState;
+        let mut app = crate::app::App::new(80, 24);
+        let mut ctx = ModeContext { app: &mut app };
+
+        let result = state.handle_key(&mut ctx, key(KeyCode::Char('T')));
+        assert!(matches!(result, ModeTransition::Normal));
     }
 
     #[test]
