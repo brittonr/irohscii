@@ -1864,7 +1864,7 @@ pub fn help_sections() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)>
                 ("Space t", "RoundedRect (picker)"),
                 ("Space t", "Cylinder (picker)"),
                 ("Space t", "Cloud (picker)"),
-                ("Space t", "Star (picker)"),
+                ("s", "Star tool"),
             ],
         ),
         (

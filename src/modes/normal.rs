@@ -46,6 +46,9 @@ impl ModeHandler for NormalModeState {
             // =========================================================
             // Tool selection
             // =========================================================
+            KeyCode::Char('s') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                ctx.app.set_tool(Tool::Star);
+            }
             KeyCode::Char('f') => ctx.app.set_tool(Tool::Freehand),
             KeyCode::Char('t') if !key.modifiers.contains(KeyModifiers::ALT) => {
                 ctx.app.set_tool(Tool::Text);
