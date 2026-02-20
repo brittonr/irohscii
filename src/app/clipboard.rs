@@ -11,7 +11,29 @@ impl App {
             use std::io::Write;
             use std::process::{Command, Stdio};
 
-            // Try wl-copy (Wayland) first - spawn and forget
+            // macOS: use pbcopy
+            if cfg!(target_os = "macos") {
+                if let Ok(mut child) = Command::new("pbcopy")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    && let Some(mut stdin) = child.stdin.take()
+                {
+                    let ticket_clone = ticket.clone();
+                    std::thread::spawn(move || {
+                        let _ = stdin.write_all(ticket_clone.as_bytes());
+                        drop(stdin);
+                        let _ = child.wait();
+                    });
+                    self.set_status(format!("Copied: {}", ticket));
+                    return;
+                }
+                self.set_status("pbcopy not available");
+                return;
+            }
+
+            // Linux: try wl-copy (Wayland) first - spawn and forget
             if let Ok(mut child) = Command::new("wl-copy")
                 .arg(ticket)
                 .stdin(Stdio::null())
