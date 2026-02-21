@@ -326,6 +326,10 @@ fn chrono_lite_format(unix_secs: u64) -> String {
 /// Presence broadcast interval (50ms = 20 Hz)
 const PRESENCE_BROADCAST_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Sync debounce interval — coalesce rapid edits into a single sync push.
+/// 50ms is fast enough to feel real-time while avoiding per-keystroke overhead.
+const SYNC_DEBOUNCE: Duration = Duration::from_millis(50);
+
 fn run_app(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     app: &mut App,
@@ -334,8 +338,22 @@ fn run_app(
 ) -> Result<()> {
     let mut last_presence_broadcast = Instant::now();
     let mut last_stale_prune = Instant::now();
+    let mut sync_pending = false;
+    let mut last_sync_sent = Instant::now();
     // Track which key triggered the current popup (for release-to-confirm)
     while app.running {
+        // Flush pending sync if debounce window elapsed
+        if sync_pending && last_sync_sent.elapsed() >= SYNC_DEBOUNCE {
+            if let Some(handle) = sync_handle {
+                let doc = app.clone_automerge();
+                let _ = handle.send_command(sync::SyncCommand::SyncDoc {
+                    doc: Box::new(doc),
+                });
+            }
+            sync_pending = false;
+            last_sync_sent = Instant::now();
+        }
+
         terminal.draw(|frame| ui::render(frame, &mut *app))?;
 
         // Prune stale peers every second
@@ -437,13 +455,10 @@ fn run_app(
                                 }
                             }
 
-                            // After any change in Normal mode, sync if enabled and autosave
+                            // After any change in Normal mode, mark sync pending and autosave
                             if matches!(app.mode, Mode::Normal) {
-                                if let Some(handle) = sync_handle {
-                                    let doc = app.clone_automerge();
-                                    let _ = handle.send_command(sync::SyncCommand::SyncDoc {
-                                        doc: Box::new(doc),
-                                    });
+                                if sync_handle.is_some() {
+                                    sync_pending = true;
                                 }
                                 // Autosave to session
                                 if let (Some(session_id), Some(meta)) =
@@ -662,13 +677,10 @@ fn run_app(
                             Tool::Star => tools::handle_star_event(app, mouse),
                         }
 
-                        // After mouse events, sync if enabled and dirty, then autosave
+                        // After mouse events, mark sync pending if dirty, then autosave
                         if app.is_dirty() {
-                            if let Some(handle) = sync_handle {
-                                let doc = app.clone_automerge();
-                                let _ = handle.send_command(sync::SyncCommand::SyncDoc {
-                                    doc: Box::new(doc),
-                                });
+                            if sync_handle.is_some() {
+                                sync_pending = true;
                             }
                             // Autosave after changes
                             app.autosave();

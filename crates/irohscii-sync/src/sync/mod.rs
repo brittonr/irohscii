@@ -109,8 +109,8 @@ pub enum SyncCommand {
 
 /// Handle for communicating with the sync thread from the main thread
 pub struct SyncHandle {
-    /// Channel to send commands to sync thread
-    pub command_tx: std_mpsc::Sender<SyncCommand>,
+    /// Channel to send commands to sync thread (tokio mpsc for zero-latency async recv)
+    pub command_tx: tokio_mpsc::Sender<SyncCommand>,
     /// Channel to receive events from sync thread
     pub event_rx: std_mpsc::Receiver<SyncEvent>,
     /// Our session endpoint ID (for others to join)
@@ -125,17 +125,18 @@ impl SyncHandle {
         self.event_rx.try_recv().ok()
     }
 
-    /// Send a command to the sync thread
+    /// Send a command to the sync thread (non-blocking, drops if channel full)
     pub fn send_command(&self, cmd: SyncCommand) -> Result<()> {
-        self.command_tx.send(cmd)?;
-        Ok(())
+        self.command_tx
+            .try_send(cmd)
+            .map_err(|e| anyhow::anyhow!("Failed to send sync command: {}", e))
     }
 }
 
 /// Start the sync thread with the given configuration
 pub fn start_sync_thread(config: SyncConfig) -> Result<SyncHandle> {
     let (event_tx, event_rx) = std_mpsc::channel();
-    let (command_tx, command_rx) = std_mpsc::channel();
+    let (command_tx, command_rx) = tokio_mpsc::channel(64);
 
     // Channel to get the endpoint ID back from the async context
     let (endpoint_id_tx, endpoint_id_rx) = std_mpsc::channel();
@@ -241,7 +242,7 @@ async fn do_sync(
 async fn run_sync(
     config: SyncConfig,
     event_tx: std_mpsc::Sender<SyncEvent>,
-    command_rx: std_mpsc::Receiver<SyncCommand>,
+    mut command_rx: tokio_mpsc::Receiver<SyncCommand>,
     endpoint_id_tx: std_mpsc::Sender<String>,
 ) -> Result<()> {
     // Create iroh endpoint, optionally with n0 discovery (DNS + Pkarr)
@@ -381,9 +382,14 @@ async fn run_sync(
                 None
             };
 
-            // Periodic sync timer (every 200ms) to pull remote changes from peers
-            let mut sync_interval = tokio::time::interval(Duration::from_millis(200));
+            // Periodic peer sync (every 1s) to pull remote changes from the host.
+            // The joiner pushes immediately on SyncDoc commands, but the host has no
+            // outgoing connection, so the joiner must periodically poll to discover
+            // host-side changes. Skipped when a SyncDoc push happened recently to
+            // avoid redundant round-trips during active editing.
+            let mut sync_interval = tokio::time::interval(Duration::from_secs(1));
             sync_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut last_explicit_sync = tokio::time::Instant::now();
 
             // Cluster sync timer (every 2s) — less frequent since it's for persistence
             let mut cluster_interval = tokio::time::interval(Duration::from_secs(2));
@@ -421,9 +427,12 @@ async fn run_sync(
                             PresenceMessage::RequestAll => {}
                         }
                     }
-                    // Periodic sync with peer (reuses persistent connection)
+                    // Periodic sync with peer — pull remote changes (skipped if recent push)
                     _ = sync_interval.tick() => {
-                        if !shutting_down.load(Ordering::Relaxed) && let Some(ref conn) = sync_conn {
+                        if !shutting_down.load(Ordering::Relaxed)
+                            && last_explicit_sync.elapsed() >= Duration::from_millis(500)
+                            && let Some(ref conn) = sync_conn
+                        {
                             let store_clone = store.clone();
                             let doc_id_clone = doc_id.clone();
                             let conn_clone = conn.clone();
@@ -450,10 +459,10 @@ async fn run_sync(
                             });
                         }
                     }
-                    // Commands from main thread
-                    _ = tokio::time::sleep(Duration::from_millis(50)) => {
-                        match command_rx.try_recv() {
-                            Ok(SyncCommand::SyncDoc { doc }) => {
+                    // Commands from main thread (immediate, no polling delay)
+                    cmd = command_rx.recv() => {
+                        match cmd {
+                            Some(SyncCommand::SyncDoc { doc }) => {
                                 // Update the local store (no notification to avoid feedback loop)
                                 let bytes = doc.save();
                                 if let Err(e) = store.update_from_app(&doc_id, &bytes).await {
@@ -461,6 +470,9 @@ async fn run_sync(
                                         format!("Failed to update store: {}", e),
                                     ));
                                 }
+
+                                // Record that we just synced (suppresses redundant periodic pull)
+                                last_explicit_sync = tokio::time::Instant::now();
 
                                 // Push changes to peer via the persistent connection
                                 if let Some(ref conn) = sync_conn {
@@ -483,10 +495,10 @@ async fn run_sync(
                                     });
                                 }
                             }
-                            Ok(SyncCommand::BroadcastPresence(presence)) => {
+                            Some(SyncCommand::BroadcastPresence(presence)) => {
                                 presence_protocol.broadcast(presence);
                             }
-                            Ok(SyncCommand::ConnectCluster { ticket, capability }) => {
+                            Some(SyncCommand::ConnectCluster { ticket, capability }) => {
                                 match decode_cluster_ticket(&ticket) {
                                     Ok((addr, ticket_cap)) => {
                                         match endpoint.connect(addr, AUTOMERGE_SYNC_ALPN).await {
@@ -511,7 +523,7 @@ async fn run_sync(
                                     }
                                 }
                             }
-                            Ok(SyncCommand::ConnectPeer { ticket }) => {
+                            Some(SyncCommand::ConnectPeer { ticket }) => {
                                 match decode_ticket(&ticket) {
                                     Ok(addr) => {
                                         // Close old presence connection if exists
@@ -556,28 +568,14 @@ async fn run_sync(
                                     }
                                 }
                             }
-                            Ok(SyncCommand::Shutdown) => {
-                                // Signal all spawned tasks to stop
+                            Some(SyncCommand::Shutdown) | None => {
+                                // Shutdown command or channel closed (main thread dropped sender)
                                 shutting_down.store(true, Ordering::Relaxed);
                                 presence_protocol.broadcast_leave();
                                 if let Some(h) = &presence_handle {
                                     h.abort();
                                 }
                                 // Close connections gracefully
-                                if let Some(ref conn) = sync_conn {
-                                    conn.close(0u32.into(), b"shutdown");
-                                }
-                                if let Some(ref conn) = cluster_conn {
-                                    conn.close(0u32.into(), b"shutdown");
-                                }
-                                break;
-                            }
-                            Err(std_mpsc::TryRecvError::Empty) => {}
-                            Err(std_mpsc::TryRecvError::Disconnected) => {
-                                shutting_down.store(true, Ordering::Relaxed);
-                                if let Some(h) = &presence_handle {
-                                    h.abort();
-                                }
                                 if let Some(ref conn) = sync_conn {
                                     conn.close(0u32.into(), b"shutdown");
                                 }
@@ -593,8 +591,9 @@ async fn run_sync(
         }
         SyncMode::Disabled => {
             loop {
-                if let Ok(SyncCommand::Shutdown) = command_rx.recv() {
-                    break;
+                match command_rx.recv().await {
+                    Some(SyncCommand::Shutdown) | None => break,
+                    _ => {}
                 }
             }
         }
