@@ -7,6 +7,7 @@ use super::{LabelInputState, ModeContext, ModeHandler, ModeTransition};
 
 impl ModeHandler for LabelInputState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
+        debug_assert!(self.cursor as usize <= self.text.len(), "Cursor must be within text bounds");
         match key.code {
             KeyCode::Esc | KeyCode::Enter => {
                 ctx.app.commit_label();

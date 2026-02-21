@@ -10,6 +10,7 @@ use super::{ModeContext, ModeHandler, ModeTransition, QrCodeDisplayState};
 
 impl ModeHandler for QrCodeDisplayState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
+        debug_assert!(!self.ticket.is_empty(), "Ticket should not be empty");
         match key.code {
             // Copy ticket to clipboard, then dismiss
             KeyCode::Char('y') => {

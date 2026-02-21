@@ -19,7 +19,7 @@ use irohscii_core::Document;
 pub struct PeerId(pub [u8; 32]);
 
 /// Maximum number of recent sessions to track in the registry
-const MAX_RECENT_SESSIONS: usize = 50;
+pub(crate) const MAX_RECENT_SESSIONS: u32 = 50;
 
 /// Session identifier - a URL-safe slug derived from the session name
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -50,6 +50,12 @@ impl SessionId {
         } else {
             slug
         };
+
+        debug_assert!(!slug.is_empty(), "SessionId slug must not be empty");
+        debug_assert!(
+            slug.chars().all(|c| c.is_alphanumeric() || c == '-'),
+            "SessionId slug must contain only alphanumeric characters and hyphens"
+        );
 
         Self(slug)
     }
@@ -99,12 +105,14 @@ pub struct SessionMeta {
 impl SessionMeta {
     /// Create new session metadata
     pub fn new(name: &str) -> Self {
+        debug_assert!(!name.is_empty(), "Session name must not be empty");
+        
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
-        Self {
+        let meta = Self {
             id: SessionId::from_name(name),
             name: name.to_string(),
             description: None,
@@ -114,19 +122,31 @@ impl SessionMeta {
             collaborators: Vec::new(),
             tags: Vec::new(),
             pinned: false,
-        }
+        };
+
+        debug_assert_eq!(meta.created_at, meta.last_accessed, "New session should have matching created_at and last_accessed");
+        debug_assert!(!meta.pinned, "New session should not be pinned");
+
+        meta
     }
 
     /// Update last accessed timestamp
     pub fn touch(&mut self) {
+        let old_accessed = self.last_accessed;
         self.last_accessed = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+        debug_assert!(
+            self.last_accessed >= old_accessed,
+            "last_accessed should not go backwards (clock skew detected)"
+        );
     }
 
     /// Set the sync ticket
     pub fn set_ticket(&mut self, ticket: &str) {
+        debug_assert!(!ticket.is_empty(), "Ticket value must not be empty");
+        
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
@@ -136,17 +156,21 @@ impl SessionMeta {
             value: ticket.to_string(),
             generated_at: now,
         });
+
+        debug_assert!(self.ticket.is_some(), "Ticket should be set after set_ticket");
     }
 
     /// Add or update a collaborator
     #[allow(dead_code)]
     pub fn add_collaborator(&mut self, peer_id: PeerId, display_name: Option<String>) {
+        let prev_count = self.collaborators.len();
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
         let peer_id_str = format!("{:?}", peer_id);
+        debug_assert!(!peer_id_str.is_empty(), "Peer ID string should not be empty");
 
         // Update existing or add new
         if let Some(collab) = self
@@ -158,12 +182,20 @@ impl SessionMeta {
             if display_name.is_some() {
                 collab.display_name = display_name;
             }
+            debug_assert_eq!(
+                self.collaborators.len(), prev_count,
+                "Updating existing collaborator should not change count"
+            );
         } else {
             self.collaborators.push(Collaborator {
                 peer_id: peer_id_str,
                 display_name,
                 last_seen: now,
             });
+            debug_assert_eq!(
+                self.collaborators.len(), prev_count + 1,
+                "Adding new collaborator should increment count by 1"
+            );
         }
     }
 }
@@ -182,16 +214,36 @@ impl SessionRegistry {
     pub fn mark_accessed(&mut self, id: &SessionId) {
         self.recent.retain(|s| s != id);
         self.recent.insert(0, id.clone());
-        self.recent.truncate(MAX_RECENT_SESSIONS);
+        self.recent.truncate(MAX_RECENT_SESSIONS as usize);
         self.last_active = Some(id.clone());
+        debug_assert!(
+            self.recent.len() <= MAX_RECENT_SESSIONS as usize,
+            "Recent list should not exceed MAX_RECENT_SESSIONS"
+        );
     }
 
     /// Remove a session from the registry
     pub fn remove(&mut self, id: &SessionId) {
+        let prev_len = self.recent.len();
         self.recent.retain(|s| s != id);
+        
+        debug_assert!(
+            self.recent.len() <= prev_len,
+            "Remove operation should not increase size"
+        );
+        debug_assert!(
+            !self.recent.contains(id),
+            "Session should be removed from recent list"
+        );
+        
         if self.last_active.as_ref() == Some(id) {
             self.last_active = self.recent.first().cloned();
         }
+        
+        debug_assert!(
+            self.last_active.as_ref() != Some(id),
+            "Removed session should not be last_active"
+        );
     }
 }
 
@@ -329,8 +381,9 @@ impl SessionManager {
         let mut meta = SessionMeta::new(trimmed);
 
         // Ensure unique ID by appending timestamp if needed
-        let mut attempts = 0;
-        while self.session_dir(&meta.id).exists() && attempts < 100 {
+        let mut attempts: u32 = 0;
+        const MAX_ATTEMPTS: u32 = 100;
+        while self.session_dir(&meta.id).exists() && attempts < MAX_ATTEMPTS {
             let now = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -338,6 +391,11 @@ impl SessionManager {
             meta.id = SessionId(format!("{}-{}", meta.id.0, now % 10000));
             attempts += 1;
         }
+
+        debug_assert!(
+            attempts < MAX_ATTEMPTS,
+            "Should find unique session ID within MAX_ATTEMPTS"
+        );
 
         if self.session_dir(&meta.id).exists() {
             return Err(anyhow!("Could not create unique session ID"));
@@ -347,17 +405,37 @@ impl SessionManager {
         let dir = self.session_dir(&meta.id);
         fs::create_dir_all(&dir)?;
 
+        debug_assert!(
+            dir.exists(),
+            "Session directory should exist after creation"
+        );
+
         // Create empty document
         let mut doc = Document::new();
         let doc_path = self.doc_path(&meta.id);
         doc.save_to(&doc_path)?;
 
+        debug_assert!(
+            doc_path.exists(),
+            "Document file should exist after saving"
+        );
+
         // Save metadata
         self.save_meta(&meta)?;
+
+        debug_assert!(
+            self.meta_path(&meta.id).exists(),
+            "Metadata file should exist after saving"
+        );
 
         // Update registry
         self.registry.mark_accessed(&meta.id);
         self.save_registry()?;
+
+        debug_assert_eq!(
+            self.registry.last_active.as_ref(), Some(&meta.id),
+            "Last active should be set to new session"
+        );
 
         Ok(meta)
     }
@@ -370,18 +448,39 @@ impl SessionManager {
             return Err(anyhow!("Session document not found: {}", id));
         }
 
+        debug_assert!(
+            self.session_dir(id).exists(),
+            "Session directory should exist if document exists"
+        );
+
         // Load document
         let mut doc = Document::load(&doc_path)?;
-        doc.set_storage_path(doc_path);
+        doc.set_storage_path(doc_path.clone());
+
+        debug_assert!(
+            doc.storage_path().is_some(),
+            "Document should have storage path set after open"
+        );
 
         // Load and update metadata
         let mut meta = self.load_meta(id)?;
+        let old_accessed = meta.last_accessed;
         meta.touch();
         self.save_meta(&meta)?;
+
+        debug_assert!(
+            meta.last_accessed >= old_accessed,
+            "Touching should not make last_accessed go backwards"
+        );
 
         // Update registry
         self.registry.mark_accessed(id);
         self.save_registry()?;
+
+        debug_assert_eq!(
+            self.registry.last_active.as_ref(), Some(id),
+            "Last active should be set to opened session"
+        );
 
         Ok((doc, meta))
     }
@@ -416,8 +515,18 @@ impl SessionManager {
             fs::remove_dir_all(&dir).context("Failed to delete session directory")?;
         }
 
+        debug_assert!(
+            !dir.exists(),
+            "Session directory should not exist after deletion"
+        );
+
         self.registry.remove(id);
         self.save_registry()?;
+
+        debug_assert!(
+            self.registry.last_active.as_ref() != Some(id),
+            "Deleted session should not be last_active"
+        );
 
         Ok(())
     }
@@ -425,8 +534,15 @@ impl SessionManager {
     /// Toggle pinned status
     pub fn toggle_pinned(&mut self, id: &SessionId) -> Result<bool> {
         let mut meta = self.load_meta(id)?;
+        let old_pinned = meta.pinned;
         meta.pinned = !meta.pinned;
         self.save_meta(&meta)?;
+        
+        debug_assert_ne!(
+            meta.pinned, old_pinned,
+            "Toggle should change pinned status"
+        );
+        
         Ok(meta.pinned)
     }
 
@@ -527,22 +643,36 @@ fn fuzzy_score(text: &str, query_chars: &[char]) -> Option<i32> {
     let mut last_match_idx: Option<usize> = None;
 
     for (i, &c) in text_chars.iter().enumerate() {
-        if query_idx < query_chars.len() && c == query_chars[query_idx] {
+        let query_matches = query_idx < query_chars.len();
+        if !query_matches {
+            continue;
+        }
+        let char_matches = c == query_chars[query_idx];
+        if char_matches {
             // Bonus for consecutive matches
-            if let Some(last) = last_match_idx && i == last + 1 {
-                score += 10;
+            if let Some(last) = last_match_idx {
+                debug_assert!(i > last, "Match index should be monotonically increasing");
+                if i == last + 1 {
+                    score += 10;
+                }
             }
             // Bonus for matching at word boundaries
-            if i == 0 || !text_chars[i - 1].is_alphanumeric() {
+            let at_start = i == 0;
+            let after_boundary = i > 0 && !text_chars[i - 1].is_alphanumeric();
+            if at_start || after_boundary {
                 score += 5;
             }
             score += 1;
             last_match_idx = Some(i);
             query_idx += 1;
+            
+            debug_assert!(query_idx <= query_chars.len(), "query_idx should not exceed query length");
         }
     }
 
-    if query_idx == query_chars.len() {
+    let all_matched = query_idx == query_chars.len();
+    if all_matched {
+        debug_assert!(score > 0, "Successful match should have positive score");
         Some(score)
     } else {
         None

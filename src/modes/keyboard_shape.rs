@@ -6,8 +6,12 @@ use ratatui::style::Color;
 use super::{KeyboardShapeState, ModeContext, ModeHandler, ModeTransition};
 use crate::app::KeyboardShapeField;
 
+const MAX_DIMENSION_CHARS: usize = 5;
+const _: () = assert!(MAX_DIMENSION_CHARS >= 5, "Must support at least 5 chars for dimensions");
+
 impl ModeHandler for KeyboardShapeState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
+        debug_assert!(self.width.len() <= 5 && self.height.len() <= 5);
         match key.code {
             KeyCode::Esc => {
                 ctx.app.cancel_keyboard_shape();
@@ -33,14 +37,18 @@ impl ModeHandler for KeyboardShapeState {
                 field.pop();
                 ModeTransition::Stay
             }
-            KeyCode::Char(c) if c.is_ascii_digit() || c == '-' => {
-                let field = match self.focus {
-                    KeyboardShapeField::Width => &mut self.width,
-                    KeyboardShapeField::Height => &mut self.height,
-                };
-                // Limit to reasonable length
-                if field.len() < 5 {
-                    field.push(c);
+            KeyCode::Char(c) => {
+                let is_digit = c.is_ascii_digit();
+                let is_minus = c == '-';
+                if is_digit || is_minus {
+                    let field = match self.focus {
+                        KeyboardShapeField::Width => &mut self.width,
+                        KeyboardShapeField::Height => &mut self.height,
+                    };
+                    // Limit to reasonable length
+                    if field.len() < MAX_DIMENSION_CHARS {
+                        field.push(c);
+                    }
                 }
                 ModeTransition::Stay
             }

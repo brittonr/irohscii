@@ -23,8 +23,18 @@ use crate::layers::LayerId;
 use crate::presence::{CursorActivity, PeerPresence, ToolKind, peer_color};
 use crate::shapes::ShapeKind;
 
+// Compile-time assertions for UI constants
+const _: () = assert!(GRID_SIZE > 0, "GRID_SIZE must be positive");
+const _: () = assert!(MIN_CANVAS_WIDTH > 0, "MIN_CANVAS_WIDTH must be positive");
+const MIN_CANVAS_WIDTH: u16 = 20;
+const LAYER_PANEL_WIDTH: u16 = 18;
+const PARTICIPANT_PANEL_WIDTH: u16 = 24;
+
 /// Render the entire UI
 pub fn render(frame: &mut Frame, app: &mut App) {
+    debug_assert!(frame.area().width > 0, "Frame width must be positive");
+    debug_assert!(frame.area().height > 0, "Frame height must be positive");
+    
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -34,84 +44,91 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ])
         .split(frame.area());
 
-    // Determine which panels to show
-    let show_participants = app.show_participants && app.presence.is_some();
-    let show_layers = app.show_layers;
-
-    // Split top area horizontally if any panel is shown
-    let canvas_area = if show_layers || show_participants {
-        // Calculate panel widths
-        let mut constraints = vec![Constraint::Min(20)]; // Canvas (at least 20 chars)
-
-        if show_layers {
-            constraints.push(Constraint::Length(18)); // Layer panel
-        }
-        if show_participants {
-            constraints.push(Constraint::Length(24)); // Participant panel
-        }
-
-        let horizontal = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(constraints)
-            .split(chunks[0]);
-
-        let mut panel_idx = 1;
-
-        // Render layer panel (first panel if shown)
-        if show_layers {
-            let layer_area = horizontal[panel_idx];
-            app.layer_panel_area = Some(layer_area);
-            render_layer_panel(frame, app, layer_area);
-            panel_idx += 1;
-        } else {
-            app.layer_panel_area = None;
-        }
-
-        // Render participants panel (second panel if shown)
-        if show_participants {
-            render_participants_panel(frame, app, horizontal[panel_idx]);
-        }
-
-        horizontal[0]
-    } else {
-        app.layer_panel_area = None;
-        chunks[0]
-    };
-
+    let canvas_area = render_main_area_with_panels(frame, app, chunks[0]);
+    
     render_canvas(frame, app, canvas_area);
     render_active_layer_indicator(frame, app, canvas_area);
     render_status_bar(frame, app, chunks[1]);
     render_help_bar(frame, app, chunks[2]);
 
-    // Render input overlay if in input mode
+    render_mode_overlays(frame, app, canvas_area);
+}
+
+/// Render main area with optional side panels
+fn render_main_area_with_panels(frame: &mut Frame, app: &mut App, area: Rect) -> Rect {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
+    let show_participants = app.show_participants && app.presence.is_some();
+    let show_layers = app.show_layers;
+
+    if !show_layers && !show_participants {
+        app.layer_panel_area = None;
+        return area;
+    }
+
+    let mut constraints = vec![Constraint::Min(MIN_CANVAS_WIDTH)];
+    if show_layers {
+        constraints.push(Constraint::Length(LAYER_PANEL_WIDTH));
+    }
+    if show_participants {
+        constraints.push(Constraint::Length(PARTICIPANT_PANEL_WIDTH));
+    }
+
+    let horizontal = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(constraints)
+        .split(area);
+
+    let mut panel_idx = 1;
+
+    if show_layers {
+        let layer_area = horizontal[panel_idx];
+        app.layer_panel_area = Some(layer_area);
+        render_layer_panel(frame, app, layer_area);
+        panel_idx += 1;
+    } else {
+        app.layer_panel_area = None;
+    }
+
+    if show_participants {
+        render_participants_panel(frame, app, horizontal[panel_idx]);
+    }
+
+    horizontal[0]
+}
+
+/// Render mode-specific overlays
+fn render_mode_overlays(frame: &mut Frame, app: &App, canvas_area: Rect) {
+    debug_assert!(canvas_area.width > 0 && canvas_area.height > 0);
+    
     match &app.mode {
         Mode::TextInput(state) => {
             render_text_cursor(frame, app, &state.start_pos, &state.text, canvas_area);
         }
         Mode::LabelInput(state) => {
-            render_label_input(frame, app, state.shape_id, &state.text, state.cursor, canvas_area);
+            render_label_input(frame, app, state.shape_id, &state.text, state.cursor as usize, canvas_area);
         }
         Mode::PathInput(state) => {
             let prompt = state.kind.prompt();
             render_file_input(frame, prompt, &state.path, canvas_area);
         }
         Mode::RecentFiles(state) => {
-            render_recent_files_menu(frame, app, state.selected, canvas_area);
+            render_recent_files_menu(frame, app, state.selected as usize, canvas_area);
         }
         Mode::SelectionPopup(state) => {
-            render_selection_popup(frame, state.kind, state.selected, canvas_area);
+            render_selection_popup(frame, state.kind, state.selected as usize, canvas_area);
         }
         Mode::ConfirmDialog(state) => {
             render_confirm_dialog(frame, &state.action, canvas_area);
         }
         Mode::HelpScreen(state) => {
-            render_help_screen(frame, state.scroll, frame.area());
+            render_help_screen(frame, state.scroll as usize, frame.area());
         }
         Mode::SessionBrowser(state) => {
             render_session_browser(
                 frame,
                 app,
-                state.selected,
+                state.selected as usize,
                 &state.filter,
                 state.show_pinned_only,
                 canvas_area,
@@ -136,12 +153,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
 /// Render the canvas area
 fn render_canvas(frame: &mut Frame, app: &App, area: Rect) {
+    debug_assert!(area.width > 0 && area.height > 0);
     let canvas_widget = CanvasWidget { app };
     frame.render_widget(canvas_widget, area);
 }
 
 /// Render active layer indicator in the top-right of the canvas
 fn render_active_layer_indicator(frame: &mut Frame, app: &App, area: Rect) {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
     // Only show when not in layer panel view (would be redundant)
     if app.show_layers {
         return;
@@ -201,6 +221,7 @@ struct CanvasWidget<'a> {
 
 impl CanvasWidget<'_> {
     fn render_char(&self, buf: &mut Buffer, area: Rect, pos: Position, ch: char, style: Style) {
+        debug_assert!(area.width > 0 && area.height > 0);
         if let Some((sx, sy)) = self.app.viewport.canvas_to_screen(pos) {
             let x = area.x + sx;
             let y = area.y + sy;
@@ -212,6 +233,7 @@ impl CanvasWidget<'_> {
 
     /// Render a text string at a canvas position
     fn render_text(&self, buf: &mut Buffer, area: Rect, pos: Position, text: &str, style: Style) {
+        debug_assert!(area.width > 0 && area.height > 0);
         for (i, ch) in text.chars().enumerate() {
             let char_pos = Position::new(pos.x + i as i32, pos.y);
             self.render_char(buf, area, char_pos, ch, style);
@@ -227,6 +249,10 @@ impl CanvasWidget<'_> {
         max_pos: Position,
         style: Style,
     ) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        debug_assert!(min_pos.x <= max_pos.x);
+        debug_assert!(min_pos.y <= max_pos.y);
+        
         let min_x = min_pos.x;
         let min_y = min_pos.y;
         let max_x = max_pos.x;
@@ -268,6 +294,8 @@ impl CanvasWidget<'_> {
     }
 
     fn render_grid(&self, buf: &mut Buffer, area: Rect) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
         if !self.app.grid_enabled {
             return;
         }
@@ -292,6 +320,8 @@ impl CanvasWidget<'_> {
     }
 
     fn render_snap_guides(&self, buf: &mut Buffer, area: Rect) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
         let guide_style = Style::default().fg(Color::Magenta);
 
         for guide in &self.app.shape_snap_guides {
@@ -340,7 +370,12 @@ impl CanvasWidget<'_> {
         text: &str,
         style: Style,
     ) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
         let (min_x, min_y, max_x, max_y) = bounds;
+        debug_assert!(min_x <= max_x);
+        debug_assert!(min_y <= max_y);
+        
         // Center the text horizontally and vertically within the shape
         let center_y = (min_y + max_y) / 2;
         let shape_width = (max_x - min_x + 1) as usize;
@@ -369,6 +404,8 @@ impl CanvasWidget<'_> {
 
 impl Widget for CanvasWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
         let selected_style = Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD);
@@ -379,217 +416,260 @@ impl Widget for CanvasWidget<'_> {
             .fg(Color::Green)
             .add_modifier(Modifier::BOLD);
 
-        // Render grid dots (background layer)
+        // Render background layers
         self.render_grid(buf, area);
-
-        // Render snap guide lines
         self.render_snap_guides(buf, area);
 
         // Render all shapes
+        self.render_all_shapes(buf, area, selected_style);
+
+        // Render preview layers
+        self.render_freehand_preview(buf, area, freehand_preview_style);
+        self.render_snap_points(buf, area);
+        self.render_shape_preview(buf, area, preview_style);
+        self.render_active_snap_indicator(buf, area);
+        self.render_marquee_selection(buf, area);
+        self.render_selection_boxes(buf, area, selected_style);
+
+        // Render remote cursors (on top of everything)
+        if let Some(ref presence_mgr) = self.app.presence {
+            for peer in presence_mgr.active_peers() {
+                self.render_remote_cursor(buf, area, peer);
+            }
+        }
+    }
+}
+
+impl CanvasWidget<'_> {
+    /// Render all visible shapes
+    fn render_all_shapes(&self, buf: &mut Buffer, area: Rect, selected_style: Style) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
         for shape in self.app.shape_view.iter_visible() {
             let is_selected = self.app.selected.contains(&shape.id);
-            // Use shape's color, but override with cyan when selected
             let style = if is_selected {
                 selected_style
             } else {
                 Style::default().fg(shape.kind.color().to_ratatui())
             };
 
-            match &shape.kind {
-                ShapeKind::Line {
-                    start,
-                    end,
-                    style: line_style,
-                    label,
-                    ..
-                } => {
-                    for (pos, ch) in line_points_styled(*start, *end, *line_style) {
-                        self.render_char(buf, area, pos, ch, style);
-                    }
-                    if let Some(text) = label {
-                        self.render_label(buf, area, shape.bounds(), text, style);
-                    }
+            self.render_shape(buf, area, &shape.kind, style);
+        }
+    }
+
+    /// Render a single shape
+    fn render_shape(&self, buf: &mut Buffer, area: Rect, kind: &ShapeKind, style: Style) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
+        match kind {
+            ShapeKind::Line {
+                start,
+                end,
+                style: line_style,
+                label,
+                ..
+            } => {
+                for (pos, ch) in line_points_styled(*start, *end, *line_style) {
+                    self.render_char(buf, area, pos, ch, style);
                 }
-                ShapeKind::Arrow {
-                    start,
-                    end,
-                    style: line_style,
-                    label,
-                    ..
-                } => {
-                    for (pos, ch) in arrow_points_styled(*start, *end, *line_style) {
-                        self.render_char(buf, area, pos, ch, style);
-                    }
-                    if let Some(text) = label {
-                        self.render_label(buf, area, shape.bounds(), text, style);
-                    }
+                if let Some(text) = label {
+                    self.render_label_on_shape(buf, area, kind, text, style);
                 }
-                ShapeKind::Rectangle {
-                    start, end, label, ..
-                } => {
-                    for (pos, ch) in rect_points(*start, *end) {
-                        self.render_char(buf, area, pos, ch, style);
-                    }
-                    if let Some(text) = label {
-                        self.render_label(buf, area, shape.bounds(), text, style);
-                    }
+            }
+            ShapeKind::Arrow {
+                start,
+                end,
+                style: line_style,
+                label,
+                ..
+            } => {
+                for (pos, ch) in arrow_points_styled(*start, *end, *line_style) {
+                    self.render_char(buf, area, pos, ch, style);
                 }
-                ShapeKind::DoubleBox {
-                    start, end, label, ..
-                } => {
-                    for (pos, ch) in double_rect_points(*start, *end) {
-                        self.render_char(buf, area, pos, ch, style);
-                    }
-                    if let Some(text) = label {
-                        self.render_label(buf, area, shape.bounds(), text, style);
-                    }
+                if let Some(text) = label {
+                    self.render_label_on_shape(buf, area, kind, text, style);
                 }
-                ShapeKind::Diamond {
-                    center,
-                    half_width,
-                    half_height,
-                    label,
-                    ..
-                } => {
-                    for (pos, ch) in diamond_points(*center, *half_width, *half_height) {
-                        self.render_char(buf, area, pos, ch, style);
-                    }
-                    if let Some(text) = label {
-                        self.render_label(buf, area, shape.bounds(), text, style);
-                    }
+            }
+            ShapeKind::Rectangle {
+                start, end, label, ..
+            } => {
+                for (pos, ch) in rect_points(*start, *end) {
+                    self.render_char(buf, area, pos, ch, style);
                 }
-                ShapeKind::Ellipse {
-                    center,
-                    radius_x,
-                    radius_y,
-                    label,
-                    ..
-                } => {
-                    for (pos, ch) in ellipse_points(*center, *radius_x, *radius_y) {
-                        self.render_char(buf, area, pos, ch, style);
-                    }
-                    if let Some(text) = label {
-                        self.render_label(buf, area, shape.bounds(), text, style);
-                    }
+                if let Some(text) = label {
+                    self.render_label_on_shape(buf, area, kind, text, style);
                 }
-                ShapeKind::Freehand {
-                    points,
-                    char,
-                    label,
-                    ..
-                } => {
-                    for &pos in points {
-                        self.render_char(buf, area, pos, *char, style);
-                    }
-                    if let Some(text) = label {
-                        self.render_label(buf, area, shape.bounds(), text, style);
-                    }
+            }
+            ShapeKind::DoubleBox {
+                start, end, label, ..
+            } => {
+                for (pos, ch) in double_rect_points(*start, *end) {
+                    self.render_char(buf, area, pos, ch, style);
                 }
-                ShapeKind::Text { pos, content, .. } => {
-                    for (i, ch) in content.chars().enumerate() {
-                        let char_pos = Position::new(pos.x + i as i32, pos.y);
-                        self.render_char(buf, area, char_pos, ch, style);
-                    }
+                if let Some(text) = label {
+                    self.render_label_on_shape(buf, area, kind, text, style);
                 }
-                ShapeKind::Triangle {
-                    p1, p2, p3, label, ..
-                } => {
-                    for (pos, ch) in triangle_points(*p1, *p2, *p3) {
-                        self.render_char(buf, area, pos, ch, style);
-                    }
-                    if let Some(text) = label {
-                        self.render_label(buf, area, shape.bounds(), text, style);
-                    }
+            }
+            ShapeKind::Diamond {
+                center,
+                half_width,
+                half_height,
+                label,
+                ..
+            } => {
+                for (pos, ch) in diamond_points(*center, *half_width, *half_height) {
+                    self.render_char(buf, area, pos, ch, style);
                 }
-                ShapeKind::Parallelogram {
-                    start, end, label, ..
-                } => {
-                    for (pos, ch) in parallelogram_points(*start, *end) {
-                        self.render_char(buf, area, pos, ch, style);
-                    }
-                    if let Some(text) = label {
-                        self.render_label(buf, area, shape.bounds(), text, style);
-                    }
+                if let Some(text) = label {
+                    self.render_label_on_shape(buf, area, kind, text, style);
                 }
-                ShapeKind::Hexagon {
-                    center,
-                    radius_x,
-                    radius_y,
-                    label,
-                    ..
-                } => {
-                    for (pos, ch) in hexagon_points(*center, *radius_x, *radius_y) {
-                        self.render_char(buf, area, pos, ch, style);
-                    }
-                    if let Some(text) = label {
-                        self.render_label(buf, area, shape.bounds(), text, style);
-                    }
+            }
+            ShapeKind::Ellipse {
+                center,
+                radius_x,
+                radius_y,
+                label,
+                ..
+            } => {
+                for (pos, ch) in ellipse_points(*center, *radius_x, *radius_y) {
+                    self.render_char(buf, area, pos, ch, style);
                 }
-                ShapeKind::Trapezoid {
-                    start, end, label, ..
-                } => {
-                    for (pos, ch) in trapezoid_points(*start, *end) {
-                        self.render_char(buf, area, pos, ch, style);
-                    }
-                    if let Some(text) = label {
-                        self.render_label(buf, area, shape.bounds(), text, style);
-                    }
+                if let Some(text) = label {
+                    self.render_label_on_shape(buf, area, kind, text, style);
                 }
-                ShapeKind::RoundedRect {
-                    start, end, label, ..
-                } => {
-                    for (pos, ch) in rounded_rect_points(*start, *end) {
-                        self.render_char(buf, area, pos, ch, style);
-                    }
-                    if let Some(text) = label {
-                        self.render_label(buf, area, shape.bounds(), text, style);
-                    }
+            }
+            ShapeKind::Freehand {
+                points,
+                char,
+                label,
+                ..
+            } => {
+                for &pos in points {
+                    self.render_char(buf, area, pos, *char, style);
                 }
-                ShapeKind::Cylinder {
-                    start, end, label, ..
-                } => {
-                    for (pos, ch) in cylinder_points(*start, *end) {
-                        self.render_char(buf, area, pos, ch, style);
-                    }
-                    if let Some(text) = label {
-                        self.render_label(buf, area, shape.bounds(), text, style);
-                    }
+                if let Some(text) = label {
+                    self.render_label_on_shape(buf, area, kind, text, style);
                 }
-                ShapeKind::Cloud {
-                    start, end, label, ..
-                } => {
-                    for (pos, ch) in cloud_points(*start, *end) {
-                        self.render_char(buf, area, pos, ch, style);
-                    }
-                    if let Some(text) = label {
-                        self.render_label(buf, area, shape.bounds(), text, style);
-                    }
+            }
+            ShapeKind::Text { pos, content, .. } => {
+                for (i, ch) in content.chars().enumerate() {
+                    let char_pos = Position::new(pos.x + i as i32, pos.y);
+                    self.render_char(buf, area, char_pos, ch, style);
                 }
-                ShapeKind::Star {
-                    center,
-                    outer_radius,
-                    inner_radius,
-                    label,
-                    ..
-                } => {
-                    for (pos, ch) in star_points(*center, *outer_radius, *inner_radius) {
-                        self.render_char(buf, area, pos, ch, style);
-                    }
-                    if let Some(text) = label {
-                        self.render_label(buf, area, shape.bounds(), text, style);
-                    }
+            }
+            ShapeKind::Triangle {
+                p1, p2, p3, label, ..
+            } => {
+                for (pos, ch) in triangle_points(*p1, *p2, *p3) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+                if let Some(text) = label {
+                    self.render_label_on_shape(buf, area, kind, text, style);
+                }
+            }
+            ShapeKind::Parallelogram {
+                start, end, label, ..
+            } => {
+                for (pos, ch) in parallelogram_points(*start, *end) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+                if let Some(text) = label {
+                    self.render_label_on_shape(buf, area, kind, text, style);
+                }
+            }
+            ShapeKind::Hexagon {
+                center,
+                radius_x,
+                radius_y,
+                label,
+                ..
+            } => {
+                for (pos, ch) in hexagon_points(*center, *radius_x, *radius_y) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+                if let Some(text) = label {
+                    self.render_label_on_shape(buf, area, kind, text, style);
+                }
+            }
+            ShapeKind::Trapezoid {
+                start, end, label, ..
+            } => {
+                for (pos, ch) in trapezoid_points(*start, *end) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+                if let Some(text) = label {
+                    self.render_label_on_shape(buf, area, kind, text, style);
+                }
+            }
+            ShapeKind::RoundedRect {
+                start, end, label, ..
+            } => {
+                for (pos, ch) in rounded_rect_points(*start, *end) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+                if let Some(text) = label {
+                    self.render_label_on_shape(buf, area, kind, text, style);
+                }
+            }
+            ShapeKind::Cylinder {
+                start, end, label, ..
+            } => {
+                for (pos, ch) in cylinder_points(*start, *end) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+                if let Some(text) = label {
+                    self.render_label_on_shape(buf, area, kind, text, style);
+                }
+            }
+            ShapeKind::Cloud {
+                start, end, label, ..
+            } => {
+                for (pos, ch) in cloud_points(*start, *end) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+                if let Some(text) = label {
+                    self.render_label_on_shape(buf, area, kind, text, style);
+                }
+            }
+            ShapeKind::Star {
+                center,
+                outer_radius,
+                inner_radius,
+                label,
+                ..
+            } => {
+                for (pos, ch) in star_points(*center, *outer_radius, *inner_radius) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+                if let Some(text) = label {
+                    self.render_label_on_shape(buf, area, kind, text, style);
                 }
             }
         }
+    }
 
-        // Render freehand preview while drawing
+    /// Render label on a shape (helper to avoid code duplication)
+    fn render_label_on_shape(&self, buf: &mut Buffer, area: Rect, kind: &ShapeKind, text: &str, style: Style) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        let bounds = kind.bounds();
+        self.render_label(buf, area, bounds, text, style);
+    }
+
+    /// Render freehand preview while drawing
+    fn render_freehand_preview(&self, buf: &mut Buffer, area: Rect, style: Style) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
         if let Some(ref freehand_state) = self.app.freehand_state {
             for &pos in &freehand_state.points {
-                self.render_char(buf, area, pos, self.app.brush_char, freehand_preview_style);
+                self.render_char(buf, area, pos, self.app.brush_char, style);
             }
         }
+    }
 
-        // Show snap points when line/arrow tool is active (even before drawing)
+    /// Show snap points when line/arrow tool is active
+    fn render_snap_points(&self, buf: &mut Buffer, area: Rect) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
         if self.app.current_tool == Tool::Line || self.app.current_tool == Tool::Arrow {
             let snap_style = Style::default()
                 .fg(Color::Magenta)
@@ -599,114 +679,129 @@ impl Widget for CanvasWidget<'_> {
                 self.render_char(buf, area, snap.pos, '◆', snap_style);
             }
         }
+    }
 
-        // Render shape preview (line/rectangle/etc) while drawing
+    /// Render shape preview while drawing
+    fn render_shape_preview(&self, buf: &mut Buffer, area: Rect, style: Style) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
         if let Some(ref shape_state) = self.app.shape_state {
-            // Use snapped positions if available
             let start = shape_state.start_snap.unwrap_or(shape_state.start);
             let end = shape_state.current_snap.unwrap_or(shape_state.current);
 
-            match self.app.current_tool {
-                Tool::Line => {
-                    for (pos, ch) in line_points_styled(start, end, self.app.line_style) {
-                        self.render_char(buf, area, pos, ch, preview_style);
-                    }
-                }
-                Tool::Arrow => {
-                    for (pos, ch) in arrow_points_styled(start, end, self.app.line_style) {
-                        self.render_char(buf, area, pos, ch, preview_style);
-                    }
-                }
-                Tool::Rectangle => {
-                    for (pos, ch) in rect_points(start, end) {
-                        self.render_char(buf, area, pos, ch, preview_style);
-                    }
-                }
-                Tool::DoubleBox => {
-                    for (pos, ch) in double_rect_points(start, end) {
-                        self.render_char(buf, area, pos, ch, preview_style);
-                    }
-                }
-                Tool::Diamond => {
-                    let half_width = (end.x - start.x).abs().max(1);
-                    let half_height = (end.y - start.y).abs().max(1);
-                    for (pos, ch) in diamond_points(start, half_width, half_height) {
-                        self.render_char(buf, area, pos, ch, preview_style);
-                    }
-                }
-                Tool::Ellipse => {
-                    let radius_x = (end.x - start.x).abs().max(1);
-                    let radius_y = (end.y - start.y).abs().max(1);
-                    for (pos, ch) in ellipse_points(start, radius_x, radius_y) {
-                        self.render_char(buf, area, pos, ch, preview_style);
-                    }
-                }
-                Tool::Triangle => {
-                    let mid_x = (start.x + end.x) / 2;
-                    let height = (end.y - start.y).abs().max(1);
-                    let p3 = Position::new(mid_x, start.y + height);
-                    for (pos, ch) in triangle_points(start, end, p3) {
-                        self.render_char(buf, area, pos, ch, preview_style);
-                    }
-                }
-                Tool::Parallelogram => {
-                    for (pos, ch) in parallelogram_points(start, end) {
-                        self.render_char(buf, area, pos, ch, preview_style);
-                    }
-                }
-                Tool::Hexagon => {
-                    let radius_x = (end.x - start.x).abs().max(2);
-                    let radius_y = (end.y - start.y).abs().max(1);
-                    for (pos, ch) in hexagon_points(start, radius_x, radius_y) {
-                        self.render_char(buf, area, pos, ch, preview_style);
-                    }
-                }
-                Tool::Trapezoid => {
-                    for (pos, ch) in trapezoid_points(start, end) {
-                        self.render_char(buf, area, pos, ch, preview_style);
-                    }
-                }
-                Tool::RoundedRect => {
-                    for (pos, ch) in rounded_rect_points(start, end) {
-                        self.render_char(buf, area, pos, ch, preview_style);
-                    }
-                }
-                Tool::Cylinder => {
-                    for (pos, ch) in cylinder_points(start, end) {
-                        self.render_char(buf, area, pos, ch, preview_style);
-                    }
-                }
-                Tool::Cloud => {
-                    for (pos, ch) in cloud_points(start, end) {
-                        self.render_char(buf, area, pos, ch, preview_style);
-                    }
-                }
-                Tool::Star => {
-                    let outer_radius = (end.x - start.x).abs().max((end.y - start.y).abs()).max(2);
-                    let inner_radius = outer_radius / 2;
-                    for (pos, ch) in star_points(start, outer_radius, inner_radius) {
-                        self.render_char(buf, area, pos, ch, preview_style);
-                    }
-                }
-                _ => {}
-            }
+            self.render_tool_preview(buf, area, self.app.current_tool, start, end, style);
         }
+    }
 
-        // Render active snap indicator (when hovering near a snap point)
+    /// Render preview for a specific tool
+    fn render_tool_preview(&self, buf: &mut Buffer, area: Rect, tool: Tool, start: Position, end: Position, style: Style) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
+        match tool {
+            Tool::Line => {
+                for (pos, ch) in line_points_styled(start, end, self.app.line_style) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            Tool::Arrow => {
+                for (pos, ch) in arrow_points_styled(start, end, self.app.line_style) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            Tool::Rectangle => {
+                for (pos, ch) in rect_points(start, end) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            Tool::DoubleBox => {
+                for (pos, ch) in double_rect_points(start, end) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            Tool::Diamond => {
+                let half_width = (end.x - start.x).abs().max(1);
+                let half_height = (end.y - start.y).abs().max(1);
+                for (pos, ch) in diamond_points(start, half_width, half_height) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            Tool::Ellipse => {
+                let radius_x = (end.x - start.x).abs().max(1);
+                let radius_y = (end.y - start.y).abs().max(1);
+                for (pos, ch) in ellipse_points(start, radius_x, radius_y) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            Tool::Triangle => {
+                let mid_x = (start.x + end.x) / 2;
+                let height = (end.y - start.y).abs().max(1);
+                let p3 = Position::new(mid_x, start.y + height);
+                for (pos, ch) in triangle_points(start, end, p3) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            Tool::Parallelogram => {
+                for (pos, ch) in parallelogram_points(start, end) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            Tool::Hexagon => {
+                let radius_x = (end.x - start.x).abs().max(2);
+                let radius_y = (end.y - start.y).abs().max(1);
+                for (pos, ch) in hexagon_points(start, radius_x, radius_y) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            Tool::Trapezoid => {
+                for (pos, ch) in trapezoid_points(start, end) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            Tool::RoundedRect => {
+                for (pos, ch) in rounded_rect_points(start, end) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            Tool::Cylinder => {
+                for (pos, ch) in cylinder_points(start, end) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            Tool::Cloud => {
+                for (pos, ch) in cloud_points(start, end) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            Tool::Star => {
+                let outer_radius = (end.x - start.x).abs().max((end.y - start.y).abs()).max(2);
+                let inner_radius = outer_radius / 2;
+                for (pos, ch) in star_points(start, outer_radius, inner_radius) {
+                    self.render_char(buf, area, pos, ch, style);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Render active snap indicator
+    fn render_active_snap_indicator(&self, buf: &mut Buffer, area: Rect) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
+        let snap_active_style = Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD);
+            
         if let Some(ref snap) = self.app.hover_snap {
-            let snap_active_style = Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD);
             self.render_char(buf, area, snap.pos, '◉', snap_active_style);
         } else if let Some(grid_pos) = self.app.hover_grid_snap {
-            // Render grid snap indicator (same style as shape snap)
-            let snap_active_style = Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD);
             self.render_char(buf, area, grid_pos, '◉', snap_active_style);
         }
+    }
 
-        // Render marquee selection box while dragging
+    /// Render marquee selection box
+    fn render_marquee_selection(&self, buf: &mut Buffer, area: Rect) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
         if let Some(ref marquee) = self.app.marquee_state {
             let marquee_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM);
             let min_x = marquee.start.x.min(marquee.current.x);
@@ -724,9 +819,12 @@ impl Widget for CanvasWidget<'_> {
                 self.render_char(buf, area, Position::new(max_x, y), '|', marquee_style);
             }
         }
+    }
 
-        // Render selection bounding box for all selected shapes
-        let box_style = Style::default().fg(Color::Cyan);
+    /// Render selection bounding boxes
+    fn render_selection_boxes(&self, buf: &mut Buffer, area: Rect, box_style: Style) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
         let single_selection = self.app.selected.len() == 1;
 
         for &id in &self.app.selected {
@@ -755,19 +853,12 @@ impl Widget for CanvasWidget<'_> {
                 }
             }
         }
-
-        // Render remote cursors (on top of everything)
-        if let Some(ref presence_mgr) = self.app.presence {
-            for peer in presence_mgr.active_peers() {
-                self.render_remote_cursor(buf, area, peer);
-            }
-        }
     }
-}
 
-impl CanvasWidget<'_> {
     /// Render a remote peer's cursor and activity
     fn render_remote_cursor(&self, buf: &mut Buffer, area: Rect, peer: &PeerPresence) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
         let color = peer_color(peer);
         let cursor_style = Style::default().fg(color).add_modifier(Modifier::BOLD);
 
@@ -781,85 +872,21 @@ impl CanvasWidget<'_> {
                 start,
                 current,
             } => {
-                // Show ghost preview of shape being drawn
-                let preview_style = Style::default().fg(color).add_modifier(Modifier::DIM);
-                self.render_shape_preview(buf, area, *tool, *start, *current, preview_style);
+                self.render_remote_drawing(buf, area, *tool, *start, *current, color);
             }
             CursorActivity::Selected { shape_id } => {
-                // Highlight the shape they have selected
-                if let Some(shape) = self.app.shape_view.get(*shape_id) {
-                    let (min_x, min_y, max_x, max_y) = shape.bounds();
-                    let highlight_style = Style::default().fg(color);
-                    // Draw colored corners to show remote selection
-                    for (x, y, ch) in [
-                        (min_x - 1, min_y - 1, '╭'),
-                        (max_x + 1, min_y - 1, '╮'),
-                        (min_x - 1, max_y + 1, '╰'),
-                        (max_x + 1, max_y + 1, '╯'),
-                    ] {
-                        self.render_char(buf, area, Position::new(x, y), ch, highlight_style);
-                    }
-                }
+                self.render_remote_selection(buf, area, *shape_id, color);
             }
             CursorActivity::Dragging { shape_id, delta } => {
-                // Render ghost shape at the dragged position
-                if let Some(shape) = self.app.shape_view.get(*shape_id) {
-                    let (orig_min_x, orig_min_y, orig_max_x, orig_max_y) = shape.bounds();
-                    let (dx, dy) = *delta;
-                    // Ghost bounds at new position
-                    let ghost_min_pos = Position::new(orig_min_x + dx, orig_min_y + dy);
-                    let ghost_max_pos = Position::new(orig_max_x + dx, orig_max_y + dy);
-                    let ghost_style = Style::default().fg(color);
-                    // Draw dashed outline for the ghost shape
-                    self.render_dashed_rect(
-                        buf,
-                        area,
-                        ghost_min_pos,
-                        ghost_max_pos,
-                        ghost_style,
-                    );
-                    // Show peer label above ghost
-                    let label = format!("{} moving", peer.display_name());
-                    let label_pos = Position::new(ghost_min_pos.x, ghost_min_pos.y.saturating_sub(1));
-                    self.render_text(buf, area, label_pos, &label, ghost_style);
-                }
+                self.render_remote_dragging(buf, area, *shape_id, *delta, peer, color);
             }
             CursorActivity::Resizing {
                 shape_id,
                 preview_bounds,
             } => {
-                // Render ghost shape at the resized bounds
-                if let Some(bounds) = preview_bounds {
-                    let (min_pos, max_pos) = *bounds;
-                    let ghost_style = Style::default().fg(color);
-                    // Draw dashed outline for the ghost shape
-                    self.render_dashed_rect(
-                        buf,
-                        area,
-                        min_pos,
-                        max_pos,
-                        ghost_style,
-                    );
-                    // Show peer label above ghost
-                    let label = format!("{} resizing", peer.display_name());
-                    let label_pos = Position::new(min_pos.x, min_pos.y.saturating_sub(1));
-                    self.render_text(buf, area, label_pos, &label, ghost_style);
-                } else if let Some(shape) = self.app.shape_view.get(*shape_id) {
-                    // Fallback: show original shape with highlight
-                    let (min_x, min_y, max_x, max_y) = shape.bounds();
-                    let highlight_style = Style::default().fg(color);
-                    for (x, y, ch) in [
-                        (min_x - 1, min_y - 1, '╭'),
-                        (max_x + 1, min_y - 1, '╮'),
-                        (min_x - 1, max_y + 1, '╰'),
-                        (max_x + 1, max_y + 1, '╯'),
-                    ] {
-                        self.render_char(buf, area, Position::new(x, y), ch, highlight_style);
-                    }
-                }
+                self.render_remote_resizing(buf, area, *shape_id, *preview_bounds, peer, color);
             }
             CursorActivity::Typing { position } => {
-                // Show typing indicator
                 let typing_style = Style::default()
                     .fg(color)
                     .add_modifier(Modifier::SLOW_BLINK);
@@ -871,8 +898,79 @@ impl CanvasWidget<'_> {
         }
     }
 
+    /// Render remote drawing preview
+    fn render_remote_drawing(&self, buf: &mut Buffer, area: Rect, tool: ToolKind, start: Position, current: Position, color: Color) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
+        let preview_style = Style::default().fg(color).add_modifier(Modifier::DIM);
+        self.render_shape_preview_for_tool(buf, area, tool, start, current, preview_style);
+    }
+
+    /// Render remote selection highlight
+    fn render_remote_selection(&self, buf: &mut Buffer, area: Rect, shape_id: ShapeId, color: Color) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
+        if let Some(shape) = self.app.shape_view.get(shape_id) {
+            let (min_x, min_y, max_x, max_y) = shape.bounds();
+            let highlight_style = Style::default().fg(color);
+            for (x, y, ch) in [
+                (min_x - 1, min_y - 1, '╭'),
+                (max_x + 1, min_y - 1, '╮'),
+                (min_x - 1, max_y + 1, '╰'),
+                (max_x + 1, max_y + 1, '╯'),
+            ] {
+                self.render_char(buf, area, Position::new(x, y), ch, highlight_style);
+            }
+        }
+    }
+
+    /// Render remote dragging ghost
+    fn render_remote_dragging(&self, buf: &mut Buffer, area: Rect, shape_id: ShapeId, delta: (i32, i32), peer: &PeerPresence, color: Color) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
+        if let Some(shape) = self.app.shape_view.get(shape_id) {
+            let (orig_min_x, orig_min_y, orig_max_x, orig_max_y) = shape.bounds();
+            let (dx, dy) = delta;
+            let ghost_min_pos = Position::new(orig_min_x + dx, orig_min_y + dy);
+            let ghost_max_pos = Position::new(orig_max_x + dx, orig_max_y + dy);
+            let ghost_style = Style::default().fg(color);
+            
+            self.render_dashed_rect(buf, area, ghost_min_pos, ghost_max_pos, ghost_style);
+            
+            let label = format!("{} moving", peer.display_name());
+            let label_pos = Position::new(ghost_min_pos.x, ghost_min_pos.y.saturating_sub(1));
+            self.render_text(buf, area, label_pos, &label, ghost_style);
+        }
+    }
+
+    /// Render remote resizing ghost
+    fn render_remote_resizing(&self, buf: &mut Buffer, area: Rect, shape_id: ShapeId, preview_bounds: Option<(Position, Position)>, peer: &PeerPresence, color: Color) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
+        if let Some((min_pos, max_pos)) = preview_bounds {
+            let ghost_style = Style::default().fg(color);
+            self.render_dashed_rect(buf, area, min_pos, max_pos, ghost_style);
+            
+            let label = format!("{} resizing", peer.display_name());
+            let label_pos = Position::new(min_pos.x, min_pos.y.saturating_sub(1));
+            self.render_text(buf, area, label_pos, &label, ghost_style);
+        } else if let Some(shape) = self.app.shape_view.get(shape_id) {
+            // Fallback: show original shape with highlight
+            let (min_x, min_y, max_x, max_y) = shape.bounds();
+            let highlight_style = Style::default().fg(color);
+            for (x, y, ch) in [
+                (min_x - 1, min_y - 1, '╭'),
+                (max_x + 1, min_y - 1, '╮'),
+                (min_x - 1, max_y + 1, '╰'),
+                (max_x + 1, max_y + 1, '╯'),
+            ] {
+                self.render_char(buf, area, Position::new(x, y), ch, highlight_style);
+            }
+        }
+    }
+
     /// Render a preview shape for remote drawing activity
-    fn render_shape_preview(
+    fn render_shape_preview_for_tool(
         &self,
         buf: &mut Buffer,
         area: Rect,
@@ -881,6 +979,8 @@ impl CanvasWidget<'_> {
         current: Position,
         style: Style,
     ) {
+        debug_assert!(area.width > 0 && area.height > 0);
+        
         use crate::canvas::LineStyle;
 
         match tool {
@@ -975,6 +1075,8 @@ impl CanvasWidget<'_> {
 
 /// Render the participants panel
 fn render_participants_panel(frame: &mut Frame, app: &App, area: Rect) {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
     let Some(ref presence_mgr) = app.presence else {
         return;
     };
@@ -987,13 +1089,20 @@ fn render_participants_panel(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 
-    // Build list items
     let mut items: Vec<Line> = Vec::new();
 
     // Get local user's active layer name
     let local_layer_name = app
         .active_layer
-        .and_then(|id| app.doc.read_layer(id).ok().flatten())
+        .and_then(|id| {
+            match app.doc.read_layer(id) {
+                Ok(opt) => opt,
+                Err(_e) => {
+                    // Log error in production; for now, silently handle
+                    None
+                }
+            }
+        })
         .map(|l| truncate_name(&l.name, 8))
         .unwrap_or_else(|| "?".to_string());
 
@@ -1015,7 +1124,15 @@ fn render_participants_panel(frame: &mut Frame, app: &App, area: Rect) {
         // Get peer's active layer name
         let layer_name = peer
             .active_layer_id
-            .and_then(|id| app.doc.read_layer(id).ok().flatten())
+            .and_then(|id| {
+                match app.doc.read_layer(id) {
+                    Ok(opt) => opt,
+                    Err(_e) => {
+                        // Log error in production; for now, silently handle
+                        None
+                    }
+                }
+            })
             .map(|l| truncate_name(&l.name, 8))
             .unwrap_or_else(|| "?".to_string());
 
@@ -1042,8 +1159,9 @@ fn render_participants_panel(frame: &mut Frame, app: &App, area: Rect) {
 
 /// Truncate a name for display
 fn truncate_name(name: &str, max_len: usize) -> String {
-    if name.chars().count() > max_len {
-        name.chars().take(max_len - 2).collect::<String>() + ".."
+    let name_len = name.chars().count();
+    if name_len > max_len {
+        name.chars().take(max_len.saturating_sub(2)).collect::<String>() + ".."
     } else {
         name.to_string()
     }
@@ -1051,6 +1169,8 @@ fn truncate_name(name: &str, max_len: usize) -> String {
 
 /// Render the layer panel
 fn render_layer_panel(frame: &mut Frame, app: &App, area: Rect) {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
     let layers = app.get_layers();
     let title = format!(" Layers ({}) ", layers.len());
 
@@ -1067,7 +1187,25 @@ fn render_layer_panel(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     // Collect peers by their active layer
+    let peers_by_layer = collect_peers_by_layer(app);
+
+    // Build list items
+    let mut items: Vec<Line> = Vec::new();
+
+    for layer in &layers {
+        let line = build_layer_line(app, layer, renaming, &peers_by_layer);
+        items.push(line);
+    }
+
+    let paragraph = Paragraph::new(items).block(block);
+
+    frame.render_widget(paragraph, area);
+}
+
+/// Collect peers grouped by their active layer
+fn collect_peers_by_layer(app: &App) -> HashMap<LayerId, Vec<Color>> {
     let mut peers_by_layer: HashMap<LayerId, Vec<Color>> = HashMap::new();
+    
     if let Some(ref presence_mgr) = app.presence {
         for peer in presence_mgr.active_peers() {
             if let Some(layer_id) = peer.active_layer_id {
@@ -1076,106 +1214,147 @@ fn render_layer_panel(frame: &mut Frame, app: &App, area: Rect) {
             }
         }
     }
+    
+    peers_by_layer
+}
 
-    // Build list items
-    let mut items: Vec<Line> = Vec::new();
+/// Build a single layer line for the layer panel
+fn build_layer_line(
+    app: &App,
+    layer: &crate::layers::Layer,
+    renaming: Option<(LayerId, &str)>,
+    peers_by_layer: &HashMap<LayerId, Vec<Color>>,
+) -> Line<'static> {
+    let is_active = app.active_layer == Some(layer.id);
+    let is_renaming = renaming.is_some_and(|(id, _)| id == layer.id);
 
-    for layer in &layers {
-        let is_active = app.active_layer == Some(layer.id);
-        let is_renaming = renaming.is_some_and(|(id, _)| id == layer.id);
+    // Active indicator
+    let active_indicator = if is_active {
+        Span::styled("● ", Style::default().fg(Color::Cyan))
+    } else {
+        Span::raw("  ")
+    };
 
-        // Active indicator
-        let active_indicator = if is_active {
-            Span::styled("● ", Style::default().fg(Color::Cyan))
-        } else {
-            Span::raw("  ")
-        };
-
-        // Layer name (truncate if needed) or rename input
-        let max_name_len = 10;
-        let (name_span, vis_span, lock_span) = if is_renaming
-            && let Some((_, text)) = renaming
-        {
-            let display: String = text.chars().take(max_name_len).collect();
-            let input_style = Style::default().fg(Color::Black).bg(Color::Yellow);
-            (
-                Span::styled(
-                    format!(
-                        "{:<width$}_",
-                        display,
-                        width = max_name_len.saturating_sub(1)
-                    ),
-                    input_style,
+    let max_name_len = 10usize;
+    
+    // Layer name or rename input
+    let (name_span, vis_span, lock_span) = if is_renaming
+        && let Some((_, text)) = renaming
+    {
+        let display: String = text.chars().take(max_name_len).collect();
+        let input_style = Style::default().fg(Color::Black).bg(Color::Yellow);
+        (
+            Span::styled(
+                format!(
+                    "{:<width$}_",
+                    display,
+                    width = max_name_len.saturating_sub(1)
                 ),
-                Span::raw(" "),
-                Span::raw(" "),
-            )
-        } else {
-            let name: String = layer.name.chars().take(max_name_len).collect();
-            let name_style = if is_active {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                Style::default().fg(Color::White)
-            };
-
-            // Visibility indicator - [H] for hidden is more accessible
-            let visible_indicator = if layer.visible {
-                Span::styled(" ", Style::default())
-            } else {
-                Span::styled("[H]", Style::default().fg(Color::DarkGray))
-            };
-
-            // Lock indicator - [L] for locked is more accessible
-            let lock_indicator = if layer.locked {
-                Span::styled("[L]", Style::default().fg(Color::Yellow))
-            } else {
-                Span::raw("   ")
-            };
-
-            (
-                Span::styled(
-                    format!("{:<width$}", name, width = max_name_len),
-                    name_style,
-                ),
-                visible_indicator,
-                lock_indicator,
-            )
-        };
-
-        // Peer indicators (colored blocks for peers on this layer)
-        let peer_indicators: Vec<Span> = peers_by_layer
-            .get(&layer.id)
-            .map(|colors| {
-                colors
-                    .iter()
-                    .take(3) // Max 3 indicators
-                    .map(|color| Span::styled("█", Style::default().fg(*color)))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let mut line_spans = vec![
-            active_indicator,
-            name_span,
+                input_style,
+            ),
             Span::raw(" "),
-            vis_span,
-            lock_span,
-        ];
-        line_spans.extend(peer_indicators);
+            Span::raw(" "),
+        )
+    } else {
+        let name: String = layer.name.chars().take(max_name_len).collect();
+        let name_style = if is_active {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::White)
+        };
 
-        items.push(Line::from(line_spans));
-    }
+        let visible_indicator = if layer.visible {
+            Span::styled(" ", Style::default())
+        } else {
+            Span::styled("[H]", Style::default().fg(Color::DarkGray))
+        };
 
-    let paragraph = Paragraph::new(items).block(block);
+        let lock_indicator = if layer.locked {
+            Span::styled("[L]", Style::default().fg(Color::Yellow))
+        } else {
+            Span::raw("   ")
+        };
 
-    frame.render_widget(paragraph, area);
+        (
+            Span::styled(
+                format!("{:<width$}", name, width = max_name_len),
+                name_style,
+            ),
+            visible_indicator,
+            lock_indicator,
+        )
+    };
+
+    // Peer indicators (colored blocks for peers on this layer)
+    let peer_indicators: Vec<Span> = peers_by_layer
+        .get(&layer.id)
+        .map(|colors| {
+            colors
+                .iter()
+                .take(3) // Max 3 indicators
+                .map(|color| Span::styled("█", Style::default().fg(*color)))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut line_spans = vec![
+        active_indicator,
+        name_span,
+        Span::raw(" "),
+        vis_span,
+        lock_span,
+    ];
+    line_spans.extend(peer_indicators);
+
+    Line::from(line_spans)
 }
 
 /// Render the status bar (Helix-style with mode indicator)
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    // Determine mode name and color (Helix-style)
-    let (mode_name, mode_bg) = match &app.mode {
-        Mode::Normal => match app.current_tool {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
+    let (mode_name, mode_bg) = get_mode_info(&app.mode, app.current_tool);
+    let mode_style = Style::default()
+        .fg(Color::Black)
+        .bg(mode_bg)
+        .add_modifier(Modifier::BOLD);
+
+    let file_name = get_file_name(app);
+    let dirty_marker = if app.is_dirty() { " *" } else { "" };
+    let char_info = get_char_info(app);
+    let (peer_info, peer_style) = get_peer_info(app);
+    let (status_text, status_color) = get_status_message(app);
+    let tool_info = get_tool_info(app);
+    let shape_info = get_shape_info(app);
+    let session_name = get_session_name(app);
+    let count_info = get_count_info(app);
+    let zoom_info = get_zoom_info(app);
+
+    let spans = vec![
+        Span::styled(format!(" {} ", mode_name), mode_style),
+        Span::styled(tool_info, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::raw(format!(" {}{}{}", file_name, dirty_marker, char_info)),
+        Span::styled(count_info, Style::default().fg(Color::DarkGray)),
+        Span::styled(zoom_info, Style::default().fg(Color::Magenta)),
+        Span::styled(peer_info, peer_style),
+        Span::styled(shape_info, Style::default().fg(Color::Cyan)),
+        Span::styled(status_text, Style::default().fg(status_color)),
+        Span::styled(
+            format!(" {} ", session_name),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ];
+
+    let paragraph = Paragraph::new(Line::from(spans))
+        .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+
+    frame.render_widget(paragraph, area);
+}
+
+/// Get mode name and color for status bar
+fn get_mode_info(mode: &Mode, current_tool: Tool) -> (&'static str, Color) {
+    match mode {
+        Mode::Normal => match current_tool {
             Tool::Select => ("SEL", Color::Blue),
             Tool::Text => ("TXT", Color::Green),
             _ => ("DRAW", Color::Yellow),
@@ -1191,19 +1370,12 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         Mode::SessionBrowser(_) | Mode::SessionCreate(_) => ("SESS", Color::Magenta),
         Mode::KeyboardShapeCreate(_) => ("CREATE", Color::Cyan),
         Mode::QrCodeDisplay(_) => ("QR", Color::Magenta),
-    };
+    }
+}
 
-    let mode_style = Style::default()
-        .fg(Color::Black)
-        .bg(mode_bg)
-        .add_modifier(Modifier::BOLD);
-
-    let tool_style = Style::default()
-        .fg(Color::White)
-        .add_modifier(Modifier::BOLD);
-
-    let file_name = app
-        .file_path
+/// Get file name for status bar
+fn get_file_name(app: &App) -> String {
+    app.file_path
         .as_ref()
         .map(|p| {
             p.file_name()
@@ -1211,11 +1383,12 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 .to_string_lossy()
                 .to_string()
         })
-        .unwrap_or_else(|| "[unsaved]".to_string());
+        .unwrap_or_else(|| "[unsaved]".to_string())
+}
 
-    let dirty_marker = if app.is_dirty() { " *" } else { "" };
-
-    let char_info = match app.current_tool {
+/// Get character/style info for status bar
+fn get_char_info(app: &App) -> String {
+    match app.current_tool {
         Tool::Freehand => format!(" brush:'{}' {}", app.brush_char, app.current_color.name()),
         Tool::Line | Tool::Arrow => {
             format!(" {} {}", app.line_style.name(), app.current_color.name())
@@ -1236,10 +1409,12 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             format!(" {}", app.current_color.name())
         }
         _ => String::new(),
-    };
+    }
+}
 
-    // Sync status indicator - show when in sync mode
-    let (peer_info, peer_style) = if let Some(ref presence) = app.presence {
+/// Get peer/sync info for status bar
+fn get_peer_info(app: &App) -> (String, Style) {
+    if let Some(ref presence) = app.presence {
         let count = presence.peer_count();
         if count > 0 {
             (
@@ -1251,111 +1426,86 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         }
     } else {
         (String::new(), Style::default())
-    };
+    }
+}
 
-    // Format status message with appropriate styling
-    let (status_text, status_color) = match &app.status_message {
+/// Get status message for status bar
+fn get_status_message(app: &App) -> (String, Color) {
+    match &app.status_message {
         Some((msg, MessageSeverity::Info)) => (format!(" {}", msg), Color::White),
         Some((msg, MessageSeverity::Warning)) => (format!(" ⚠ {}", msg), Color::Yellow),
         Some((msg, MessageSeverity::Error)) => (format!(" ✗ {}", msg), Color::Red),
         None => (String::new(), Color::White),
-    };
+    }
+}
 
-    // Tool info (only show if not in Select mode)
-    let tool_info = if app.current_tool != Tool::Select {
+/// Get tool info for status bar
+fn get_tool_info(app: &App) -> String {
+    if app.current_tool != Tool::Select {
         format!(" {}", app.current_tool.name().to_lowercase())
     } else {
         String::new()
-    };
+    }
+}
 
-    // Shape properties info (only show when single shape selected and no status message)
-    let shape_info = if app.status_message.is_none() && app.current_tool == Tool::Select {
+/// Get shape info for status bar
+fn get_shape_info(app: &App) -> String {
+    if app.status_message.is_none() && app.current_tool == Tool::Select {
         app.get_selected_shape_info()
             .map(|info| format!(" | {}", info))
             .unwrap_or_default()
     } else {
         String::new()
-    };
+    }
+}
 
-    // Session name (right-aligned context)
-    let session_name = app
-        .current_session_meta
+/// Get session name for status bar
+fn get_session_name(app: &App) -> &str {
+    app.current_session_meta
         .as_ref()
         .map(|m| m.name.as_str())
-        .unwrap_or("No session");
+        .unwrap_or("No session")
+}
 
-    // Shape/selection count
+/// Get shape count info for status bar
+fn get_count_info(app: &App) -> String {
     let total_shapes = app.shape_view.shape_count();
     let selected_count = app.selected.len();
-    let count_info = if selected_count > 0 {
+    
+    if selected_count > 0 {
         format!(" [{}/{}]", selected_count, total_shapes)
     } else if total_shapes > 0 {
         format!(" [{}]", total_shapes)
     } else {
         String::new()
-    };
+    }
+}
 
-    // Zoom indicator (only show if not 100%)
-    let zoom_info = if (app.viewport.zoom - 1.0).abs() > 0.01 {
+/// Get zoom info for status bar
+fn get_zoom_info(app: &App) -> String {
+    if (app.viewport.zoom - 1.0).abs() > 0.01 {
         format!(" {}%", (app.viewport.zoom * 100.0) as i32)
     } else {
         String::new()
-    };
-
-    let spans = vec![
-        Span::styled(format!(" {} ", mode_name), mode_style),
-        Span::styled(tool_info, tool_style),
-        Span::raw(format!(" {}{}{}", file_name, dirty_marker, char_info)),
-        Span::styled(count_info, Style::default().fg(Color::DarkGray)),
-        Span::styled(zoom_info, Style::default().fg(Color::Magenta)),
-        Span::styled(peer_info, peer_style),
-        Span::styled(shape_info, Style::default().fg(Color::Cyan)),
-        Span::styled(status_text, Style::default().fg(status_color)),
-        Span::styled(
-            format!(" {} ", session_name),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ];
-
-    let paragraph = Paragraph::new(Line::from(spans))
-        .style(Style::default().bg(Color::DarkGray).fg(Color::White));
-
-    frame.render_widget(paragraph, area);
+    }
 }
 
 /// Render the help bar
 fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let help_text = match &app.mode {
-        Mode::Normal => {
-            // Build context-sensitive help
-            let base_help = match app.current_tool {
-                Tool::Select => {
-                    if app.selected.len() >= 2 {
-                        "[Shift+G] group [y]ank [Del] delete | [Space] menu [?] help"
-                    } else if app.selected.len() == 1 {
-                        "[Enter] label [y]ank [Del] delete | []/{}:z-order | [Space] menu"
-                    } else {
-                        "[Ctrl+A] select all | click to select | [Space] menu [?] help"
-                    }
-                }
-                Tool::Freehand => "drag to draw | [Space] menu [?] help",
-                Tool::Text => "click to place text | [Space] menu [?] help",
-                Tool::Line | Tool::Arrow => {
-                    "[v] line style | drag to draw | [Space] menu [?] help"
-                }
-                _ => "drag to draw | [Space] menu [?] help",
-            };
+    debug_assert!(area.width > 0 && area.height > 0);
+    
+    let help_text = get_context_help(&app.mode, app.current_tool, app.show_layers, app.active_layer, &app.selected);
 
-            // Add layer hint if panel is visible
-            if app.show_layers {
-                if app.active_layer.is_some() {
-                    "[F2] rename layer [Ctrl+D] delete | [Alt+1-9] switch layer"
-                } else {
-                    base_help
-                }
-            } else {
-                base_help
-            }
+    let paragraph = Paragraph::new(help_text).style(Style::default().fg(Color::DarkGray));
+
+    frame.render_widget(paragraph, area);
+}
+
+/// Get context-sensitive help text
+fn get_context_help(mode: &Mode, current_tool: Tool, show_layers: bool, active_layer: Option<LayerId>, selected: &std::collections::HashSet<ShapeId>) -> &'static str {
+    match mode {
+        Mode::Normal => {
+            get_normal_mode_help(current_tool, show_layers, active_layer, selected)
         }
         Mode::TextInput(_) | Mode::LabelInput(_) => {
             "type text | [Enter] confirm [Esc] cancel [Backspace] delete"
@@ -1375,15 +1525,40 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
             "[Tab] switch field | type dimensions | [Enter] create [Esc] cancel"
         }
         Mode::QrCodeDisplay(_) => "[y] copy ticket | [w] save PNG | any key: close",
+    }
+}
+
+/// Get help text for normal mode
+fn get_normal_mode_help(current_tool: Tool, show_layers: bool, active_layer: Option<LayerId>, selected: &std::collections::HashSet<ShapeId>) -> &'static str {
+    let base_help = match current_tool {
+        Tool::Select => {
+            if selected.len() >= 2 {
+                "[Shift+G] group [y]ank [Del] delete | [Space] menu [?] help"
+            } else if selected.len() == 1 {
+                "[Enter] label [y]ank [Del] delete | []/{}:z-order | [Space] menu"
+            } else {
+                "[Ctrl+A] select all | click to select | [Space] menu [?] help"
+            }
+        }
+        Tool::Freehand => "drag to draw | [Space] menu [?] help",
+        Tool::Text => "click to place text | [Space] menu [?] help",
+        Tool::Line | Tool::Arrow => {
+            "[v] line style | drag to draw | [Space] menu [?] help"
+        }
+        _ => "drag to draw | [Space] menu [?] help",
     };
 
-    let paragraph = Paragraph::new(help_text).style(Style::default().fg(Color::DarkGray));
-
-    frame.render_widget(paragraph, area);
+    if show_layers && active_layer.is_some() {
+        "[F2] rename layer [Ctrl+D] delete | [Alt+1-9] switch layer"
+    } else {
+        base_help
+    }
 }
 
 /// Render text input cursor on canvas
 fn render_text_cursor(frame: &mut Frame, app: &App, start_pos: &Position, text: &str, area: Rect) {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
     if let Some((screen_x, screen_y)) = app.viewport.canvas_to_screen(*start_pos) {
         let cursor_x = screen_x + text.len() as u16;
         if cursor_x < area.width && screen_y < area.height {
@@ -1422,6 +1597,9 @@ fn render_label_input(
     cursor: usize,
     area: Rect,
 ) {
+    debug_assert!(area.width > 0 && area.height > 0);
+    debug_assert!(cursor <= text.chars().count());
+    
     if let Some(shape) = app.shape_view.get(shape_id) {
         let (min_x, min_y, max_x, max_y) = shape.bounds();
         let center_y = (min_y + max_y) / 2;
@@ -1484,6 +1662,8 @@ fn render_label_input(
 
 /// Render file path input overlay
 fn render_file_input(frame: &mut Frame, label: &str, path: &str, area: Rect) {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
     let width = 50.min(area.width.saturating_sub(4));
     let height = 3;
     let x = (area.width.saturating_sub(width)) / 2 + area.x;
@@ -1492,11 +1672,7 @@ fn render_file_input(frame: &mut Frame, label: &str, path: &str, area: Rect) {
     let popup_area = Rect::new(x, y, width, height);
 
     // Clear the popup area
-    for py in popup_area.y..popup_area.y + popup_area.height {
-        for px in popup_area.x..popup_area.x + popup_area.width {
-            frame.buffer_mut()[(px, py)].set_char(' ');
-        }
-    }
+    clear_area(frame, popup_area);
 
     let block = Block::default()
         .title(label)
@@ -1512,6 +1688,8 @@ fn render_file_input(frame: &mut Frame, label: &str, path: &str, area: Rect) {
 
 /// Render recent files menu overlay
 fn render_recent_files_menu(frame: &mut Frame, app: &App, selected: usize, area: Rect) {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
     let file_count = app.recent_files.len();
     let width = 50.min(area.width.saturating_sub(4));
     let height = (file_count as u16 + 2).min(12); // +2 for border, max 12 lines
@@ -1520,12 +1698,7 @@ fn render_recent_files_menu(frame: &mut Frame, app: &App, selected: usize, area:
 
     let popup_area = Rect::new(x, y, width, height);
 
-    // Clear the popup area
-    for py in popup_area.y..popup_area.y + popup_area.height {
-        for px in popup_area.x..popup_area.x + popup_area.width {
-            frame.buffer_mut()[(px, py)].set_char(' ');
-        }
-    }
+    clear_area(frame, popup_area);
 
     let block = Block::default()
         .title(" Recent Files ")
@@ -1558,7 +1731,30 @@ type PopupGridInfo = (&'static str, usize, Vec<(String, Option<Color>)>, &'stati
 
 /// Render selection popup for tools, colors, or brushes
 fn render_selection_popup(frame: &mut Frame, kind: PopupKind, selected: usize, area: Rect) {
-    let (title, cols, items, hint): PopupGridInfo = match kind {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
+    let (title, cols, items, hint) = get_popup_grid_info(kind);
+    let rows = items.len().div_ceil(cols as usize);
+
+    let cell_width = get_cell_width(kind);
+    let width = (cols as u16 * cell_width + 2).min(area.width.saturating_sub(4));
+    let height = (rows as u16 + 3).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(width)) / 2 + area.x;
+    let y = (area.height.saturating_sub(height)) / 2 + area.y;
+
+    let popup_area = Rect::new(x, y, width, height);
+
+    clear_area_with_bg(frame, popup_area, Color::Black);
+
+    let block = build_popup_block(title, hint);
+    frame.render_widget(block, popup_area);
+
+    render_grid_items(frame, popup_area, &items, selected, cols, cell_width, kind);
+}
+
+/// Get popup grid configuration info
+fn get_popup_grid_info(kind: PopupKind) -> PopupGridInfo {
+    match kind {
         PopupKind::Tool => {
             let items: Vec<_> = TOOLS.iter().map(|t| (t.name().to_string(), None)).collect();
             (" Select Tool ", 3, items, "hjkl: move, release key: select")
@@ -1584,44 +1780,43 @@ fn render_selection_popup(frame: &mut Frame, kind: PopupKind, selected: usize, a
                 "hjkl: move, release key: select",
             )
         }
-    };
-
-    let rows = items.len().div_ceil(cols);
-
-    // Calculate popup size based on grid
-    let cell_width: u16 = match kind {
-        PopupKind::Tool => 10, // Tool names are longer
-        PopupKind::Color => 8, // Color names + colored block
-        PopupKind::Brush => 3, // Just the character
-    };
-    let width = (cols as u16 * cell_width + 2).min(area.width.saturating_sub(4));
-    let height = (rows as u16 + 3).min(area.height.saturating_sub(4)); // +3 for borders and hint
-    let x = (area.width.saturating_sub(width)) / 2 + area.x;
-    let y = (area.height.saturating_sub(height)) / 2 + area.y;
-
-    let popup_area = Rect::new(x, y, width, height);
-
-    // Clear the popup area
-    for py in popup_area.y..popup_area.y + popup_area.height {
-        for px in popup_area.x..popup_area.x + popup_area.width {
-            frame.buffer_mut()[(px, py)]
-                .set_char(' ')
-                .set_style(Style::default().bg(Color::Black));
-        }
     }
+}
 
-    // Draw border with hint at bottom
-    let block = Block::default()
+/// Get cell width for popup kind
+fn get_cell_width(kind: PopupKind) -> u16 {
+    match kind {
+        PopupKind::Tool => 10,  // Tool names are longer
+        PopupKind::Color => 8,  // Color names + colored block
+        PopupKind::Brush => 3,  // Just the character
+    }
+}
+
+/// Build block for popup
+fn build_popup_block(title: &'static str, hint: &'static str) -> Block<'static> {
+    Block::default()
         .title(title)
         .title_bottom(Line::from(Span::styled(
             format!(" {} ", hint),
             Style::default().fg(Color::DarkGray),
         )))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
-    frame.render_widget(block, popup_area);
+        .border_style(Style::default().fg(Color::Cyan))
+}
 
-    // Render grid items
+/// Render grid items in popup
+fn render_grid_items(
+    frame: &mut Frame,
+    popup_area: Rect,
+    items: &[(String, Option<Color>)],
+    selected: usize,
+    cols: usize,
+    cell_width: u16,
+    kind: PopupKind,
+) {
+    debug_assert!(popup_area.width > 2 && popup_area.height > 2);
+    debug_assert!(cols > 0);
+    
     let inner_x = popup_area.x + 1;
     let inner_y = popup_area.y + 1;
     let inner_width = popup_area.width.saturating_sub(2);
@@ -1640,64 +1835,96 @@ fn render_selection_popup(frame: &mut Frame, kind: PopupKind, selected: usize, a
         }
 
         let is_selected = idx == selected;
-        let base_style = if is_selected {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::White).bg(Color::Black)
-        };
+        render_grid_item(frame, item_x, item_y, label, *color_opt, is_selected, cell_width, inner_width, inner_x, kind);
+    }
+}
 
-        match kind {
-            PopupKind::Tool => {
-                // Render tool name
-                let display = format!("{:^width$}", label, width = (cell_width - 1) as usize);
-                for (i, ch) in display.chars().take((cell_width - 1) as usize).enumerate() {
-                    let px = item_x + i as u16;
-                    if px < inner_x + inner_width {
-                        frame.buffer_mut()[(px, item_y)]
-                            .set_char(ch)
-                            .set_style(base_style);
-                    }
-                }
-            }
-            PopupKind::Color => {
-                // Render colored block + abbreviated name
-                if let Some(color) = color_opt {
-                    let color_style = if is_selected {
-                        Style::default().fg(*color).bg(Color::Cyan)
-                    } else {
-                        Style::default().fg(*color).bg(Color::Black)
-                    };
-                    frame.buffer_mut()[(item_x, item_y)]
-                        .set_char('█')
-                        .set_style(color_style);
-                    frame.buffer_mut()[(item_x + 1, item_y)]
-                        .set_char('█')
-                        .set_style(color_style);
-                }
-                // Render abbreviated name (first 4 chars)
-                let abbrev: String = label.chars().take(4).collect();
-                for (i, ch) in abbrev.chars().enumerate() {
-                    let px = item_x + 2 + i as u16;
-                    if px < inner_x + inner_width {
-                        frame.buffer_mut()[(px, item_y)]
-                            .set_char(ch)
-                            .set_style(base_style);
-                    }
-                }
-            }
-            PopupKind::Brush => {
-                // Render just the brush character, centered
-                let ch = label.chars().next().unwrap_or(' ');
-                frame.buffer_mut()[(item_x + 1, item_y)]
-                    .set_char(ch)
-                    .set_style(base_style);
-            }
+/// Render a single grid item
+fn render_grid_item(
+    frame: &mut Frame,
+    item_x: u16,
+    item_y: u16,
+    label: &str,
+    color_opt: Option<Color>,
+    is_selected: bool,
+    cell_width: u16,
+    inner_width: u16,
+    inner_x: u16,
+    kind: PopupKind,
+) {
+    let base_style = if is_selected {
+        Style::default().fg(Color::Black).bg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::White).bg(Color::Black)
+    };
+
+    match kind {
+        PopupKind::Tool => {
+            render_tool_item(frame, item_x, item_y, label, base_style, cell_width, inner_width, inner_x);
+        }
+        PopupKind::Color => {
+            render_color_item(frame, item_x, item_y, label, color_opt, is_selected, base_style, inner_width, inner_x);
+        }
+        PopupKind::Brush => {
+            render_brush_item(frame, item_x, item_y, label, base_style);
         }
     }
 }
 
+/// Render a tool item in the grid
+fn render_tool_item(frame: &mut Frame, item_x: u16, item_y: u16, label: &str, style: Style, cell_width: u16, inner_width: u16, inner_x: u16) {
+    let display = format!("{:^width$}", label, width = (cell_width - 1) as usize);
+    for (i, ch) in display.chars().take((cell_width - 1) as usize).enumerate() {
+        let px = item_x + i as u16;
+        if px < inner_x + inner_width {
+            frame.buffer_mut()[(px, item_y)]
+                .set_char(ch)
+                .set_style(style);
+        }
+    }
+}
+
+/// Render a color item in the grid
+fn render_color_item(frame: &mut Frame, item_x: u16, item_y: u16, label: &str, color_opt: Option<Color>, is_selected: bool, base_style: Style, inner_width: u16, inner_x: u16) {
+    // Render colored block
+    if let Some(color) = color_opt {
+        let color_style = if is_selected {
+            Style::default().fg(color).bg(Color::Cyan)
+        } else {
+            Style::default().fg(color).bg(Color::Black)
+        };
+        frame.buffer_mut()[(item_x, item_y)]
+            .set_char('█')
+            .set_style(color_style);
+        frame.buffer_mut()[(item_x + 1, item_y)]
+            .set_char('█')
+            .set_style(color_style);
+    }
+    
+    // Render abbreviated name (first 4 chars)
+    let abbrev: String = label.chars().take(4).collect();
+    for (i, ch) in abbrev.chars().enumerate() {
+        let px = item_x + 2 + i as u16;
+        if px < inner_x + inner_width {
+            frame.buffer_mut()[(px, item_y)]
+                .set_char(ch)
+                .set_style(base_style);
+        }
+    }
+}
+
+/// Render a brush item in the grid
+fn render_brush_item(frame: &mut Frame, item_x: u16, item_y: u16, label: &str, style: Style) {
+    let ch = label.chars().next().unwrap_or(' ');
+    frame.buffer_mut()[(item_x + 1, item_y)]
+        .set_char(ch)
+        .set_style(style);
+}
+
 /// Render confirmation dialog overlay
 fn render_confirm_dialog(frame: &mut Frame, action: &PendingAction, area: Rect) {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
     let title = action.title();
     let message = action.message();
 
@@ -1708,14 +1935,7 @@ fn render_confirm_dialog(frame: &mut Frame, action: &PendingAction, area: Rect) 
 
     let popup_area = Rect::new(x, y, width, height);
 
-    // Clear the popup area
-    for py in popup_area.y..popup_area.y + popup_area.height {
-        for px in popup_area.x..popup_area.x + popup_area.width {
-            frame.buffer_mut()[(px, py)]
-                .set_char(' ')
-                .set_style(Style::default().bg(Color::Black));
-        }
-    }
+    clear_area_with_bg(frame, popup_area, Color::Black);
 
     let block = Block::default()
         .title(format!(" {} ", title))
@@ -1752,32 +1972,13 @@ fn render_confirm_dialog(frame: &mut Frame, action: &PendingAction, area: Rect) 
 
 /// Render the leader menu (Helix-style which-key popup)
 fn render_leader_menu(frame: &mut Frame, area: Rect) {
-    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-    use ratatui::text::{Line, Span};
+    debug_assert!(area.width > 0 && area.height > 0);
+    
+    use ratatui::widgets::Clear;
 
-    // Build two-column layout of key hints
-    let entries: Vec<(&str, &str)> = vec![
-        ("t", "tool"),
-        ("c", "color"),
-        ("b", "brush"),
-        ("g", "grid"),
-        ("l", "layers"),
-        ("p", "peers"),
-        ("s", "save"),
-        ("o", "open"),
-        ("e", "export"),
-        ("n", "new"),
-        ("T", "ticket"),
-        ("Q", "qr code"),
-        ("D", "decode qr"),
-        ("K", "cluster"),
-        ("J", "join"),
-        ("?", "help"),
-        ("q", "quit"),
-    ];
-
-    let col_width = 14usize; // width of each column
-    let cols = 2;
+    let entries = get_leader_menu_entries();
+    let col_width = 14usize;
+    let cols = 2usize;
     let rows = entries.len().div_ceil(cols);
 
     let mut lines: Vec<Line<'_>> = Vec::new();
@@ -1791,7 +1992,7 @@ fn render_leader_menu(frame: &mut Frame, area: Rect) {
                     Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
                 ));
                 spans.push(Span::styled(
-                    format!("{:<width$}", label, width = col_width - 3),
+                    format!("{:<width$}", label, width = col_width.saturating_sub(3)),
                     Style::default().fg(Color::White),
                 ));
             }
@@ -1800,9 +2001,8 @@ fn render_leader_menu(frame: &mut Frame, area: Rect) {
     }
 
     let popup_width = (col_width * cols + 2) as u16;
-    let popup_height = (rows + 2) as u16; // +2 for borders
+    let popup_height = (rows + 2) as u16;
 
-    // Center the popup
     let x = area.x + area.width.saturating_sub(popup_width) / 2;
     let y = area.y + area.height.saturating_sub(popup_height) / 2;
     let popup_area = Rect::new(x, y, popup_width.min(area.width), popup_height.min(area.height));
@@ -1822,172 +2022,209 @@ fn render_leader_menu(frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, popup_area);
 }
 
+/// Get leader menu entries
+fn get_leader_menu_entries() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("t", "tool"),
+        ("c", "color"),
+        ("b", "brush"),
+        ("g", "grid"),
+        ("l", "layers"),
+        ("p", "peers"),
+        ("s", "save"),
+        ("o", "open"),
+        ("e", "export"),
+        ("n", "new"),
+        ("T", "ticket"),
+        ("Q", "qr code"),
+        ("D", "decode qr"),
+        ("K", "cluster"),
+        ("J", "join"),
+        ("?", "help"),
+        ("q", "quit"),
+    ]
+}
+
 /// Single source of truth for all documented keybindings.
-/// Used by the help screen and verified by tests.
 pub fn help_sections() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
     vec![
-        (
-            "GENERAL",
-            vec![
-                ("q", "Quit"),
-                ("Ctrl+c", "Quit"),
-                ("Esc", "Cancel/deselect"),
-                ("Space/:", "Leader menu"),
-                ("?/F1", "Toggle help screen"),
-                ("u", "Undo"),
-                ("U", "Redo"),
-            ],
-        ),
-        (
-            "LEADER MENU (Space/:)",
-            vec![
-                ("t", "Tool picker"),
-                ("c", "Color picker"),
-                ("b", "Brush picker"),
-                ("s", "Save file"),
-                ("o", "Open file"),
-                ("e", "Export SVG"),
-                ("n", "New document"),
-                ("g", "Toggle grid"),
-                ("l", "Toggle layers"),
-                ("p", "Toggle peers"),
-                ("?", "Help"),
-                ("q", "Quit"),
-            ],
-        ),
-        (
-            "TOOLS",
-            vec![
-                ("Space Space", "Select tool"),
-                ("f", "Freehand draw"),
-                ("t", "Text tool"),
-                ("l", "Line tool"),
-                ("a", "Arrow tool"),
-                ("r", "Rectangle tool"),
-                ("b", "DoubleBox tool"),
-                ("d", "Diamond tool"),
-                ("e", "Ellipse tool"),
-                ("Space t", "Triangle (picker)"),
-                ("Space t", "Parallelogram (picker)"),
-                ("Space t", "Hexagon (picker)"),
-                ("Space t", "Trapezoid (picker)"),
-                ("Space t", "RoundedRect (picker)"),
-                ("Space t", "Cylinder (picker)"),
-                ("Space t", "Cloud (picker)"),
-                ("s", "Star tool"),
-            ],
-        ),
-        (
-            "DRAWING",
-            vec![
-                ("v", "Cycle line style"),
-                ("g", "Toggle grid snap"),
-            ],
-        ),
-        (
-            "KEYBOARD CREATE",
-            vec![
-                ("Ctrl+Shift+R", "Create rectangle"),
-                ("Ctrl+Shift+L", "Create line"),
-                ("Ctrl+Shift+B", "Create double box"),
-                ("Alt+d", "Create diamond"),
-                ("Alt+e", "Create ellipse"),
-                ("Alt+a", "Create arrow"),
-            ],
-        ),
-        (
-            "SELECTION",
-            vec![
-                ("Click", "Select shape"),
-                ("Shift+Click", "Toggle selection"),
-                ("Drag", "Marquee select"),
-                ("Ctrl+A", "Select all"),
-                ("y", "Yank (copy)"),
-                ("p", "Paste"),
-                ("Del/Backspace", "Delete selected"),
-                ("Enter", "Edit label"),
-            ],
-        ),
-        (
-            "Z-ORDER",
-            vec![
-                ("]", "Bring forward"),
-                ("[", "Send backward"),
-                ("}", "Bring to front"),
-                ("{", "Send to back"),
-            ],
-        ),
-        (
-            "TRANSFORM",
-            vec![
-                ("Alt+L", "Align left"),
-                ("Alt+R", "Align right"),
-                ("Alt+T", "Align top"),
-                ("Alt+B", "Align bottom"),
-                ("Alt+C", "Center horizontal"),
-                ("Alt+M", "Center vertical"),
-                ("Alt+H", "Flip horizontal"),
-                ("Alt+V", "Flip vertical"),
-                ("Alt+.", "Rotate 90 CW"),
-                ("Alt+,", "Rotate 90 CCW"),
-            ],
-        ),
-        (
-            "GROUPING",
-            vec![
-                ("Shift+G", "Group selected"),
-                ("Ctrl+Shift+G", "Ungroup selected"),
-            ],
-        ),
-        (
-            "LAYERS",
-            vec![
-                ("L", "Toggle layer panel"),
-                ("Ctrl+n", "New layer"),
-                ("Ctrl+D", "Delete layer (confirm)"),
-                ("F2", "Rename layer"),
-                ("Alt+1-9", "Select layer 1-9"),
-                ("Ctrl+m", "Move selection to layer"),
-                ("Ctrl+h", "Toggle layer visibility"),
-            ],
-        ),
-        (
-            "FILES",
-            vec![
-                ("Ctrl+s", "Export ASCII (.txt)"),
-                ("Ctrl+o", "Import ASCII"),
-                ("Ctrl+Shift+S", "Save document (.automerge)"),
-                ("Ctrl+Shift+O", "Open document"),
-                ("E", "Export SVG"),
-                ("N", "New document (confirm)"),
-                ("R", "Recent files"),
-            ],
-        ),
-        (
-            "COLLABORATION",
-            vec![
-                ("T", "Copy sync ticket"),
-                ("Q", "Show ticket as QR code (w: save PNG)"),
-                ("D", "Decode QR code from image"),
-                ("J", "Join peer session"),
-                ("P", "Toggle participants"),
-            ],
-        ),
-        (
-            "NAVIGATION",
-            vec![
-                ("Arrow keys", "Pan viewport"),
-                ("Ctrl++/=", "Zoom in"),
-                ("Ctrl+-", "Zoom out"),
-                ("Ctrl+0", "Reset zoom"),
-                ("Ctrl+Scroll", "Mouse zoom"),
-            ],
-        ),
+        ("GENERAL", get_general_help()),
+        ("LEADER MENU (Space/:)", get_leader_help()),
+        ("TOOLS", get_tools_help()),
+        ("DRAWING", get_drawing_help()),
+        ("KEYBOARD CREATE", get_keyboard_create_help()),
+        ("SELECTION", get_selection_help()),
+        ("Z-ORDER", get_zorder_help()),
+        ("TRANSFORM", get_transform_help()),
+        ("GROUPING", get_grouping_help()),
+        ("LAYERS", get_layers_help()),
+        ("FILES", get_files_help()),
+        ("COLLABORATION", get_collaboration_help()),
+        ("NAVIGATION", get_navigation_help()),
+    ]
+}
+
+fn get_general_help() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("q", "Quit"),
+        ("Ctrl+c", "Quit"),
+        ("Esc", "Cancel/deselect"),
+        ("Space/:", "Leader menu"),
+        ("?/F1", "Toggle help screen"),
+        ("u", "Undo"),
+        ("U", "Redo"),
+    ]
+}
+
+fn get_leader_help() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("t", "Tool picker"),
+        ("c", "Color picker"),
+        ("b", "Brush picker"),
+        ("s", "Save file"),
+        ("o", "Open file"),
+        ("e", "Export SVG"),
+        ("n", "New document"),
+        ("g", "Toggle grid"),
+        ("l", "Toggle layers"),
+        ("p", "Toggle peers"),
+        ("?", "Help"),
+        ("q", "Quit"),
+    ]
+}
+
+fn get_tools_help() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("Space Space", "Select tool"),
+        ("f", "Freehand draw"),
+        ("t", "Text tool"),
+        ("l", "Line tool"),
+        ("a", "Arrow tool"),
+        ("r", "Rectangle tool"),
+        ("b", "DoubleBox tool"),
+        ("d", "Diamond tool"),
+        ("e", "Ellipse tool"),
+        ("Space t", "Triangle (picker)"),
+        ("Space t", "Parallelogram (picker)"),
+        ("Space t", "Hexagon (picker)"),
+        ("Space t", "Trapezoid (picker)"),
+        ("Space t", "RoundedRect (picker)"),
+        ("Space t", "Cylinder (picker)"),
+        ("Space t", "Cloud (picker)"),
+        ("s", "Star tool"),
+    ]
+}
+
+fn get_drawing_help() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("v", "Cycle line style"),
+        ("g", "Toggle grid snap"),
+    ]
+}
+
+fn get_keyboard_create_help() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("Ctrl+Shift+R", "Create rectangle"),
+        ("Ctrl+Shift+L", "Create line"),
+        ("Ctrl+Shift+B", "Create double box"),
+        ("Alt+d", "Create diamond"),
+        ("Alt+e", "Create ellipse"),
+        ("Alt+a", "Create arrow"),
+    ]
+}
+
+fn get_selection_help() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("Click", "Select shape"),
+        ("Shift+Click", "Toggle selection"),
+        ("Drag", "Marquee select"),
+        ("Ctrl+A", "Select all"),
+        ("y", "Yank (copy)"),
+        ("p", "Paste"),
+        ("Del/Backspace", "Delete selected"),
+        ("Enter", "Edit label"),
+    ]
+}
+
+fn get_zorder_help() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("]", "Bring forward"),
+        ("[", "Send backward"),
+        ("}", "Bring to front"),
+        ("{", "Send to back"),
+    ]
+}
+
+fn get_transform_help() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("Alt+L", "Align left"),
+        ("Alt+R", "Align right"),
+        ("Alt+T", "Align top"),
+        ("Alt+B", "Align bottom"),
+        ("Alt+C", "Center horizontal"),
+        ("Alt+M", "Center vertical"),
+        ("Alt+H", "Flip horizontal"),
+        ("Alt+V", "Flip vertical"),
+        ("Alt+.", "Rotate 90 CW"),
+        ("Alt+,", "Rotate 90 CCW"),
+    ]
+}
+
+fn get_grouping_help() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("Shift+G", "Group selected"),
+        ("Ctrl+Shift+G", "Ungroup selected"),
+    ]
+}
+
+fn get_layers_help() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("L", "Toggle layer panel"),
+        ("Ctrl+n", "New layer"),
+        ("Ctrl+D", "Delete layer (confirm)"),
+        ("F2", "Rename layer"),
+        ("Alt+1-9", "Select layer 1-9"),
+        ("Ctrl+m", "Move selection to layer"),
+        ("Ctrl+h", "Toggle layer visibility"),
+    ]
+}
+
+fn get_files_help() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("Ctrl+s", "Export ASCII (.txt)"),
+        ("Ctrl+o", "Import ASCII"),
+        ("Ctrl+Shift+S", "Save document (.automerge)"),
+        ("Ctrl+Shift+O", "Open document"),
+        ("E", "Export SVG"),
+        ("N", "New document (confirm)"),
+        ("R", "Recent files"),
+    ]
+}
+
+fn get_collaboration_help() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("T", "Copy sync ticket"),
+        ("Q", "Show ticket as QR code (w: save PNG)"),
+        ("D", "Decode QR code from image"),
+        ("J", "Join peer session"),
+        ("P", "Toggle participants"),
+    ]
+}
+
+fn get_navigation_help() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("Arrow keys", "Pan viewport"),
+        ("Ctrl++/=", "Zoom in"),
+        ("Ctrl+-", "Zoom out"),
+        ("Ctrl+0", "Reset zoom"),
+        ("Ctrl+Scroll", "Mouse zoom"),
     ]
 }
 
 /// Render the help screen overlay
 fn render_help_screen(frame: &mut Frame, scroll: usize, area: Rect) {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
     let help_sections = help_sections();
 
     // Build help lines
@@ -2020,14 +2257,7 @@ fn render_help_screen(frame: &mut Frame, scroll: usize, area: Rect) {
     let max_scroll = lines.len().saturating_sub(visible_height);
     let actual_scroll = scroll.min(max_scroll);
 
-    // Clear the screen area
-    for py in area.y..area.y + area.height {
-        for px in area.x..area.x + area.width {
-            frame.buffer_mut()[(px, py)]
-                .set_char(' ')
-                .set_style(Style::default().bg(Color::Black));
-        }
-    }
+    clear_area_with_bg(frame, area, Color::Black);
 
     let block = Block::default()
         .title(" Help (press Esc to close) ")
@@ -2063,45 +2293,60 @@ fn render_session_browser(
     show_pinned_only: bool,
     area: Rect,
 ) {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let filtered = app.get_filtered_sessions(filter, show_pinned_only);
     let session_count = filtered.len();
 
     let width = 60.min(area.width.saturating_sub(4));
-    let height = (session_count as u16 + 5).min(20); // +5 for borders, filter, hint
+    let height = (session_count as u16 + 5).min(20);
     let x = (area.width.saturating_sub(width)) / 2 + area.x;
     let y = (area.height.saturating_sub(height)) / 2 + area.y;
 
     let popup_area = Rect::new(x, y, width, height);
 
-    // Clear the popup area
-    for py in popup_area.y..popup_area.y + popup_area.height {
-        for px in popup_area.x..popup_area.x + popup_area.width {
-            frame.buffer_mut()[(px, py)]
-                .set_char(' ')
-                .set_style(Style::default().bg(Color::Black));
-        }
-    }
+    clear_area_with_bg(frame, popup_area, Color::Black);
 
-    // Title with current session indicator
-    let title = if let Some(ref meta) = app.current_session_meta {
-        format!(" Sessions [{}] ", meta.name)
-    } else {
-        " Sessions ".to_string()
-    };
-
+    let title = build_session_browser_title(app);
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
-    // Build session list
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
 
+    let lines = build_session_browser_lines(filter, show_pinned_only, &filtered, selected, app, now);
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .style(Style::default().bg(Color::Black));
+
+    frame.render_widget(paragraph, popup_area);
+}
+
+/// Build title for session browser
+fn build_session_browser_title(app: &App) -> String {
+    if let Some(ref meta) = app.current_session_meta {
+        format!(" Sessions [{}] ", meta.name)
+    } else {
+        " Sessions ".to_string()
+    }
+}
+
+/// Build lines for session browser
+fn build_session_browser_lines(
+    filter: &str,
+    show_pinned_only: bool,
+    filtered: &[&crate::session::SessionMeta],
+    selected: usize,
+    app: &App,
+    now: u64,
+) -> Vec<Line<'static>> {
     let mut lines: Vec<Line> = Vec::new();
 
     // Filter line
@@ -2118,49 +2363,12 @@ fn render_session_browser(
         format!(" {}", filter_display),
         Style::default().fg(Color::DarkGray),
     ));
-    lines.push(Line::raw("")); // Separator
+    lines.push(Line::raw(""));
 
     // Session items
     for (i, session) in filtered.iter().enumerate() {
-        let is_selected = i == selected;
-        let is_current = app.current_session.as_ref() == Some(&session.id);
-
-        // Format time ago
-        let time_ago = {
-            let diff = now.saturating_sub(session.last_accessed);
-            if diff < 60 {
-                "now".to_string()
-            } else if diff < 3600 {
-                format!("{}m", diff / 60)
-            } else if diff < 86400 {
-                format!("{}h", diff / 3600)
-            } else {
-                format!("{}d", diff / 86400)
-            }
-        };
-
-        // Build line
-        let pinned = if session.pinned { "*" } else { " " };
-        let current = if is_current { ">" } else { " " };
-        let name = if session.name.len() > 30 {
-            format!("{}..", &session.name[..28])
-        } else {
-            session.name.clone()
-        };
-
-        let line_text = format!("{}{} {:<30} {:>6}", pinned, current, name, time_ago);
-
-        let style = if is_selected {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
-        } else if is_current {
-            Style::default().fg(Color::Green)
-        } else if session.pinned {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default().fg(Color::White)
-        };
-
-        lines.push(Line::styled(format!(" {}", line_text), style));
+        let line = build_session_line(*session, i == selected, app, now);
+        lines.push(line);
     }
 
     if filtered.is_empty() {
@@ -2173,21 +2381,61 @@ fn render_session_browser(
     }
 
     // Hint at bottom
-    lines.push(Line::raw("")); // Separator
+    lines.push(Line::raw(""));
     lines.push(Line::styled(
         " n:new d:del p:pin *:pinned Tab:close",
         Style::default().fg(Color::DarkGray),
     ));
 
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .style(Style::default().bg(Color::Black));
+    lines
+}
 
-    frame.render_widget(paragraph, popup_area);
+/// Build a single session line
+fn build_session_line(session: &crate::session::SessionMeta, is_selected: bool, app: &App, now: u64) -> Line<'static> {
+    let is_current = app.current_session.as_ref() == Some(&session.id);
+
+    let time_ago = format_time_ago(now.saturating_sub(session.last_accessed));
+
+    let pinned = if session.pinned { "*" } else { " " };
+    let current = if is_current { ">" } else { " " };
+    let name = if session.name.len() > 30 {
+        format!("{}..", &session.name[..28])
+    } else {
+        session.name.clone()
+    };
+
+    let line_text = format!("{}{} {:<30} {:>6}", pinned, current, name, time_ago);
+
+    let style = if is_selected {
+        Style::default().fg(Color::Black).bg(Color::Cyan)
+    } else if is_current {
+        Style::default().fg(Color::Green)
+    } else if session.pinned {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    Line::styled(format!(" {}", line_text), style)
+}
+
+/// Format seconds as time ago string
+fn format_time_ago(diff: u64) -> String {
+    if diff < 60 {
+        "now".to_string()
+    } else if diff < 3600 {
+        format!("{}m", diff / 60)
+    } else if diff < 86400 {
+        format!("{}h", diff / 3600)
+    } else {
+        format!("{}d", diff / 86400)
+    }
 }
 
 /// Render session create dialog
 fn render_session_create(frame: &mut Frame, name: &str, area: Rect) {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
     let width = 40.min(area.width.saturating_sub(4));
     let height = 5;
     let x = (area.width.saturating_sub(width)) / 2 + area.x;
@@ -2195,14 +2443,7 @@ fn render_session_create(frame: &mut Frame, name: &str, area: Rect) {
 
     let popup_area = Rect::new(x, y, width, height);
 
-    // Clear the popup area
-    for py in popup_area.y..popup_area.y + popup_area.height {
-        for px in popup_area.x..popup_area.x + popup_area.width {
-            frame.buffer_mut()[(px, py)]
-                .set_char(' ')
-                .set_style(Style::default().bg(Color::Black));
-        }
-    }
+    clear_area_with_bg(frame, popup_area, Color::Black);
 
     let block = Block::default()
         .title(" New Session ")
@@ -2237,6 +2478,8 @@ fn render_keyboard_shape_create(
     focus: KeyboardShapeField,
     area: Rect,
 ) {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
     let popup_width = 35.min(area.width.saturating_sub(4));
     let popup_height = 7;
     let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
@@ -2244,14 +2487,7 @@ fn render_keyboard_shape_create(
 
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
-    // Clear the popup area
-    for py in popup_area.y..popup_area.y + popup_area.height {
-        for px in popup_area.x..popup_area.x + popup_area.width {
-            frame.buffer_mut()[(px, py)]
-                .set_char(' ')
-                .set_style(Style::default().bg(Color::Black));
-        }
-    }
+    clear_area_with_bg(frame, popup_area, Color::Black);
 
     let title = format!(" Create {} ", tool.name());
     let block = Block::default()
@@ -2259,13 +2495,33 @@ fn render_keyboard_shape_create(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
-    // Determine labels based on tool type
-    let (label1, label2) = match tool {
+    let (label1, label2) = get_shape_create_labels(tool);
+    let lines = build_shape_create_lines(label1, label2, width, height, focus);
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .style(Style::default().bg(Color::Black));
+
+    frame.render_widget(paragraph, popup_area);
+}
+
+/// Get labels for shape creation dialog
+fn get_shape_create_labels(tool: Tool) -> (&'static str, &'static str) {
+    match tool {
         Tool::Line | Tool::Arrow => ("Length", "Y-Offset"),
         Tool::Star => ("Outer R", "Inner R"),
         _ => ("Width", "Height"),
-    };
+    }
+}
 
+/// Build lines for shape creation dialog
+fn build_shape_create_lines(
+    label1: &str,
+    label2: &str,
+    width: &str,
+    height: &str,
+    focus: KeyboardShapeField,
+) -> Vec<Line<'static>> {
     let width_style = if focus == KeyboardShapeField::Width {
         Style::default().fg(Color::Yellow).bold()
     } else {
@@ -2290,7 +2546,7 @@ fn render_keyboard_shape_create(
         ""
     };
 
-    let lines = vec![
+    vec![
         Line::raw(""),
         Line::from(vec![
             Span::styled(format!(" {}: ", label1), Style::default().fg(Color::Gray)),
@@ -2305,84 +2561,31 @@ fn render_keyboard_shape_create(
             " Tab:switch Enter:create Esc:cancel",
             Style::default().fg(Color::DarkGray),
         ),
-    ];
-
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .style(Style::default().bg(Color::Black));
-
-    frame.render_widget(paragraph, popup_area);
+    ]
 }
 
 /// Render a QR code display popup showing a ticket as a scannable QR code.
 fn render_qr_code_display(frame: &mut Frame, ticket: &str, area: Rect) {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
     use crate::app::qr::ticket_to_qr_lines;
 
     let qr_lines = match ticket_to_qr_lines(ticket) {
         Ok(lines) => lines,
         Err(e) => {
-            // Fall back to error display
-            let block = Block::default()
-                .title(" QR Code Error ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Red));
-            let paragraph = Paragraph::new(e).block(block);
-            let popup_area = centered_rect_fixed(40, 5, area);
-            frame.render_widget(paragraph, popup_area);
+            render_qr_error(frame, &e, area);
             return;
         }
     };
 
-    // Calculate popup dimensions: QR width + 2 (border) + 2 (padding),
-    // QR height + 2 (border) + 3 (title line + ticket line + help line)
     let qr_width = qr_lines.first().map(|l| l.text.chars().count()).unwrap_or(0);
     let qr_height = qr_lines.len();
     let popup_w = (qr_width + 4) as u16;
-    let popup_h = (qr_height + 6) as u16; // border(2) + title(1) + ticket(1) + blank(1) + help(1)
+    let popup_h = (qr_height + 6) as u16;
 
-    // Center the popup
     let popup_area = centered_rect_fixed(popup_w, popup_h, area);
 
-    // Build the content lines
-    let mut lines: Vec<Line> = Vec::with_capacity(qr_height + 4);
-
-    // Title line
-    lines.push(Line::styled(
-        " Scan to join session ",
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-    ));
-
-    // Blank separator
-    lines.push(Line::raw(""));
-
-    // QR code lines — white-on-black for proper contrast
-    let qr_style = Style::default().fg(Color::White).bg(Color::Black);
-    for qr_line in &qr_lines {
-        // Pad each QR line with a space on each side for quiet zone
-        let padded = format!(" {} ", qr_line.text);
-        lines.push(Line::styled(padded, qr_style));
-    }
-
-    // Blank separator
-    lines.push(Line::raw(""));
-
-    // Truncated ticket display
-    let display_ticket = if ticket.len() > (popup_w as usize).saturating_sub(4) {
-        let max = (popup_w as usize).saturating_sub(7);
-        format!("{}...", &ticket[..max])
-    } else {
-        ticket.to_string()
-    };
-    lines.push(Line::styled(
-        display_ticket,
-        Style::default().fg(Color::DarkGray),
-    ));
-
-    // Help line
-    lines.push(Line::styled(
-        " y:copy  any key:close ",
-        Style::default().fg(Color::DarkGray),
-    ));
+    let lines = build_qr_display_lines(&qr_lines, ticket, popup_w);
 
     let block = Block::default()
         .title(" QR Code ")
@@ -2397,13 +2600,84 @@ fn render_qr_code_display(frame: &mut Frame, ticket: &str, area: Rect) {
     frame.render_widget(paragraph, popup_area);
 }
 
+/// Render QR code error
+fn render_qr_error(frame: &mut Frame, error: &str, area: Rect) {
+    let block = Block::default()
+        .title(" QR Code Error ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red));
+    let paragraph = Paragraph::new(error).block(block);
+    let popup_area = centered_rect_fixed(40, 5, area);
+    frame.render_widget(paragraph, popup_area);
+}
+
+/// Build lines for QR code display
+fn build_qr_display_lines(qr_lines: &[crate::app::qr::QrLine], ticket: &str, popup_w: u16) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line> = Vec::new();
+
+    lines.push(Line::styled(
+        " Scan to join session ",
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+    ));
+
+    lines.push(Line::raw(""));
+
+    let qr_style = Style::default().fg(Color::White).bg(Color::Black);
+    for qr_line in qr_lines {
+        let padded = format!(" {} ", qr_line.text);
+        lines.push(Line::styled(padded, qr_style));
+    }
+
+    lines.push(Line::raw(""));
+
+    let display_ticket = if ticket.len() > (popup_w as usize).saturating_sub(4) {
+        let max = (popup_w as usize).saturating_sub(7);
+        format!("{}...", &ticket[..max])
+    } else {
+        ticket.to_string()
+    };
+    lines.push(Line::styled(
+        display_ticket,
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    lines.push(Line::styled(
+        " y:copy  any key:close ",
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    lines
+}
+
 /// Create a fixed-size centered rectangle within the given area.
 fn centered_rect_fixed(width: u16, height: u16, area: Rect) -> Rect {
+    debug_assert!(area.width > 0 && area.height > 0);
+    
     let w = width.min(area.width);
     let h = height.min(area.height);
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     Rect::new(x, y, w, h)
+}
+
+/// Clear an area by setting all cells to space
+fn clear_area(frame: &mut Frame, area: Rect) {
+    for py in area.y..area.y + area.height {
+        for px in area.x..area.x + area.width {
+            frame.buffer_mut()[(px, py)].set_char(' ');
+        }
+    }
+}
+
+/// Clear an area with a specific background color
+fn clear_area_with_bg(frame: &mut Frame, area: Rect, bg: Color) {
+    for py in area.y..area.y + area.height {
+        for px in area.x..area.x + area.width {
+            frame.buffer_mut()[(px, py)]
+                .set_char(' ')
+                .set_style(Style::default().bg(bg));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2456,50 +2730,40 @@ mod tests {
 
     #[test]
     fn truncate_name_short_string() {
-        // String shorter than max_len should be returned as-is
         assert_eq!(truncate_name("Layer 1", 10), "Layer 1");
         assert_eq!(truncate_name("abc", 8), "abc");
     }
 
     #[test]
     fn truncate_name_exact_length() {
-        // String exactly at max_len should be returned as-is
         assert_eq!(truncate_name("12345678", 8), "12345678");
     }
 
     #[test]
     fn truncate_name_long_string() {
-        // String longer than max_len should be truncated with ".."
         assert_eq!(truncate_name("VeryLongLayerName", 8), "VeryLo..");
         assert_eq!(truncate_name("1234567890", 8), "123456..");
     }
 
     #[test]
     fn truncate_name_empty_string() {
-        // Empty string should return empty
         assert_eq!(truncate_name("", 8), "");
     }
 
     #[test]
     fn truncate_name_unicode() {
-        // Unicode characters should be counted correctly
-        // Japanese characters are single graphemes
         assert_eq!(truncate_name("...", 8), "...");
-        // Mixed ASCII and unicode
         assert_eq!(truncate_name("Layer...", 8), "Layer...");
     }
 
     #[test]
     fn truncate_name_very_small_max() {
-        // Edge case: max_len of 3 means only 1 char + ".."
         assert_eq!(truncate_name("Hello", 3), "H..");
-        // max_len of 2 means 0 chars + ".."
         assert_eq!(truncate_name("Hello", 2), "..");
     }
 
     #[test]
     fn truncate_name_whitespace() {
-        // Names with whitespace
         assert_eq!(truncate_name("Layer With Spaces", 8), "Layer ..");
         assert_eq!(truncate_name("   ", 2), "..");
     }

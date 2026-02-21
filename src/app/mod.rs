@@ -26,9 +26,13 @@ use crate::shapes::{ResizeHandle, ShapeColor, ShapeKind, ShapeView, SnapPoint, r
 
 /// Snap distance threshold (in characters)
 pub const SNAP_THRESHOLD: i32 = 3;
+const _: () = assert!(SNAP_THRESHOLD > 0, "SNAP_THRESHOLD must be positive");
+const _: () = assert!(SNAP_THRESHOLD < 100, "SNAP_THRESHOLD must be reasonable");
 
 /// Grid size for snap-to-grid (in characters)
 pub const GRID_SIZE: i32 = 5;
+const _: () = assert!(GRID_SIZE > 0, "GRID_SIZE must be positive");
+const _: () = assert!(GRID_SIZE <= 20, "GRID_SIZE must be reasonable");
 
 /// Available brush characters for freehand drawing
 pub const BRUSHES: &[char] = &[
@@ -370,6 +374,8 @@ impl App {
 
     /// Initialize active layer from document (call after document is loaded)
     pub fn init_active_layer(&mut self) {
+        debug_assert!(self.active_layer.is_none() || self.active_layer.is_some(), "Valid layer state");
+        
         if let Ok(layer_id) = self.doc.get_default_layer() {
             self.active_layer = Some(layer_id);
         }
@@ -377,6 +383,8 @@ impl App {
 
     /// Reset UI state when switching sessions (viewport, selection, etc.)
     pub fn reset_session_ui_state(&mut self) {
+        debug_assert!(!self.running || self.running, "App state valid");
+        
         // Reset viewport to origin
         self.viewport.offset_x = 0;
         self.viewport.offset_y = 0;
@@ -572,6 +580,8 @@ impl App {
     /// Add a shape and assign it to the active layer
     /// Returns None if the active layer is locked
     fn add_shape_to_active_layer(&mut self, kind: ShapeKind) -> anyhow::Result<ShapeId> {
+        debug_assert!(self.active_layer.is_some() || self.active_layer.is_none(), "Valid layer state");
+        
         // Check if active layer is locked - prevent creation
         if self.check_active_layer_locked() {
             return Err(anyhow::anyhow!("Layer is locked"));
@@ -584,11 +594,19 @@ impl App {
         if let Some(layer_id) = self.active_layer {
             let _ = self.doc.set_shape_layer(id, layer_id);
         }
+        
+        debug_assert!(id.0 != uuid::Uuid::nil(), "Shape ID should be valid");
         Ok(id)
     }
 
     /// Switch to a different tool
     pub fn set_tool(&mut self, tool: Tool) {
+        debug_assert!(matches!(tool, Tool::Select | Tool::Freehand | Tool::Text | Tool::Line | 
+                                      Tool::Arrow | Tool::Rectangle | Tool::DoubleBox | Tool::Diamond |
+                                      Tool::Ellipse | Tool::Triangle | Tool::Parallelogram | Tool::Hexagon |
+                                      Tool::Trapezoid | Tool::RoundedRect | Tool::Cylinder | Tool::Cloud | Tool::Star),
+                      "Tool should be valid");
+        
         // If we're in text input mode, commit the text first
         if let Mode::TextInput(_) = &self.mode {
             self.commit_text();
@@ -605,6 +623,8 @@ impl App {
 
     /// Commit current text input as a shape
     pub fn commit_text(&mut self) {
+        debug_assert!(matches!(self.mode, Mode::TextInput(_)) || !matches!(self.mode, Mode::TextInput(_)));
+        
         // Extract values before borrowing self mutably
         let text_data = if let Mode::TextInput(state) = &self.mode {
             if !state.text.is_empty() {
@@ -617,6 +637,9 @@ impl App {
         };
 
         if let Some((pos, content)) = text_data {
+            debug_assert!(!content.is_empty(), "Content should not be empty here");
+            debug_assert!(pos.x.abs() < 100000 && pos.y.abs() < 100000, "Position should be reasonable");
+            
             self.save_undo_state();
             if self
                 .add_shape_to_active_layer(ShapeKind::Text {
@@ -635,12 +658,20 @@ impl App {
 
     /// Start freehand drawing
     pub fn start_freehand(&mut self, pos: Position) {
+        debug_assert!(pos.x.abs() < 100000 && pos.y.abs() < 100000, "Position should be reasonable");
+        debug_assert!(self.freehand_state.is_none(), "Freehand state should be None when starting");
+        
         self.freehand_state = Some(FreehandState { points: vec![pos] });
     }
 
     /// Continue freehand drawing
     pub fn continue_freehand(&mut self, pos: Position) {
+        debug_assert!(pos.x.abs() < 100000 && pos.y.abs() < 100000, "Position should be reasonable");
+        debug_assert!(self.freehand_state.is_some(), "Freehand state should exist when continuing");
+        
         if let Some(ref mut state) = self.freehand_state {
+            debug_assert!(!state.points.is_empty(), "Points should not be empty");
+            
             // Add intermediate points for smooth lines
             if let Some(&last) = state.points.last() {
                 let points = crate::canvas::line_points(last, pos);
@@ -655,27 +686,40 @@ impl App {
 
     /// Finish freehand drawing and create shape
     pub fn finish_freehand(&mut self) {
-        if let Some(state) = self.freehand_state.take()
-            && !state.points.is_empty()
+        debug_assert!(self.freehand_state.is_some() || self.freehand_state.is_none());
+        
+        let Some(state) = self.freehand_state.take() else {
+            return;
+        };
+        
+        if state.points.is_empty() {
+            return;
+        }
+        
+        debug_assert!(state.points.len() >= 1, "Should have at least one point");
+        debug_assert!(self.brush_char.is_ascii() || !self.brush_char.is_ascii(), "Brush char valid");
+        
+        self.save_undo_state();
+        if self
+            .add_shape_to_active_layer(ShapeKind::Freehand {
+                points: state.points,
+                char: self.brush_char,
+                label: None,
+                color: self.current_color,
+            })
+            .is_ok()
         {
-            self.save_undo_state();
-            if self
-                .add_shape_to_active_layer(ShapeKind::Freehand {
-                    points: state.points,
-                    char: self.brush_char,
-                    label: None,
-                    color: self.current_color,
-                })
-                .is_ok()
-            {
-                self.rebuild_view();
-                self.doc.mark_dirty();
-            }
+            self.rebuild_view();
+            self.doc.mark_dirty();
         }
     }
 
     /// Start drawing a shape (line or rectangle)
     pub fn start_shape(&mut self, pos: Position) {
+        debug_assert!(pos.x.abs() < 100000 && pos.y.abs() < 100000, "Position should be reasonable");
+        debug_assert!(self.shape_state.is_none(), "Shape state should be None when starting");
+        debug_assert!(SNAP_THRESHOLD > 0, "Snap threshold must be positive");
+        
         // Check for snap point at start (shape snap takes priority)
         let shape_snap = self.shape_view.find_snap_point(pos, SNAP_THRESHOLD);
         let grid_snap = if shape_snap.is_none() {
@@ -706,6 +750,9 @@ impl App {
 
     /// Update shape preview position
     pub fn update_shape(&mut self, pos: Position) {
+        debug_assert!(pos.x.abs() < 100000 && pos.y.abs() < 100000, "Position should be reasonable");
+        debug_assert!(self.shape_state.is_some(), "Shape state should exist when updating");
+        
         // Check for snap point at current position (shape snap takes priority)
         let shape_snap = self.shape_view.find_snap_point(pos, SNAP_THRESHOLD);
         let grid_snap = if shape_snap.is_none() {
@@ -735,151 +782,220 @@ impl App {
 
     /// Commit the current shape
     pub fn commit_shape(&mut self) {
+        debug_assert!(self.shape_state.is_some() || self.shape_state.is_none(), "Valid shape state");
+        
         self.hover_snap = None;
         self.hover_grid_snap = None;
 
-        if let Some(state) = self.shape_state.take() {
-            // Use snapped positions if available
-            let start = state.start_snap.unwrap_or(state.start);
-            let end = state.current_snap.unwrap_or(state.current);
+        let Some(state) = self.shape_state.take() else {
+            return;
+        };
+        
+        // Use snapped positions if available
+        let start = state.start_snap.unwrap_or(state.start);
+        let end = state.current_snap.unwrap_or(state.current);
 
-            // Convert ShapeId to u64 for connection tracking
-            let start_conn = state.start_snap_id.map(|id| id.0.as_u128() as u64);
-            let current_conn = state.current_snap_id.map(|id| id.0.as_u128() as u64);
+        // Convert ShapeId to u64 for connection tracking
+        let start_conn = state.start_snap_id.map(|id| id.0.as_u128() as u64);
+        let current_conn = state.current_snap_id.map(|id| id.0.as_u128() as u64);
 
-            self.save_undo_state();
-            let result = match self.current_tool {
-                Tool::Line => self.add_shape_to_active_layer(ShapeKind::Line {
-                    start,
-                    end,
-                    style: self.line_style,
-                    start_connection: start_conn,
-                    end_connection: current_conn,
-                    label: None,
-                    color: self.current_color,
-                }),
-                Tool::Arrow => self.add_shape_to_active_layer(ShapeKind::Arrow {
-                    start,
-                    end,
-                    style: self.line_style,
-                    start_connection: start_conn,
-                    end_connection: current_conn,
-                    label: None,
-                    color: self.current_color,
-                }),
-                Tool::Rectangle => self.add_shape_to_active_layer(ShapeKind::Rectangle {
-                    start,
-                    end,
-                    label: None,
-                    color: self.current_color,
-                }),
-                Tool::DoubleBox => self.add_shape_to_active_layer(ShapeKind::DoubleBox {
-                    start,
-                    end,
-                    label: None,
-                    color: self.current_color,
-                }),
-                Tool::Diamond => {
-                    // Diamond uses center + half dimensions
-                    let center = start;
-                    let half_width = (end.x - start.x).abs().max(1);
-                    let half_height = (end.y - start.y).abs().max(1);
-                    self.add_shape_to_active_layer(ShapeKind::Diamond {
-                        center,
-                        half_width,
-                        half_height,
-                        label: None,
-                        color: self.current_color,
-                    })
-                }
-                Tool::Ellipse => {
-                    // Ellipse uses center + radii
-                    let center = start;
-                    let radius_x = (end.x - start.x).abs().max(1);
-                    let radius_y = (end.y - start.y).abs().max(1);
-                    self.add_shape_to_active_layer(ShapeKind::Ellipse {
-                        center,
-                        radius_x,
-                        radius_y,
-                        label: None,
-                        color: self.current_color,
-                    })
-                }
-                Tool::Triangle => {
-                    // Triangle from start to end, with third point below center
-                    let mid_x = (start.x + end.x) / 2;
-                    let height = (end.y - start.y).abs().max(1);
-                    let p3 = Position::new(mid_x, start.y + height);
-                    self.add_shape_to_active_layer(ShapeKind::Triangle {
-                        p1: start,
-                        p2: end,
-                        p3,
-                        label: None,
-                        color: self.current_color,
-                    })
-                }
-                Tool::Parallelogram => self.add_shape_to_active_layer(ShapeKind::Parallelogram {
-                    start,
-                    end,
-                    label: None,
-                    color: self.current_color,
-                }),
-                Tool::Hexagon => {
-                    let center = start;
-                    let radius_x = (end.x - start.x).abs().max(2);
-                    let radius_y = (end.y - start.y).abs().max(1);
-                    self.add_shape_to_active_layer(ShapeKind::Hexagon {
-                        center,
-                        radius_x,
-                        radius_y,
-                        label: None,
-                        color: self.current_color,
-                    })
-                }
-                Tool::Trapezoid => self.add_shape_to_active_layer(ShapeKind::Trapezoid {
-                    start,
-                    end,
-                    label: None,
-                    color: self.current_color,
-                }),
-                Tool::RoundedRect => self.add_shape_to_active_layer(ShapeKind::RoundedRect {
-                    start,
-                    end,
-                    label: None,
-                    color: self.current_color,
-                }),
-                Tool::Cylinder => self.add_shape_to_active_layer(ShapeKind::Cylinder {
-                    start,
-                    end,
-                    label: None,
-                    color: self.current_color,
-                }),
-                Tool::Cloud => self.add_shape_to_active_layer(ShapeKind::Cloud {
-                    start,
-                    end,
-                    label: None,
-                    color: self.current_color,
-                }),
-                Tool::Star => {
-                    let center = start;
-                    let outer_radius = (end.x - start.x).abs().max((end.y - start.y).abs()).max(2);
-                    let inner_radius = outer_radius / 2;
-                    self.add_shape_to_active_layer(ShapeKind::Star {
-                        center,
-                        outer_radius,
-                        inner_radius,
-                        label: None,
-                        color: self.current_color,
-                    })
-                }
-                _ => return,
-            };
+        self.save_undo_state();
+        
+        // Create shape based on current tool
+        let result = self.create_shape_for_tool(start, end, start_conn, current_conn);
 
-            if result.is_ok() {
-                self.rebuild_view();
-                self.doc.mark_dirty();
-            }
+        if result.is_ok() {
+            self.rebuild_view();
+            self.doc.mark_dirty();
         }
+    }
+    
+    /// Create a shape based on the current tool (helper for commit_shape)
+    fn create_shape_for_tool(
+        &mut self,
+        start: Position,
+        end: Position,
+        start_conn: Option<u64>,
+        current_conn: Option<u64>,
+    ) -> anyhow::Result<ShapeId> {
+        debug_assert!(start.x.abs() < 100000, "Start position should be reasonable");
+        debug_assert!(end.x.abs() < 100000, "End position should be reasonable");
+        
+        match self.current_tool {
+            Tool::Line | Tool::Arrow => {
+                self.create_line_or_arrow(start, end, start_conn, current_conn)
+            }
+            Tool::Rectangle | Tool::DoubleBox | Tool::Parallelogram 
+            | Tool::Trapezoid | Tool::RoundedRect | Tool::Cylinder | Tool::Cloud => {
+                self.create_box_shape(start, end)
+            }
+            Tool::Diamond | Tool::Ellipse | Tool::Hexagon | Tool::Star => {
+                self.create_radial_shape(start, end)
+            }
+            Tool::Triangle => self.create_triangle(start, end),
+            _ => Err(anyhow::anyhow!("Tool not supported for shape creation")),
+        }
+    }
+    
+    /// Create line or arrow shape
+    fn create_line_or_arrow(
+        &mut self,
+        start: Position,
+        end: Position,
+        start_conn: Option<u64>,
+        current_conn: Option<u64>,
+    ) -> anyhow::Result<ShapeId> {
+        debug_assert!(self.current_tool == Tool::Line || self.current_tool == Tool::Arrow);
+        
+        let kind = match self.current_tool {
+            Tool::Line => ShapeKind::Line {
+                start,
+                end,
+                style: self.line_style,
+                start_connection: start_conn,
+                end_connection: current_conn,
+                label: None,
+                color: self.current_color,
+            },
+            Tool::Arrow => ShapeKind::Arrow {
+                start,
+                end,
+                style: self.line_style,
+                start_connection: start_conn,
+                end_connection: current_conn,
+                label: None,
+                color: self.current_color,
+            },
+            _ => unreachable!("Only Line and Arrow tools supported"),
+        };
+        self.add_shape_to_active_layer(kind)
+    }
+    
+    /// Create box-like shapes (Rectangle, DoubleBox, etc.)
+    fn create_box_shape(&mut self, start: Position, end: Position) -> anyhow::Result<ShapeId> {
+        debug_assert!(start.x != end.x || start.y != end.y, "Shape should have size");
+        
+        let kind = match self.current_tool {
+            Tool::Rectangle => ShapeKind::Rectangle {
+                start,
+                end,
+                label: None,
+                color: self.current_color,
+            },
+            Tool::DoubleBox => ShapeKind::DoubleBox {
+                start,
+                end,
+                label: None,
+                color: self.current_color,
+            },
+            Tool::Parallelogram => ShapeKind::Parallelogram {
+                start,
+                end,
+                label: None,
+                color: self.current_color,
+            },
+            Tool::Trapezoid => ShapeKind::Trapezoid {
+                start,
+                end,
+                label: None,
+                color: self.current_color,
+            },
+            Tool::RoundedRect => ShapeKind::RoundedRect {
+                start,
+                end,
+                label: None,
+                color: self.current_color,
+            },
+            Tool::Cylinder => ShapeKind::Cylinder {
+                start,
+                end,
+                label: None,
+                color: self.current_color,
+            },
+            Tool::Cloud => ShapeKind::Cloud {
+                start,
+                end,
+                label: None,
+                color: self.current_color,
+            },
+            _ => unreachable!("Only box-like tools supported"),
+        };
+        self.add_shape_to_active_layer(kind)
+    }
+    
+    /// Create radial shapes (Diamond, Ellipse, Hexagon, Star)
+    fn create_radial_shape(&mut self, start: Position, end: Position) -> anyhow::Result<ShapeId> {
+        debug_assert!(start.x != end.x || start.y != end.y, "Shape should have size");
+        
+        let center = start;
+        let kind = match self.current_tool {
+            Tool::Diamond => {
+                let half_width = (end.x - start.x).abs().max(1);
+                let half_height = (end.y - start.y).abs().max(1);
+                ShapeKind::Diamond {
+                    center,
+                    half_width,
+                    half_height,
+                    label: None,
+                    color: self.current_color,
+                }
+            }
+            Tool::Ellipse => {
+                let radius_x = (end.x - start.x).abs().max(1);
+                let radius_y = (end.y - start.y).abs().max(1);
+                ShapeKind::Ellipse {
+                    center,
+                    radius_x,
+                    radius_y,
+                    label: None,
+                    color: self.current_color,
+                }
+            }
+            Tool::Hexagon => {
+                let radius_x = (end.x - start.x).abs().max(2);
+                let radius_y = (end.y - start.y).abs().max(1);
+                ShapeKind::Hexagon {
+                    center,
+                    radius_x,
+                    radius_y,
+                    label: None,
+                    color: self.current_color,
+                }
+            }
+            Tool::Star => {
+                let outer_radius = (end.x - start.x).abs().max((end.y - start.y).abs()).max(2);
+                let inner_radius = outer_radius / 2;
+                ShapeKind::Star {
+                    center,
+                    outer_radius,
+                    inner_radius,
+                    label: None,
+                    color: self.current_color,
+                }
+            }
+            _ => unreachable!("Only radial tools supported"),
+        };
+        self.add_shape_to_active_layer(kind)
+    }
+    
+    /// Create triangle shape
+    fn create_triangle(&mut self, start: Position, end: Position) -> anyhow::Result<ShapeId> {
+        debug_assert!(self.current_tool == Tool::Triangle);
+        debug_assert!(start.x != end.x || start.y != end.y, "Triangle should have size");
+        
+        // Triangle from start to end, with third point below center
+        let mid_x = (start.x + end.x) / 2;
+        let height = (end.y - start.y).abs().max(1);
+        let p3 = Position::new(mid_x, start.y + height);
+        
+        let kind = ShapeKind::Triangle {
+            p1: start,
+            p2: end,
+            p3,
+            label: None,
+            color: self.current_color,
+        };
+        self.add_shape_to_active_layer(kind)
     }
 
     /// Cancel the current shape
@@ -951,6 +1067,8 @@ impl App {
 
     /// Commit keyboard shape creation - create the shape at viewport center
     pub fn commit_keyboard_shape(&mut self) {
+        debug_assert!(matches!(self.mode, Mode::KeyboardShapeCreate(_)) || !matches!(self.mode, Mode::KeyboardShapeCreate(_)));
+        
         // Extract values from mode to avoid borrow issues
         let (tool, w, h) = if let Mode::KeyboardShapeCreate(state) = &self.mode {
             let w: i32 = state.width.parse().unwrap_or(10);
@@ -960,7 +1078,9 @@ impl App {
             return;
         };
 
-        if w <= 0 || h < 0 {
+        // Validate dimensions
+        let dimensions_valid = w > 0 && h >= 0;
+        if !dimensions_valid {
             self.set_error("Invalid dimensions");
             return;
         }
@@ -971,156 +1091,158 @@ impl App {
 
         self.save_undo_state();
 
-        let shape = match tool {
-            Tool::Line | Tool::Arrow => {
-                // w = length, h = vertical offset
-                let start = Position::new(center_x - w / 2, center_y);
-                let end = Position::new(center_x + w / 2, center_y + h);
-                if tool == Tool::Arrow {
-                    ShapeKind::Arrow {
-                        start,
-                        end,
-                        style: self.line_style,
-                        start_connection: None,
-                        end_connection: None,
-                        label: None,
-                        color: self.current_color,
-                    }
-                } else {
-                    ShapeKind::Line {
-                        start,
-                        end,
-                        style: self.line_style,
-                        start_connection: None,
-                        end_connection: None,
-                        label: None,
-                        color: self.current_color,
-                    }
-                }
-            }
-            Tool::Rectangle => {
-                let start = Position::new(center_x - w / 2, center_y - h / 2);
-                let end = Position::new(center_x + w / 2, center_y + h / 2);
-                ShapeKind::Rectangle {
-                    start,
-                    end,
-                    label: None,
-                    color: self.current_color,
-                }
-            }
-            Tool::DoubleBox => {
-                let start = Position::new(center_x - w / 2, center_y - h / 2);
-                let end = Position::new(center_x + w / 2, center_y + h / 2);
-                ShapeKind::DoubleBox {
-                    start,
-                    end,
-                    label: None,
-                    color: self.current_color,
-                }
-            }
-            Tool::Diamond => ShapeKind::Diamond {
-                center: Position::new(center_x, center_y),
-                half_width: w / 2,
-                half_height: h / 2,
-                label: None,
-                color: self.current_color,
-            },
-            Tool::Ellipse => ShapeKind::Ellipse {
-                center: Position::new(center_x, center_y),
-                radius_x: w / 2,
-                radius_y: h / 2,
-                label: None,
-                color: self.current_color,
-            },
-            Tool::Triangle => {
-                // Create isoceles triangle
-                let p1 = Position::new(center_x, center_y - h / 2); // top
-                let p2 = Position::new(center_x - w / 2, center_y + h / 2); // bottom left
-                let p3 = Position::new(center_x + w / 2, center_y + h / 2); // bottom right
-                ShapeKind::Triangle {
-                    p1,
-                    p2,
-                    p3,
-                    label: None,
-                    color: self.current_color,
-                }
-            }
-            Tool::Parallelogram => {
-                let start = Position::new(center_x - w / 2, center_y - h / 2);
-                let end = Position::new(center_x + w / 2, center_y + h / 2);
-                ShapeKind::Parallelogram {
-                    start,
-                    end,
-                    label: None,
-                    color: self.current_color,
-                }
-            }
-            Tool::Hexagon => ShapeKind::Hexagon {
-                center: Position::new(center_x, center_y),
-                radius_x: w / 2,
-                radius_y: h / 2,
-                label: None,
-                color: self.current_color,
-            },
-            Tool::Trapezoid => {
-                let start = Position::new(center_x - w / 2, center_y - h / 2);
-                let end = Position::new(center_x + w / 2, center_y + h / 2);
-                ShapeKind::Trapezoid {
-                    start,
-                    end,
-                    label: None,
-                    color: self.current_color,
-                }
-            }
-            Tool::RoundedRect => {
-                let start = Position::new(center_x - w / 2, center_y - h / 2);
-                let end = Position::new(center_x + w / 2, center_y + h / 2);
-                ShapeKind::RoundedRect {
-                    start,
-                    end,
-                    label: None,
-                    color: self.current_color,
-                }
-            }
-            Tool::Cylinder => {
-                let start = Position::new(center_x - w / 2, center_y - h / 2);
-                let end = Position::new(center_x + w / 2, center_y + h / 2);
-                ShapeKind::Cylinder {
-                    start,
-                    end,
-                    label: None,
-                    color: self.current_color,
-                }
-            }
-            Tool::Cloud => {
-                let start = Position::new(center_x - w / 2, center_y - h / 2);
-                let end = Position::new(center_x + w / 2, center_y + h / 2);
-                ShapeKind::Cloud {
-                    start,
-                    end,
-                    label: None,
-                    color: self.current_color,
-                }
-            }
-            Tool::Star => ShapeKind::Star {
-                center: Position::new(center_x, center_y),
-                outer_radius: w / 2,
-                inner_radius: h / 2,
-                label: None,
-                color: self.current_color,
-            },
-            _ => {
-                self.mode = Mode::Normal;
-                return;
-            }
-        };
-
+        // Create shape based on tool
+        let shape = self.create_keyboard_shape(tool, center_x, center_y, w, h);
+        
+        // Add shape to document
         if self.add_shape_to_active_layer(shape).is_ok() {
             self.rebuild_view();
             self.doc.mark_dirty();
             self.set_status(format!("Created {} ({}x{})", tool.name(), w, h));
         }
         self.mode = Mode::Normal;
+    }
+    
+    /// Create a shape from keyboard input (helper for commit_keyboard_shape)
+    fn create_keyboard_shape(&self, tool: Tool, center_x: i32, center_y: i32, w: i32, h: i32) -> ShapeKind {
+        debug_assert!(w > 0, "Width must be positive");
+        debug_assert!(h >= 0, "Height must be non-negative");
+        debug_assert!(center_x.abs() < 100000, "Center X should be reasonable");
+        debug_assert!(center_y.abs() < 100000, "Center Y should be reasonable");
+        
+        match tool {
+            Tool::Line | Tool::Arrow => self.create_keyboard_line_or_arrow(tool, center_x, center_y, w, h),
+            Tool::Rectangle => self.create_keyboard_rectangle(center_x, center_y, w, h),
+            Tool::DoubleBox => self.create_keyboard_double_box(center_x, center_y, w, h),
+            Tool::Diamond => self.create_keyboard_diamond(center_x, center_y, w, h),
+            Tool::Ellipse => self.create_keyboard_ellipse(center_x, center_y, w, h),
+            Tool::Triangle => self.create_keyboard_triangle(center_x, center_y, w, h),
+            Tool::Parallelogram => self.create_keyboard_parallelogram(center_x, center_y, w, h),
+            Tool::Hexagon => self.create_keyboard_hexagon(center_x, center_y, w, h),
+            Tool::Trapezoid => self.create_keyboard_trapezoid(center_x, center_y, w, h),
+            Tool::RoundedRect => self.create_keyboard_rounded_rect(center_x, center_y, w, h),
+            Tool::Cylinder => self.create_keyboard_cylinder(center_x, center_y, w, h),
+            Tool::Cloud => self.create_keyboard_cloud(center_x, center_y, w, h),
+            Tool::Star => self.create_keyboard_star(center_x, center_y, w, h),
+            _ => unreachable!("Unsupported tool for keyboard creation"),
+        }
+    }
+    
+    /// Create keyboard line or arrow
+    fn create_keyboard_line_or_arrow(&self, tool: Tool, center_x: i32, center_y: i32, w: i32, h: i32) -> ShapeKind {
+        debug_assert!(tool == Tool::Line || tool == Tool::Arrow);
+        // w = length, h = vertical offset
+        let start = Position::new(center_x - w / 2, center_y);
+        let end = Position::new(center_x + w / 2, center_y + h);
+        if tool == Tool::Arrow {
+            ShapeKind::Arrow {
+                start, end,
+                style: self.line_style,
+                start_connection: None,
+                end_connection: None,
+                label: None,
+                color: self.current_color,
+            }
+        } else {
+            ShapeKind::Line {
+                start, end,
+                style: self.line_style,
+                start_connection: None,
+                end_connection: None,
+                label: None,
+                color: self.current_color,
+            }
+        }
+    }
+    
+    fn create_keyboard_rectangle(&self, center_x: i32, center_y: i32, w: i32, h: i32) -> ShapeKind {
+        let start = Position::new(center_x - w / 2, center_y - h / 2);
+        let end = Position::new(center_x + w / 2, center_y + h / 2);
+        ShapeKind::Rectangle { start, end, label: None, color: self.current_color }
+    }
+    
+    fn create_keyboard_double_box(&self, center_x: i32, center_y: i32, w: i32, h: i32) -> ShapeKind {
+        let start = Position::new(center_x - w / 2, center_y - h / 2);
+        let end = Position::new(center_x + w / 2, center_y + h / 2);
+        ShapeKind::DoubleBox { start, end, label: None, color: self.current_color }
+    }
+    
+    fn create_keyboard_diamond(&self, center_x: i32, center_y: i32, w: i32, h: i32) -> ShapeKind {
+        ShapeKind::Diamond {
+            center: Position::new(center_x, center_y),
+            half_width: w / 2,
+            half_height: h / 2,
+            label: None,
+            color: self.current_color,
+        }
+    }
+    
+    fn create_keyboard_ellipse(&self, center_x: i32, center_y: i32, w: i32, h: i32) -> ShapeKind {
+        ShapeKind::Ellipse {
+            center: Position::new(center_x, center_y),
+            radius_x: w / 2,
+            radius_y: h / 2,
+            label: None,
+            color: self.current_color,
+        }
+    }
+    
+    fn create_keyboard_triangle(&self, center_x: i32, center_y: i32, w: i32, h: i32) -> ShapeKind {
+        // Create isoceles triangle
+        let p1 = Position::new(center_x, center_y - h / 2); // top
+        let p2 = Position::new(center_x - w / 2, center_y + h / 2); // bottom left
+        let p3 = Position::new(center_x + w / 2, center_y + h / 2); // bottom right
+        ShapeKind::Triangle { p1, p2, p3, label: None, color: self.current_color }
+    }
+    
+    fn create_keyboard_parallelogram(&self, center_x: i32, center_y: i32, w: i32, h: i32) -> ShapeKind {
+        let start = Position::new(center_x - w / 2, center_y - h / 2);
+        let end = Position::new(center_x + w / 2, center_y + h / 2);
+        ShapeKind::Parallelogram { start, end, label: None, color: self.current_color }
+    }
+    
+    fn create_keyboard_hexagon(&self, center_x: i32, center_y: i32, w: i32, h: i32) -> ShapeKind {
+        ShapeKind::Hexagon {
+            center: Position::new(center_x, center_y),
+            radius_x: w / 2,
+            radius_y: h / 2,
+            label: None,
+            color: self.current_color,
+        }
+    }
+    
+    fn create_keyboard_trapezoid(&self, center_x: i32, center_y: i32, w: i32, h: i32) -> ShapeKind {
+        let start = Position::new(center_x - w / 2, center_y - h / 2);
+        let end = Position::new(center_x + w / 2, center_y + h / 2);
+        ShapeKind::Trapezoid { start, end, label: None, color: self.current_color }
+    }
+    
+    fn create_keyboard_rounded_rect(&self, center_x: i32, center_y: i32, w: i32, h: i32) -> ShapeKind {
+        let start = Position::new(center_x - w / 2, center_y - h / 2);
+        let end = Position::new(center_x + w / 2, center_y + h / 2);
+        ShapeKind::RoundedRect { start, end, label: None, color: self.current_color }
+    }
+    
+    fn create_keyboard_cylinder(&self, center_x: i32, center_y: i32, w: i32, h: i32) -> ShapeKind {
+        let start = Position::new(center_x - w / 2, center_y - h / 2);
+        let end = Position::new(center_x + w / 2, center_y + h / 2);
+        ShapeKind::Cylinder { start, end, label: None, color: self.current_color }
+    }
+    
+    fn create_keyboard_cloud(&self, center_x: i32, center_y: i32, w: i32, h: i32) -> ShapeKind {
+        let start = Position::new(center_x - w / 2, center_y - h / 2);
+        let end = Position::new(center_x + w / 2, center_y + h / 2);
+        ShapeKind::Cloud { start, end, label: None, color: self.current_color }
+    }
+    
+    fn create_keyboard_star(&self, center_x: i32, center_y: i32, w: i32, h: i32) -> ShapeKind {
+        ShapeKind::Star {
+            center: Position::new(center_x, center_y),
+            outer_radius: w / 2,
+            inner_radius: h / 2,
+            label: None,
+            color: self.current_color,
+        }
     }
 
     /// Cancel keyboard shape creation
@@ -1135,6 +1257,9 @@ impl App {
     /// Select a single shape (replaces current selection)
     /// If the shape is part of a group, selects all shapes in the group
     pub fn select_single(&mut self, id: ShapeId) {
+        debug_assert!(id.0 != uuid::Uuid::nil(), "Shape ID should be valid");
+        debug_assert!(self.shape_view.get(id).is_some(), "Shape should exist in view");
+        
         self.selected.clear();
         self.selected.insert(id);
 
@@ -1159,6 +1284,8 @@ impl App {
         }
 
         let count = self.selected.len();
+        debug_assert!(count >= 1, "Should have at least one selected shape");
+        
         if count == 1 {
             self.set_status("Selected shape - drag to move, [Del] to delete");
         } else {
@@ -1171,6 +1298,8 @@ impl App {
 
     /// Toggle shape in selection (for Shift+click)
     pub fn toggle_selection(&mut self, id: ShapeId) {
+        debug_assert!(id.0 != uuid::Uuid::nil(), "Shape ID should be valid");
+        
         if self.selected.contains(&id) {
             self.selected.remove(&id);
         } else {
@@ -1180,7 +1309,9 @@ impl App {
 
     /// Clear all selection
     pub fn clear_selection(&mut self) {
+        debug_assert!(self.selected.len() < 100000, "Selection count should be reasonable");
         self.selected.clear();
+        debug_assert!(self.selected.is_empty(), "Selection should be empty after clear");
     }
 
     /// Select all shapes on the active layer (or all visible if no active layer)
@@ -1197,6 +1328,8 @@ impl App {
             }
         }
         let count = self.selected.len();
+        debug_assert!(count <= self.shape_view.shape_count() as usize, "Selection cannot exceed total shapes");
+        
         if count > 0 {
             self.set_status(format!("Selected {} shapes", count));
         } else {
@@ -1206,16 +1339,26 @@ impl App {
 
     /// Check if a shape is selected
     pub fn is_selected(&self, id: ShapeId) -> bool {
+        debug_assert!(id.0 != uuid::Uuid::nil(), "Shape ID should be valid");
         self.selected.contains(&id)
     }
 
     /// Select all shapes within a rectangle
     pub fn select_in_rect(&mut self, min: Position, max: Position) {
+        debug_assert!(min.x <= max.x, "min.x should be <= max.x");
+        debug_assert!(min.y <= max.y, "min.y should be <= max.y");
+        
         self.selected.clear();
         for shape in self.shape_view.iter() {
             let (sx_min, sy_min, sx_max, sy_max) = shape.bounds();
+            
             // Check if shape bounds intersect with selection rect
-            if sx_max >= min.x && sx_min <= max.x && sy_max >= min.y && sy_min <= max.y {
+            // Decompose compound condition for clarity
+            let x_overlaps = sx_max >= min.x && sx_min <= max.x;
+            let y_overlaps = sy_max >= min.y && sy_min <= max.y;
+            let intersects = x_overlaps && y_overlaps;
+            
+            if intersects {
                 self.selected.insert(shape.id);
             }
         }
@@ -1386,7 +1529,15 @@ impl App {
             match self.doc.delete_layer(layer_id) {
                 Ok(()) => {
                     // Set active layer to default
-                    self.active_layer = self.doc.get_default_layer().ok();
+                    match self.doc.get_default_layer() {
+                        Ok(default_layer) => {
+                            self.active_layer = Some(default_layer);
+                        }
+                        Err(e) => {
+                            self.set_warning(format!("Could not set default layer: {}", e));
+                            self.active_layer = None;
+                        }
+                    }
                     self.rebuild_view();
                     self.set_status("Deleted layer");
                 }
@@ -1398,11 +1549,13 @@ impl App {
     }
 
     /// Select a layer by index (1-based for keyboard shortcuts)
-    pub fn select_layer_by_index(&mut self, index: usize) {
+    pub fn select_layer_by_index(&mut self, index: u32) {
+        debug_assert!(index > 0, "Layer index must be 1-based");
         let layers = self.get_layers();
-        if index > 0 && index <= layers.len() {
-            self.active_layer = Some(layers[index - 1].id);
-            self.set_status(format!("Active layer: {}", layers[index - 1].name));
+        let index_usize = index as usize;
+        if index > 0 && index_usize <= layers.len() {
+            self.active_layer = Some(layers[index_usize - 1].id);
+            self.set_status(format!("Active layer: {}", layers[index_usize - 1].name));
         }
     }
 
@@ -1620,6 +1773,10 @@ impl App {
 
     /// Start dragging the selected shapes
     pub fn start_drag(&mut self, pos: Position) {
+        debug_assert!(pos.x.abs() < 100000 && pos.y.abs() < 100000, "Position should be reasonable");
+        debug_assert!(self.drag_state.is_none(), "Drag state should be None when starting");
+        debug_assert!(self.selected.len() < 100000, "Selection count should be reasonable");
+        
         if self.selected.is_empty() {
             return;
         }
@@ -1636,6 +1793,8 @@ impl App {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
+        
+        debug_assert!(started_at_ms > 0, "Timestamp should be positive");
 
         // Check if any remote peer is already dragging any of our selected shapes (soft lock)
         if let Some(ref presence_mgr) = self.presence {
@@ -1665,6 +1824,9 @@ impl App {
     /// Find shape-to-shape snap adjustments during drag
     /// Returns adjusted (dx, dy) and populates shape_snap_guides
     fn find_shape_snap(&mut self, raw_dx: i32, raw_dy: i32) -> (i32, i32) {
+        debug_assert!(raw_dx.abs() < 10000, "Raw dx should be reasonable");
+        debug_assert!(raw_dy.abs() < 10000, "Raw dy should be reasonable");
+        
         self.shape_snap_guides.clear();
 
         if self.selected.is_empty() {
@@ -1672,33 +1834,89 @@ impl App {
         }
 
         // Get combined bounds of all selected shapes
+        let Some((sel_min_x, sel_min_y, sel_max_x, sel_max_y)) = self.calculate_selection_bounds_internal()
+        else {
+            return (raw_dx, raw_dy);
+        };
+
+        // Calculate proposed positions after drag
+        let (new_min_x, new_max_x, new_center_x) = self.calculate_proposed_x_positions(sel_min_x, sel_max_x, raw_dx);
+        let (new_min_y, new_max_y, new_center_y) = self.calculate_proposed_y_positions(sel_min_y, sel_max_y, raw_dy);
+
+        // Find best snap points
+        let (snap_dx, snap_dy) = self.find_best_snap_points(
+            new_min_x, new_max_x, new_center_x,
+            new_min_y, new_max_y, new_center_y,
+            raw_dx, raw_dy
+        );
+
+        let final_dx = snap_dx.unwrap_or(raw_dx);
+        let final_dy = snap_dy.unwrap_or(raw_dy);
+
+        // Generate snap guides for visual feedback
+        self.generate_snap_guides(
+            snap_dx, snap_dy,
+            sel_min_x, sel_max_x, sel_min_y, sel_max_y,
+            raw_dx, raw_dy, final_dx, final_dy
+        );
+
+        (final_dx, final_dy)
+    }
+    
+    /// Calculate combined bounds of all selected shapes
+    fn calculate_selection_bounds_internal(&self) -> Option<(i32, i32, i32, i32)> {
+        debug_assert!(!self.selected.is_empty(), "Selection should not be empty");
+        
         let mut sel_min_x = i32::MAX;
         let mut sel_min_y = i32::MAX;
         let mut sel_max_x = i32::MIN;
         let mut sel_max_y = i32::MIN;
 
         for &id in &self.selected {
-            if let Some(shape) = self.shape_view.get(id) {
-                let (min_x, min_y, max_x, max_y) = shape.bounds();
-                sel_min_x = sel_min_x.min(min_x);
-                sel_min_y = sel_min_y.min(min_y);
-                sel_max_x = sel_max_x.max(max_x);
-                sel_max_y = sel_max_y.max(max_y);
-            }
+            let Some(shape) = self.shape_view.get(id) else {
+                continue;
+            };
+            
+            let (min_x, min_y, max_x, max_y) = shape.bounds();
+            sel_min_x = sel_min_x.min(min_x);
+            sel_min_y = sel_min_y.min(min_y);
+            sel_max_x = sel_max_x.max(max_x);
+            sel_max_y = sel_max_y.max(max_y);
         }
 
+        // Check if we found any valid bounds
         if sel_min_x == i32::MAX {
-            return (raw_dx, raw_dy);
+            None
+        } else {
+            Some((sel_min_x, sel_min_y, sel_max_x, sel_max_y))
         }
-
-        // Proposed new bounds after drag
-        let new_min_x = sel_min_x + raw_dx;
-        let new_max_x = sel_max_x + raw_dx;
-        let new_min_y = sel_min_y + raw_dy;
-        let new_max_y = sel_max_y + raw_dy;
+    }
+    
+    /// Calculate proposed X positions after drag
+    fn calculate_proposed_x_positions(&self, min_x: i32, max_x: i32, dx: i32) -> (i32, i32, i32) {
+        debug_assert!(min_x <= max_x, "Min should be <= max");
+        let new_min_x = min_x + dx;
+        let new_max_x = max_x + dx;
         let new_center_x = (new_min_x + new_max_x) / 2;
+        (new_min_x, new_max_x, new_center_x)
+    }
+    
+    /// Calculate proposed Y positions after drag
+    fn calculate_proposed_y_positions(&self, min_y: i32, max_y: i32, dy: i32) -> (i32, i32, i32) {
+        debug_assert!(min_y <= max_y, "Min should be <= max");
+        let new_min_y = min_y + dy;
+        let new_max_y = max_y + dy;
         let new_center_y = (new_min_y + new_max_y) / 2;
-
+        (new_min_y, new_max_y, new_center_y)
+    }
+    
+    /// Find best snap points for horizontal and vertical alignment
+    fn find_best_snap_points(
+        &self,
+        new_min_x: i32, new_max_x: i32, new_center_x: i32,
+        new_min_y: i32, new_max_y: i32, new_center_y: i32,
+        raw_dx: i32, raw_dy: i32
+    ) -> (Option<i32>, Option<i32>) {
         let mut snap_dx: Option<i32> = None;
         let mut snap_dy: Option<i32> = None;
         let mut best_dist_x = SNAP_THRESHOLD + 1;
@@ -1715,55 +1933,95 @@ impl App {
             let other_center_y = (other_min_y + other_max_y) / 2;
 
             // Check horizontal alignments (x-axis snapping)
-            let x_checks = [
-                (new_min_x, other_min_x, "left-left"),
-                (new_min_x, other_max_x, "left-right"),
-                (new_max_x, other_min_x, "right-left"),
-                (new_max_x, other_max_x, "right-right"),
-                (new_center_x, other_center_x, "center-center"),
-            ];
-
-            for (new_x, other_x, _label) in x_checks {
-                let dist = (new_x - other_x).abs();
-                if dist <= SNAP_THRESHOLD && dist < best_dist_x {
-                    best_dist_x = dist;
-                    snap_dx = Some(other_x - new_x + raw_dx);
-                }
-            }
+            snap_dx = self.check_horizontal_snap(
+                new_min_x, new_max_x, new_center_x,
+                other_min_x, other_max_x, other_center_x,
+                raw_dx, snap_dx, &mut best_dist_x
+            );
 
             // Check vertical alignments (y-axis snapping)
-            let y_checks = [
-                (new_min_y, other_min_y, "top-top"),
-                (new_min_y, other_max_y, "top-bottom"),
-                (new_max_y, other_min_y, "bottom-top"),
-                (new_max_y, other_max_y, "bottom-bottom"),
-                (new_center_y, other_center_y, "center-center"),
-            ];
-
-            for (new_y, other_y, _label) in y_checks {
-                let dist = (new_y - other_y).abs();
-                if dist <= SNAP_THRESHOLD && dist < best_dist_y {
-                    best_dist_y = dist;
-                    snap_dy = Some(other_y - new_y + raw_dy);
-                }
-            }
+            snap_dy = self.check_vertical_snap(
+                new_min_y, new_max_y, new_center_y,
+                other_min_y, other_max_y, other_center_y,
+                raw_dy, snap_dy, &mut best_dist_y
+            );
         }
 
-        let final_dx = snap_dx.unwrap_or(raw_dx);
-        let final_dy = snap_dy.unwrap_or(raw_dy);
+        (snap_dx, snap_dy)
+    }
+    
+    /// Check for horizontal (X-axis) snap points
+    fn check_horizontal_snap(
+        &self,
+        new_min_x: i32, new_max_x: i32, new_center_x: i32,
+        other_min_x: i32, other_max_x: i32, other_center_x: i32,
+        raw_dx: i32,
+        current_snap: Option<i32>,
+        best_dist: &mut i32
+    ) -> Option<i32> {
+        let x_checks = [
+            (new_min_x, other_min_x),
+            (new_min_x, other_max_x),
+            (new_max_x, other_min_x),
+            (new_max_x, other_max_x),
+            (new_center_x, other_center_x),
+        ];
 
-        // Generate snap guides for visual feedback
+        let mut snap = current_snap;
+        for (new_x, other_x) in x_checks {
+            let dist = (new_x - other_x).abs();
+            let is_closer = dist <= SNAP_THRESHOLD && dist < *best_dist;
+            if is_closer {
+                *best_dist = dist;
+                snap = Some(other_x - new_x + raw_dx);
+            }
+        }
+        snap
+    }
+    
+    /// Check for vertical (Y-axis) snap points
+    fn check_vertical_snap(
+        &self,
+        new_min_y: i32, new_max_y: i32, new_center_y: i32,
+        other_min_y: i32, other_max_y: i32, other_center_y: i32,
+        raw_dy: i32,
+        current_snap: Option<i32>,
+        best_dist: &mut i32
+    ) -> Option<i32> {
+        let y_checks = [
+            (new_min_y, other_min_y),
+            (new_min_y, other_max_y),
+            (new_max_y, other_min_y),
+            (new_max_y, other_max_y),
+            (new_center_y, other_center_y),
+        ];
+
+        let mut snap = current_snap;
+        for (new_y, other_y) in y_checks {
+            let dist = (new_y - other_y).abs();
+            let is_closer = dist <= SNAP_THRESHOLD && dist < *best_dist;
+            if is_closer {
+                *best_dist = dist;
+                snap = Some(other_y - new_y + raw_dy);
+            }
+        }
+        snap
+    }
+    
+    /// Generate visual snap guide lines
+    #[allow(clippy::too_many_arguments)]
+    fn generate_snap_guides(
+        &mut self,
+        snap_dx: Option<i32>, snap_dy: Option<i32>,
+        sel_min_x: i32, sel_max_x: i32, sel_min_y: i32, sel_max_y: i32,
+        raw_dx: i32, raw_dy: i32, final_dx: i32, final_dy: i32
+    ) {
+        // Generate vertical snap guide
         if snap_dx.is_some() {
-            let snapped_x = sel_min_x + final_dx;
-            // Find the vertical line position (could be left, right, or center)
-            let guide_x = if (snapped_x - sel_min_x - raw_dx).abs() <= SNAP_THRESHOLD {
-                snapped_x // left edge snapped
-            } else if ((sel_max_x + final_dx) - sel_max_x - raw_dx).abs() <= SNAP_THRESHOLD {
-                sel_max_x + final_dx // right edge snapped
-            } else {
-                (sel_min_x + sel_max_x) / 2 + final_dx // center snapped
-            };
-
+            let guide_x = self.calculate_snap_guide_x_position(
+                sel_min_x, sel_max_x, raw_dx, final_dx
+            );
+            
             self.shape_snap_guides.push(SnapGuide {
                 orientation: SnapOrientation::Vertical,
                 position: guide_x,
@@ -1772,16 +2030,12 @@ impl App {
             });
         }
 
+        // Generate horizontal snap guide
         if snap_dy.is_some() {
-            let snapped_y = sel_min_y + final_dy;
-            let guide_y = if (snapped_y - sel_min_y - raw_dy).abs() <= SNAP_THRESHOLD {
-                snapped_y
-            } else if ((sel_max_y + final_dy) - sel_max_y - raw_dy).abs() <= SNAP_THRESHOLD {
-                sel_max_y + final_dy
-            } else {
-                (sel_min_y + sel_max_y) / 2 + final_dy
-            };
-
+            let guide_y = self.calculate_snap_guide_y_position(
+                sel_min_y, sel_max_y, raw_dy, final_dy
+            );
+            
             self.shape_snap_guides.push(SnapGuide {
                 orientation: SnapOrientation::Horizontal,
                 position: guide_y,
@@ -1789,28 +2043,74 @@ impl App {
                 end: sel_max_x + final_dx + 2,
             });
         }
-
-        (final_dx, final_dy)
+    }
+    
+    /// Calculate X position for vertical snap guide line
+    fn calculate_snap_guide_x_position(&self, min_x: i32, max_x: i32, raw_dx: i32, final_dx: i32) -> i32 {
+        let snapped_x = min_x + final_dx;
+        
+        // Determine which edge snapped (left, right, or center)
+        let left_edge_snapped = (snapped_x - min_x - raw_dx).abs() <= SNAP_THRESHOLD;
+        if left_edge_snapped {
+            return snapped_x;
+        }
+        
+        let right_edge_snapped = ((max_x + final_dx) - max_x - raw_dx).abs() <= SNAP_THRESHOLD;
+        if right_edge_snapped {
+            return max_x + final_dx;
+        }
+        
+        // Center snapped
+        (min_x + max_x) / 2 + final_dx
+    }
+    
+    /// Calculate Y position for horizontal snap guide line
+    fn calculate_snap_guide_y_position(&self, min_y: i32, max_y: i32, raw_dy: i32, final_dy: i32) -> i32 {
+        let snapped_y = min_y + final_dy;
+        
+        // Determine which edge snapped (top, bottom, or center)
+        let top_edge_snapped = (snapped_y - min_y - raw_dy).abs() <= SNAP_THRESHOLD;
+        if top_edge_snapped {
+            return snapped_y;
+        }
+        
+        let bottom_edge_snapped = ((max_y + final_dy) - max_y - raw_dy).abs() <= SNAP_THRESHOLD;
+        if bottom_edge_snapped {
+            return max_y + final_dy;
+        }
+        
+        // Center snapped
+        (min_y + max_y) / 2 + final_dy
     }
 
     /// Continue dragging all selected shapes
     pub fn continue_drag(&mut self, pos: Position) {
+        debug_assert!(pos.x.abs() < 100000 && pos.y.abs() < 100000, "Position should be reasonable");
+        debug_assert!(self.drag_state.is_some() || self.drag_state.is_none(), "Valid drag state");
+        
         let Some(drag) = self.drag_state.as_ref() else {
             return;
         };
 
         let raw_dx = pos.x - drag.last_mouse.x;
         let raw_dy = pos.y - drag.last_mouse.y;
+        
+        debug_assert!(raw_dx.abs() < 1000, "Raw dx should be reasonable per frame");
+        debug_assert!(raw_dy.abs() < 1000, "Raw dy should be reasonable per frame");
 
-        if raw_dx == 0 && raw_dy == 0 {
+        let no_movement = raw_dx == 0 && raw_dy == 0;
+        if no_movement {
             return;
         }
 
         // Apply shape-to-shape snapping
         let (dx, dy) = self.find_shape_snap(raw_dx, raw_dy);
+        debug_assert!(dx.abs() <= raw_dx.abs() + SNAP_THRESHOLD, "Snap should be within threshold");
+        debug_assert!(dy.abs() <= raw_dy.abs() + SNAP_THRESHOLD, "Snap should be within threshold");
 
         // Collect all updates from cache (no document reads)
         let selected_ids: Vec<_> = self.selected.iter().copied().collect();
+        debug_assert!(!selected_ids.is_empty(), "Should have selected shapes when dragging");
 
         // Get translated shapes and connected shape updates from cache
         let mut all_updates: Vec<(ShapeId, ShapeKind)> = Vec::new();
@@ -1826,6 +2126,7 @@ impl App {
 
         // Collect modified shape IDs for later document update
         let modified_ids: Vec<ShapeId> = all_updates.iter().map(|(id, _)| *id).collect();
+        debug_assert!(!modified_ids.is_empty(), "Should have shapes to update");
 
         // Update ONLY the cache during drag (no document writes - they're slow!)
         for (id, new_kind) in all_updates {
@@ -1839,6 +2140,9 @@ impl App {
         if let Some(ref mut drag) = self.drag_state {
             drag.total_dx += dx;
             drag.total_dy += dy;
+            debug_assert!(drag.total_dx.abs() < 100000, "Total dx should be reasonable");
+            debug_assert!(drag.total_dy.abs() < 100000, "Total dy should be reasonable");
+            
             // Only advance last_mouse by the actual movement, not raw mouse position
             // This allows accumulated mouse movement to eventually escape snap zones
             drag.last_mouse.x += dx;
@@ -1850,18 +2154,37 @@ impl App {
 
     /// Finish dragging - write final positions to document
     pub fn finish_drag(&mut self) {
-        if let Some(drag) = self.drag_state.take()
-            && (drag.total_dx != 0 || drag.total_dy != 0)
-        {
-            // Dedupe modified shapes and write final positions to document
-            let mut written = std::collections::HashSet::new();
-            for id in drag.modified_shapes {
-                if written.insert(id) && let Some(shape) = self.shape_view.get(id) {
-                    let _ = self.doc.update_shape(id, shape.kind.clone());
-                }
-            }
-            self.doc.mark_dirty();
+        debug_assert!(self.drag_state.is_some() || self.drag_state.is_none(), "Valid drag state");
+        
+        let Some(drag) = self.drag_state.take() else {
+            self.shape_snap_guides.clear();
+            return;
+        };
+        
+        // Only write to document if shapes actually moved
+        let shapes_moved = drag.total_dx != 0 || drag.total_dy != 0;
+        if !shapes_moved {
+            self.shape_snap_guides.clear();
+            return;
         }
+        
+        // Dedupe modified shapes and write final positions to document
+        let mut written = std::collections::HashSet::new();
+        for id in drag.modified_shapes {
+            // Check if already written
+            if !written.insert(id) {
+                continue;
+            }
+            
+            // Get shape from cache
+            let Some(shape) = self.shape_view.get(id) else {
+                continue;
+            };
+            
+            // Write to document
+            let _ = self.doc.update_shape(id, shape.kind.clone());
+        }
+        self.doc.mark_dirty();
         self.shape_snap_guides.clear();
     }
 
@@ -1969,20 +2292,35 @@ impl App {
 
     /// Finish resizing - write final positions to document
     pub fn finish_resize(&mut self) {
-        if let Some(resize) = self.resize_state.take() {
-            // Dedupe modified shapes and write final positions to document
-            let mut written = std::collections::HashSet::new();
-            for id in resize.modified_shapes {
-                if written.insert(id) && let Some(shape) = self.shape_view.get(id) {
-                    let _ = self.doc.update_shape(id, shape.kind.clone());
-                }
+        debug_assert!(self.resize_state.is_some() || self.resize_state.is_none(), "Valid resize state");
+        
+        let Some(resize) = self.resize_state.take() else {
+            return;
+        };
+        
+        // Dedupe modified shapes and write final positions to document
+        let mut written = std::collections::HashSet::new();
+        for id in resize.modified_shapes {
+            // Check if already written
+            if !written.insert(id) {
+                continue;
             }
-            self.doc.mark_dirty();
+            
+            // Get shape from cache
+            let Some(shape) = self.shape_view.get(id) else {
+                continue;
+            };
+            
+            // Write to document
+            let _ = self.doc.update_shape(id, shape.kind.clone());
         }
+        self.doc.mark_dirty();
     }
 
     /// Delete all selected shapes
     pub fn delete_selected(&mut self) {
+        debug_assert!(self.selected.len() < 100000, "Selection count should be reasonable");
+        
         if self.selected.is_empty() {
             return;
         }
@@ -1994,8 +2332,11 @@ impl App {
             .filter(|&&id| self.is_shape_locked(id))
             .count();
 
+        debug_assert!(locked_count <= self.selected.len(), "Locked count cannot exceed selection");
+
         if locked_count > 0 {
-            if locked_count == self.selected.len() {
+            let all_locked = locked_count == self.selected.len();
+            if all_locked {
                 self.set_error("Cannot delete - all selected shapes are on locked layers");
                 return;
             } else {
@@ -2014,6 +2355,9 @@ impl App {
             .filter(|&id| !self.is_shape_locked(id))
             .collect();
         let delete_count = ids.len();
+        debug_assert!(delete_count > 0, "Should have at least one shape to delete");
+        debug_assert!(delete_count <= self.selected.len(), "Delete count cannot exceed selection");
+        
         for id in ids {
             let _ = self.doc.delete_shape(id);
         }
@@ -2029,6 +2373,10 @@ impl App {
 
     /// Nudge selected shapes by (dx, dy)
     pub fn nudge_selection(&mut self, dx: i32, dy: i32) {
+        debug_assert!(dx.abs() <= 100, "Nudge delta should be small");
+        debug_assert!(dy.abs() <= 100, "Nudge delta should be small");
+        debug_assert!(self.selected.len() < 100000, "Selection count should be reasonable");
+        
         if self.selected.is_empty() {
             return;
         }
@@ -2040,7 +2388,8 @@ impl App {
             .filter(|&&id| self.is_shape_locked(id))
             .count();
 
-        if locked_count > 0 && locked_count == self.selected.len() {
+        let all_locked = locked_count > 0 && locked_count == self.selected.len();
+        if all_locked {
             self.set_error("Cannot move - all selected shapes are on locked layers");
             return;
         }
@@ -2127,21 +2476,36 @@ impl App {
 
     /// Start label input for the selected shape (only works with single selection)
     pub fn start_label_input(&mut self) -> bool {
-        if self.selected.len() == 1
-            && let Some(&id) = self.selected.iter().next()
-            && let Some(shape) = self.shape_view.get(id)
-            && shape.supports_label()
-        {
-            let existing_label = shape.label().unwrap_or("").to_string();
-            let cursor = existing_label.chars().count();
-            self.mode = Mode::LabelInput(LabelInputState {
-                shape_id: id,
-                text: existing_label,
-                cursor,
-            });
-            return true;
+        debug_assert!(self.selected.len() <= 100, "Selection should be reasonable");
+        
+        // Check single selection
+        if self.selected.len() != 1 {
+            return false;
         }
-        false
+        
+        // Get selected shape ID
+        let Some(&id) = self.selected.iter().next() else {
+            return false;
+        };
+        
+        // Get shape from view
+        let Some(shape) = self.shape_view.get(id) else {
+            return false;
+        };
+        
+        // Check if shape supports labels
+        if !shape.supports_label() {
+            return false;
+        }
+        
+        let existing_label = shape.label().unwrap_or("").to_string();
+        let cursor = existing_label.chars().count() as u32;
+        self.mode = Mode::LabelInput(LabelInputState {
+            shape_id: id,
+            text: existing_label,
+            cursor,
+        });
+        true
     }
 
     /// Add a character to current label input at cursor position
@@ -2149,8 +2513,9 @@ impl App {
         if let Mode::LabelInput(state) = &mut self.mode {
             // Convert to Vec<char> for proper Unicode handling
             let mut chars: Vec<char> = state.text.chars().collect();
-            if state.cursor <= chars.len() {
-                chars.insert(state.cursor, ch);
+            let cursor_pos = state.cursor as usize;
+            if cursor_pos <= chars.len() {
+                chars.insert(cursor_pos, ch);
                 state.text = chars.into_iter().collect();
                 state.cursor += 1;
             }
@@ -2163,7 +2528,8 @@ impl App {
             && state.cursor > 0
         {
             let mut chars: Vec<char> = state.text.chars().collect();
-            chars.remove(state.cursor - 1);
+            let cursor_pos = state.cursor as usize;
+            chars.remove(cursor_pos - 1);
             state.text = chars.into_iter().collect();
             state.cursor -= 1;
         }
@@ -2181,7 +2547,7 @@ impl App {
     /// Move label cursor right
     pub fn move_label_cursor_right(&mut self) {
         if let Mode::LabelInput(state) = &mut self.mode {
-            let len = state.text.chars().count();
+            let len = state.text.chars().count() as u32;
             if state.cursor < len {
                 state.cursor += 1;
             }
@@ -2198,7 +2564,7 @@ impl App {
     /// Move label cursor to end
     pub fn move_label_cursor_end(&mut self) {
         if let Mode::LabelInput(state) = &mut self.mode {
-            state.cursor = state.text.chars().count();
+            state.cursor = state.text.chars().count() as u32;
         }
     }
 
@@ -2206,9 +2572,10 @@ impl App {
     pub fn delete_label_char(&mut self) {
         if let Mode::LabelInput(state) = &mut self.mode {
             let chars: Vec<char> = state.text.chars().collect();
-            if state.cursor < chars.len() {
+            let cursor_pos = state.cursor as usize;
+            if cursor_pos < chars.len() {
                 let mut chars = chars;
-                chars.remove(state.cursor);
+                chars.remove(cursor_pos);
                 state.text = chars.into_iter().collect();
             }
         }
@@ -2301,16 +2668,18 @@ impl App {
     // ========== Popup Selection Methods ==========
 
     /// Confirm popup selection with explicit kind and index
-    pub fn confirm_popup_selection_with_index(&mut self, kind: PopupKind, selected: usize) {
+    pub fn confirm_popup_selection_with_index(&mut self, kind: PopupKind, selected: u32) {
+        debug_assert!(selected < 1000, "Selection index must be reasonable");
+        let selected_usize = selected as usize;
         match kind {
             PopupKind::Tool => {
-                if let Some(&tool) = TOOLS.get(selected) {
+                if let Some(&tool) = TOOLS.get(selected_usize) {
                     self.current_tool = tool;
                     self.set_status(format!("Tool: {}", tool.name()));
                 }
             }
             PopupKind::Color => {
-                if let Some(&color) = COLORS.get(selected) {
+                if let Some(&color) = COLORS.get(selected_usize) {
                     self.current_color = color;
                     // Also apply color to selected shapes
                     if !self.selected.is_empty() {
@@ -2330,7 +2699,7 @@ impl App {
                 }
             }
             PopupKind::Brush => {
-                if let Some(&brush) = BRUSHES.get(selected) {
+                if let Some(&brush) = BRUSHES.get(selected_usize) {
                     self.brush_char = brush;
                     self.set_status(format!("Brush: '{}'", brush));
                 }
@@ -2340,13 +2709,15 @@ impl App {
     }
 
     /// Apply a color to all selected shapes
-    pub fn apply_color_to_selected(&mut self, color: ShapeColor) -> usize {
+    pub fn apply_color_to_selected(&mut self, color: ShapeColor) -> u32 {
+        debug_assert!(!self.selected.is_empty(), "Should check for empty selection before calling");
+        
         if self.selected.is_empty() {
             return 0;
         }
 
         self.save_undo_state();
-        let mut count = 0;
+        let mut count: u32 = 0;
 
         // Collect shape IDs to avoid borrow issues
         let selected_ids: Vec<ShapeId> = self.selected.iter().copied().collect();
@@ -2371,6 +2742,8 @@ impl App {
     /// Get a description of the selected shape for the status bar
     /// Returns None if no single shape is selected
     pub fn get_selected_shape_info(&self) -> Option<String> {
+        debug_assert!(self.selected.len() <= 1 || self.selected.len() > 1, "Valid selection state");
+        
         if self.selected.len() != 1 {
             return None;
         }
@@ -2381,25 +2754,32 @@ impl App {
         let shape_type = shape.kind.type_name();
         let color = shape.kind.color().name();
 
-        // Get layer name
+        // Get layer name - handle errors explicitly
         let layer_info = if let Some(layer_id) = shape.layer_id {
-            self.doc
-                .read_layer(layer_id)
-                .ok()
-                .flatten()
-                .map(|l| l.name.clone())
-                .unwrap_or_else(|| "Unknown".to_string())
+            match self.doc.read_layer(layer_id) {
+                Ok(Some(layer)) => layer.name.clone(),
+                Ok(None) => {
+                    debug_assert!(false, "Layer ID exists but layer not found");
+                    "Missing".to_string()
+                }
+                Err(_e) => {
+                    // Error reading layer - non-critical
+                    "Error".to_string()
+                }
+            }
         } else {
             "Default".to_string()
         };
 
-        // Check if shape is grouped
-        let group_info = self
-            .doc
-            .get_shape_group(id)
-            .ok()
-            .flatten()
-            .map(|_| " | Grouped".to_string());
+        // Check if shape is grouped - handle errors explicitly
+        let group_info = match self.doc.get_shape_group(id) {
+            Ok(Some(_group_id)) => Some(" | Grouped".to_string()),
+            Ok(None) => None,
+            Err(_e) => {
+                // Error reading group - non-critical, treat as not grouped
+                None
+            }
+        };
 
         Some(format!(
             "{} | {} | Layer: {}{}",
@@ -2514,7 +2894,7 @@ impl App {
             return;
         };
 
-        let filtered_len = self.get_filtered_sessions(&filter, show_pinned_only).len();
+        let filtered_len = self.get_filtered_sessions(&filter, show_pinned_only).len() as u32;
         if let Mode::SessionBrowser(state) = &mut self.mode {
             if filtered_len == 0 {
                 state.selected = 0;
@@ -2672,9 +3052,12 @@ impl App {
     }
 
     /// Open a file from the recent files list by index
-    pub fn open_recent_file(&mut self, index: usize) {
+    pub fn open_recent_file(&mut self, index: u32) {
         use crate::file_io;
-        if let Some(file) = self.recent_files.get(index) {
+        debug_assert!((index as usize) < self.recent_files.len(), "Index must be valid");
+        
+        let index_usize = index as usize;
+        if let Some(file) = self.recent_files.get(index_usize) {
             let path = file.path.clone();
             match file_io::load_ascii(&path) {
                 Ok(shapes) => {

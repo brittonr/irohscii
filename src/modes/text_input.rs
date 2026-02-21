@@ -7,6 +7,7 @@ use super::{ModeContext, ModeHandler, ModeTransition, TextInputState};
 
 impl ModeHandler for TextInputState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
+        debug_assert!(self.text.len() <= 4096, "Text length should be reasonable");
         match key.code {
             KeyCode::Esc | KeyCode::Enter => {
                 ctx.app.commit_text();

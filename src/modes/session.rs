@@ -12,84 +12,109 @@ use super::{
 // Session Browser Mode
 // ============================================================================
 
-impl ModeHandler for SessionBrowserState {
-    fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
+impl SessionBrowserState {
+    /// Handle navigation keys
+    fn handle_navigation(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> Option<ModeTransition> {
         match key.code {
-            // Close browser
-            KeyCode::Esc | KeyCode::Tab => ModeTransition::Normal,
-            // Navigate down
             KeyCode::Char('j') | KeyCode::Down => {
                 let len = ctx
                     .app
                     .get_filtered_sessions(&self.filter, self.show_pinned_only)
-                    .len();
+                    .len() as u32;
                 if len > 0 {
                     self.selected = (self.selected + 1).min(len - 1);
                 }
-                ModeTransition::Stay
+                Some(ModeTransition::Stay)
             }
-            // Navigate up
             KeyCode::Char('k') | KeyCode::Up => {
                 self.selected = self.selected.saturating_sub(1);
-                ModeTransition::Stay
+                Some(ModeTransition::Stay)
             }
-            // Select session
+            _ => None,
+        }
+    }
+
+    /// Handle session actions (select, delete, pin)
+    fn handle_session_actions(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> Option<ModeTransition> {
+        match key.code {
             KeyCode::Enter => {
                 let filtered =
                     ctx.app.get_filtered_sessions(&self.filter, self.show_pinned_only);
-                if let Some(session) = filtered.get(self.selected) {
-                    ModeTransition::Action(ModeAction::SwitchSession(session.id.clone()))
+                if let Some(session) = filtered.get(self.selected as usize) {
+                    Some(ModeTransition::Action(ModeAction::SwitchSession(session.id.clone())))
                 } else {
-                    ModeTransition::Normal
+                    Some(ModeTransition::Normal)
                 }
             }
-            // Create new session
-            KeyCode::Char('n') => ModeTransition::to(Mode::SessionCreate(SessionCreateState {
+            KeyCode::Char('n') => Some(ModeTransition::to(Mode::SessionCreate(SessionCreateState {
                 name: String::new(),
-            })),
-            // Delete session
+            }))),
             KeyCode::Char('d') | KeyCode::Delete => {
                 let filtered =
                     ctx.app.get_filtered_sessions(&self.filter, self.show_pinned_only);
-                if let Some(session) = filtered.get(self.selected) {
-                    // Don't allow deleting current session
-                    if ctx.app.current_session.as_ref() == Some(&session.id) {
+                if let Some(session) = filtered.get(self.selected as usize) {
+                    let is_current = ctx.app.current_session.as_ref() == Some(&session.id);
+                    if is_current {
                         ctx.app.set_error("Cannot delete the active session");
-                        ModeTransition::Stay
+                        Some(ModeTransition::Stay)
                     } else {
-                        ModeTransition::Action(ModeAction::DeleteSession(session.id.clone()))
+                        Some(ModeTransition::Action(ModeAction::DeleteSession(session.id.clone())))
                     }
                 } else {
-                    ModeTransition::Stay
+                    Some(ModeTransition::Stay)
                 }
             }
-            // Toggle pinned - returns action for main loop to handle
             KeyCode::Char('p') => {
                 let filtered =
                     ctx.app.get_filtered_sessions(&self.filter, self.show_pinned_only);
-                if let Some(session) = filtered.get(self.selected) {
-                    ModeTransition::Action(ModeAction::ToggleSessionPin(session.id.clone()))
+                if let Some(session) = filtered.get(self.selected as usize) {
+                    Some(ModeTransition::Action(ModeAction::ToggleSessionPin(session.id.clone())))
                 } else {
-                    ModeTransition::Stay
+                    Some(ModeTransition::Stay)
                 }
             }
-            // Toggle pinned-only filter
+            _ => None,
+        }
+    }
+}
+
+impl ModeHandler for SessionBrowserState {
+    fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
+        debug_assert!(self.filter.len() <= 256, "Filter should be reasonably sized");
+        
+        // Try navigation
+        if let Some(transition) = self.handle_navigation(ctx, key) {
+            return transition;
+        }
+        
+        // Try session actions
+        if let Some(transition) = self.handle_session_actions(ctx, key) {
+            return transition;
+        }
+        // Handle remaining keys
+        match key.code {
+            KeyCode::Esc | KeyCode::Tab => ModeTransition::Normal,
             KeyCode::Char('*') => {
                 self.show_pinned_only = !self.show_pinned_only;
                 self.selected = 0;
                 ModeTransition::Stay
             }
-            // Backspace for filter
             KeyCode::Backspace => {
                 self.filter.pop();
                 self.selected = 0;
                 ModeTransition::Stay
             }
-            // Type to filter
-            KeyCode::Char(c) if c.is_alphanumeric() || c == '-' || c == '_' => {
-                self.filter.push(c);
-                self.selected = 0;
-                ModeTransition::Stay
+            KeyCode::Char(c) => {
+                let is_alphanum = c.is_alphanumeric();
+                let is_dash = c == '-';
+                let is_underscore = c == '_';
+                if is_alphanum || is_dash || is_underscore {
+                    self.filter.push(c);
+                    self.selected = 0;
+                    ModeTransition::Stay
+                } else {
+                    ModeTransition::Stay
+                }
             }
             _ => ModeTransition::Stay,
         }
@@ -114,6 +139,7 @@ impl ModeHandler for SessionBrowserState {
 
 impl ModeHandler for SessionCreateState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
+        debug_assert!(self.name.len() <= 256, "Session name should be reasonably sized");
         match key.code {
             KeyCode::Esc => ModeTransition::Normal,
             KeyCode::Enter => {

@@ -6,6 +6,7 @@ members = [
     "crates/irohscii-sync",
     "crates/irohscii-export",
     "crates/irohscii-session",
+    "crates/iroh-collab",
 ]
 
 [workspace.package]
@@ -40,6 +41,9 @@ anyhow = "1.0"
 
 # Async runtime
 tokio = { version = "1", features = ["rt", "sync", "macros"] }
+
+# Logging
+tracing = "0.1"
 
 # P2P networking
 iroh = "0.95"

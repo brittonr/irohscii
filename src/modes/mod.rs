@@ -100,8 +100,10 @@ pub struct TextInputState {
 pub struct LabelInputState {
     pub shape_id: ShapeId,
     pub text: String,
-    pub cursor: usize,
+    pub cursor: u32,
 }
+
+const _: () = assert!(u32::MAX as usize >= 65536, "u32 must fit reasonable text lengths");
 
 /// Layer rename mode state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,14 +163,14 @@ impl PathInputKind {
 /// Recent files browser state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentFilesState {
-    pub selected: usize,
+    pub selected: u32,
 }
 
 /// Selection popup state (tool, color, brush selection).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectionPopupState {
     pub kind: PopupKind,
-    pub selected: usize,
+    pub selected: u32,
     /// The key that triggered this popup (for release-to-confirm).
     pub trigger_key: Option<crossterm::event::KeyCode>,
 }
@@ -182,7 +184,7 @@ pub struct ConfirmDialogState {
 /// Help screen state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HelpScreenState {
-    pub scroll: usize,
+    pub scroll: u32,
 }
 
 /// Leader menu state - Helix-style space/colon menu.
@@ -192,7 +194,7 @@ pub struct LeaderMenuState;
 /// Session browser state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionBrowserState {
-    pub selected: usize,
+    pub selected: u32,
     pub filter: String,
     pub show_pinned_only: bool,
 }
@@ -363,7 +365,7 @@ impl Mode {
 
     /// Create a new label input mode for the given shape.
     pub fn label_input(shape_id: ShapeId, initial_text: String) -> Self {
-        let cursor = initial_text.len();
+        let cursor = initial_text.len() as u32;
         Mode::LabelInput(LabelInputState {
             shape_id,
             text: initial_text,
@@ -425,7 +427,7 @@ impl Mode {
     }
 
     /// Create a tool selection popup.
-    pub fn tool_popup(current_tool_index: usize, trigger_key: Option<crossterm::event::KeyCode>) -> Self {
+    pub fn tool_popup(current_tool_index: u32, trigger_key: Option<crossterm::event::KeyCode>) -> Self {
         Mode::SelectionPopup(SelectionPopupState {
             kind: PopupKind::Tool,
             selected: current_tool_index,
@@ -434,7 +436,7 @@ impl Mode {
     }
 
     /// Create a color selection popup.
-    pub fn color_popup(current_color_index: usize, trigger_key: Option<crossterm::event::KeyCode>) -> Self {
+    pub fn color_popup(current_color_index: u32, trigger_key: Option<crossterm::event::KeyCode>) -> Self {
         Mode::SelectionPopup(SelectionPopupState {
             kind: PopupKind::Color,
             selected: current_color_index,
@@ -443,7 +445,7 @@ impl Mode {
     }
 
     /// Create a brush selection popup.
-    pub fn brush_popup(current_brush_index: usize, trigger_key: Option<crossterm::event::KeyCode>) -> Self {
+    pub fn brush_popup(current_brush_index: u32, trigger_key: Option<crossterm::event::KeyCode>) -> Self {
         Mode::SelectionPopup(SelectionPopupState {
             kind: PopupKind::Brush,
             selected: current_brush_index,

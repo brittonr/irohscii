@@ -16,6 +16,11 @@ use irohscii_core::{CachedShape, LineStyle, Position, ShapeKind, ShapeView};
 const CHAR_WIDTH: i32 = 10;
 const CHAR_HEIGHT: i32 = 16;
 
+// Compile-time assertions for character dimensions
+const _: () = assert!(CHAR_WIDTH > 0, "CHAR_WIDTH must be positive");
+const _: () = assert!(CHAR_HEIGHT > 0, "CHAR_HEIGHT must be positive");
+const _: () = assert!(CHAR_HEIGHT >= CHAR_WIDTH, "CHAR_HEIGHT should be >= CHAR_WIDTH for monospace aspect ratio");
+
 /// Context for rendering shapes to SVG, containing common parameters
 struct RenderContext<'a> {
     output: &'a mut String,
@@ -43,8 +48,13 @@ pub fn export_svg(shapes: &ShapeView) -> String {
 
     // Calculate bounding box
     let (min_x, min_y, max_x, max_y) = calculate_bounds(shapes);
+    debug_assert!(max_x >= min_x, "max_x must be >= min_x");
+    debug_assert!(max_y >= min_y, "max_y must be >= min_y");
+    
     let width = (max_x - min_x + 2) * CHAR_WIDTH;
     let height = (max_y - min_y + 2) * CHAR_HEIGHT;
+    debug_assert!(width > 0, "SVG width must be positive");
+    debug_assert!(height > 0, "SVG height must be positive");
 
     // Offset to translate shapes to start at (CHAR_WIDTH, CHAR_HEIGHT)
     let offset_x = -min_x + 1;
@@ -60,7 +70,7 @@ pub fn export_svg(shapes: &ShapeView) -> String {
      style="background-color: white;">"#,
         width, height, width, height
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     // Arrow marker definitions
     writeln!(
@@ -72,7 +82,7 @@ pub fn export_svg(shapes: &ShapeView) -> String {
     </marker>
   </defs>"#
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     // Render each shape
     for shape in shapes.iter() {
@@ -80,7 +90,7 @@ pub fn export_svg(shapes: &ShapeView) -> String {
     }
 
     // SVG footer
-    writeln!(&mut output, "</svg>").unwrap();
+    writeln!(&mut output, "</svg>").expect("write to String is infallible");
 
     output
 }
@@ -116,6 +126,8 @@ fn calculate_bounds(shapes: &ShapeView) -> (i32, i32, i32, i32) {
 
 /// Render a single shape to SVG
 fn render_shape(output: &mut String, shape: &CachedShape, offset_x: i32, offset_y: i32) {
+    debug_assert!(!shape.kind.color().to_css().is_empty(), "Shape color must be valid");
+    
     let color = shape.kind.color().to_css();
     let mut ctx = RenderContext {
         output,
@@ -123,26 +135,32 @@ fn render_shape(output: &mut String, shape: &CachedShape, offset_x: i32, offset_
         offset_x,
         offset_y,
     };
-    match &shape.kind {
+    
+    dispatch_shape_renderer(&mut ctx, &shape.kind);
+}
+
+/// Dispatch rendering to the appropriate shape-specific function
+fn dispatch_shape_renderer(ctx: &mut RenderContext<'_>, kind: &ShapeKind) {
+    match kind {
         ShapeKind::Line {
             start, end, style, ..
         } => {
-            render_line(&mut ctx, *start, *end, *style, false);
+            render_line(ctx, *start, *end, *style, false);
         }
         ShapeKind::Arrow {
             start, end, style, ..
         } => {
-            render_line(&mut ctx, *start, *end, *style, true);
+            render_line(ctx, *start, *end, *style, true);
         }
         ShapeKind::Rectangle {
             start, end, label, ..
         } => {
-            render_rectangle(&mut ctx, *start, *end, label.as_deref(), false);
+            render_rectangle(ctx, *start, *end, label.as_deref(), false);
         }
         ShapeKind::DoubleBox {
             start, end, label, ..
         } => {
-            render_rectangle(&mut ctx, *start, *end, label.as_deref(), true);
+            render_rectangle(ctx, *start, *end, label.as_deref(), true);
         }
         ShapeKind::Diamond {
             center,
@@ -151,7 +169,7 @@ fn render_shape(output: &mut String, shape: &CachedShape, offset_x: i32, offset_
             label,
             ..
         } => {
-            render_diamond(&mut ctx, *center, *half_width, *half_height, label.as_deref());
+            render_diamond(ctx, *center, *half_width, *half_height, label.as_deref());
         }
         ShapeKind::Ellipse {
             center,
@@ -160,23 +178,23 @@ fn render_shape(output: &mut String, shape: &CachedShape, offset_x: i32, offset_
             label,
             ..
         } => {
-            render_ellipse(&mut ctx, *center, *radius_x, *radius_y, label.as_deref());
+            render_ellipse(ctx, *center, *radius_x, *radius_y, label.as_deref());
         }
         ShapeKind::Freehand { points, .. } => {
-            render_freehand(&mut ctx, points);
+            render_freehand(ctx, points);
         }
         ShapeKind::Text { pos, content, .. } => {
-            render_text(&mut ctx, *pos, content);
+            render_text(ctx, *pos, content);
         }
         ShapeKind::Triangle {
             p1, p2, p3, label, ..
         } => {
-            render_triangle(&mut ctx, *p1, *p2, *p3, label.as_deref());
+            render_triangle(ctx, *p1, *p2, *p3, label.as_deref());
         }
         ShapeKind::Parallelogram {
             start, end, label, ..
         } => {
-            render_parallelogram(&mut ctx, *start, *end, label.as_deref());
+            render_parallelogram(ctx, *start, *end, label.as_deref());
         }
         ShapeKind::Hexagon {
             center,
@@ -185,27 +203,27 @@ fn render_shape(output: &mut String, shape: &CachedShape, offset_x: i32, offset_
             label,
             ..
         } => {
-            render_hexagon(&mut ctx, *center, *radius_x, *radius_y, label.as_deref());
+            render_hexagon(ctx, *center, *radius_x, *radius_y, label.as_deref());
         }
         ShapeKind::Trapezoid {
             start, end, label, ..
         } => {
-            render_trapezoid(&mut ctx, *start, *end, label.as_deref());
+            render_trapezoid(ctx, *start, *end, label.as_deref());
         }
         ShapeKind::RoundedRect {
             start, end, label, ..
         } => {
-            render_rounded_rect(&mut ctx, *start, *end, label.as_deref());
+            render_rounded_rect(ctx, *start, *end, label.as_deref());
         }
         ShapeKind::Cylinder {
             start, end, label, ..
         } => {
-            render_cylinder(&mut ctx, *start, *end, label.as_deref());
+            render_cylinder(ctx, *start, *end, label.as_deref());
         }
         ShapeKind::Cloud {
             start, end, label, ..
         } => {
-            render_cloud(&mut ctx, *start, *end, label.as_deref());
+            render_cloud(ctx, *start, *end, label.as_deref());
         }
         ShapeKind::Star {
             center,
@@ -214,7 +232,7 @@ fn render_shape(output: &mut String, shape: &CachedShape, offset_x: i32, offset_
             label,
             ..
         } => {
-            render_star(&mut ctx, *center, *outer_radius, *inner_radius, label.as_deref());
+            render_star(ctx, *center, *outer_radius, *inner_radius, label.as_deref());
         }
     }
 }
@@ -223,6 +241,7 @@ fn render_shape(output: &mut String, shape: &CachedShape, offset_x: i32, offset_
 fn render_line(ctx: &mut RenderContext<'_>, start: Position, end: Position, style: LineStyle, is_arrow: bool) {
     let (x1, y1) = ctx.to_svg(start);
     let (x2, y2) = ctx.to_svg(end);
+    debug_assert!(!ctx.color.is_empty(), "Color must not be empty");
 
     let marker = if is_arrow {
         r#" marker-end="url(#arrowhead)""#
@@ -237,7 +256,7 @@ fn render_line(ctx: &mut RenderContext<'_>, start: Position, end: Position, styl
                 r#"  <line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="1"{}/>"#,
                 x1, y1, x2, y2, ctx.color, marker
             )
-            .unwrap();
+            .expect("write to String is infallible");
         }
         LineStyle::OrthogonalHV => {
             let path = format!("M {} {} L {} {} L {} {}", x1, y1, x2, y1, x2, y2);
@@ -246,7 +265,7 @@ fn render_line(ctx: &mut RenderContext<'_>, start: Position, end: Position, styl
                 r#"  <path d="{}" stroke="{}" stroke-width="1" fill="none"{}/>"#,
                 path, ctx.color, marker
             )
-            .unwrap();
+            .expect("write to String is infallible");
         }
         LineStyle::OrthogonalVH => {
             let path = format!("M {} {} L {} {} L {} {}", x1, y1, x1, y2, x2, y2);
@@ -255,7 +274,7 @@ fn render_line(ctx: &mut RenderContext<'_>, start: Position, end: Position, styl
                 r#"  <path d="{}" stroke="{}" stroke-width="1" fill="none"{}/>"#,
                 path, ctx.color, marker
             )
-            .unwrap();
+            .expect("write to String is infallible");
         }
         LineStyle::OrthogonalAuto => {
             let path = format!("M {} {} L {} {} L {} {}", x1, y1, x2, y1, x2, y2);
@@ -264,7 +283,7 @@ fn render_line(ctx: &mut RenderContext<'_>, start: Position, end: Position, styl
                 r#"  <path d="{}" stroke="{}" stroke-width="1" fill="none"{}/>"#,
                 path, ctx.color, marker
             )
-            .unwrap();
+            .expect("write to String is infallible");
         }
     }
 }
@@ -278,11 +297,15 @@ fn render_rectangle(ctx: &mut RenderContext<'_>, start: Position, end: Position,
     let min_y = start.y.min(end.y);
     let max_x = start.x.max(end.x);
     let max_y = start.y.max(end.y);
+    debug_assert!(max_x >= min_x, "Rectangle: max_x must be >= min_x");
+    debug_assert!(max_y >= min_y, "Rectangle: max_y must be >= min_y");
 
     let (x, y) = to_svg_coords(Position::new(min_x, min_y));
     let (x2, y2) = to_svg_coords(Position::new(max_x, max_y));
     let width = x2 - x;
     let height = y2 - y;
+    debug_assert!(width >= 0, "Rectangle width must be non-negative");
+    debug_assert!(height >= 0, "Rectangle height must be non-negative");
 
     let stroke_width = if is_double { 3 } else { 1 };
 
@@ -291,7 +314,7 @@ fn render_rectangle(ctx: &mut RenderContext<'_>, start: Position, end: Position,
         r#"  <rect x="{}" y="{}" width="{}" height="{}" stroke="{}" stroke-width="{}" fill="white"/>"#,
         x, y, width, height, ctx.color, stroke_width
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     if let Some(text) = label {
         let center_x = x + width / 2;
@@ -301,12 +324,15 @@ fn render_rectangle(ctx: &mut RenderContext<'_>, start: Position, end: Position,
             r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
             center_x, center_y, ctx.color, escape_xml(text)
         )
-        .unwrap();
+        .expect("write to String is infallible");
     }
 }
 
 /// Render a diamond shape
 fn render_diamond(ctx: &mut RenderContext<'_>, center: Position, half_width: i32, half_height: i32, label: Option<&str>) {
+    debug_assert!(half_width >= 0, "Diamond half_width must be non-negative");
+    debug_assert!(half_height >= 0, "Diamond half_height must be non-negative");
+    
     let (cx, cy) = ctx.to_svg(center);
     let hw = half_width * CHAR_WIDTH;
     let hh = half_height * CHAR_HEIGHT;
@@ -321,7 +347,7 @@ fn render_diamond(ctx: &mut RenderContext<'_>, center: Position, half_width: i32
         r#"  <polygon points="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
         points, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     if let Some(text) = label {
         writeln!(
@@ -329,12 +355,15 @@ fn render_diamond(ctx: &mut RenderContext<'_>, center: Position, half_width: i32
             r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
             cx, cy, ctx.color, escape_xml(text)
         )
-        .unwrap();
+        .expect("write to String is infallible");
     }
 }
 
 /// Render an ellipse
 fn render_ellipse(ctx: &mut RenderContext<'_>, center: Position, radius_x: i32, radius_y: i32, label: Option<&str>) {
+    debug_assert!(radius_x > 0, "Ellipse radius_x must be positive");
+    debug_assert!(radius_y > 0, "Ellipse radius_y must be positive");
+    
     let (cx, cy) = ctx.to_svg(center);
     let rx = radius_x * CHAR_WIDTH;
     let ry = radius_y * CHAR_HEIGHT;
@@ -344,7 +373,7 @@ fn render_ellipse(ctx: &mut RenderContext<'_>, center: Position, radius_x: i32, 
         r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
         cx, cy, rx, ry, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     if let Some(text) = label {
         writeln!(
@@ -352,12 +381,14 @@ fn render_ellipse(ctx: &mut RenderContext<'_>, center: Position, radius_x: i32, 
             r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
             cx, cy, ctx.color, escape_xml(text)
         )
-        .unwrap();
+        .expect("write to String is infallible");
     }
 }
 
 /// Render freehand strokes as a path
 fn render_freehand(ctx: &mut RenderContext<'_>, points: &[Position]) {
+    debug_assert!(points.len() <= 100000, "Freehand should have reasonable number of points");
+    
     if points.is_empty() {
         return;
     }
@@ -369,12 +400,15 @@ fn render_freehand(ctx: &mut RenderContext<'_>, points: &[Position]) {
             r#"  <circle cx="{}" cy="{}" r="3" fill="{}"/>"#,
             x, y, ctx.color
         )
-        .unwrap();
+        .expect("write to String is infallible");
     }
 }
 
 /// Render text
 fn render_text(ctx: &mut RenderContext<'_>, pos: Position, content: &str) {
+    debug_assert!(!content.is_empty(), "Text content should not be empty");
+    debug_assert!(content.len() <= 10000, "Text should have reasonable length");
+    
     let (x, y) = ctx.to_svg(pos);
 
     writeln!(
@@ -382,7 +416,7 @@ fn render_text(ctx: &mut RenderContext<'_>, pos: Position, content: &str) {
         r#"  <text x="{}" y="{}" font-family="monospace" font-size="14" dominant-baseline="middle" fill="{}">{}</text>"#,
         x, y, ctx.color, escape_xml(content)
     )
-    .unwrap();
+    .expect("write to String is infallible");
 }
 
 /// Escape special XML characters
@@ -396,6 +430,8 @@ fn escape_xml(s: &str) -> String {
 
 /// Render a triangle
 fn render_triangle(ctx: &mut RenderContext<'_>, p1: Position, p2: Position, p3: Position, label: Option<&str>) {
+    debug_assert!(p1 != p2 && p2 != p3 && p1 != p3, "Triangle points should be distinct");
+    
     let (x1, y1) = ctx.to_svg(p1);
     let (x2, y2) = ctx.to_svg(p2);
     let (x3, y3) = ctx.to_svg(p3);
@@ -406,7 +442,7 @@ fn render_triangle(ctx: &mut RenderContext<'_>, p1: Position, p2: Position, p3: 
         r#"  <polygon points="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
         points, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     if let Some(text) = label {
         let cx = (x1 + x2 + x3) / 3;
@@ -416,7 +452,7 @@ fn render_triangle(ctx: &mut RenderContext<'_>, p1: Position, p2: Position, p3: 
             r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
             cx, cy, ctx.color, escape_xml(text)
         )
-        .unwrap();
+        .expect("write to String is infallible");
     }
 }
 
@@ -428,6 +464,8 @@ fn render_parallelogram(ctx: &mut RenderContext<'_>, start: Position, end: Posit
     let max_x = start.x.max(end.x);
     let min_y = start.y.min(end.y);
     let max_y = start.y.max(end.y);
+    debug_assert!(max_x > min_x, "Parallelogram must have positive width");
+    debug_assert!(max_y > min_y, "Parallelogram must have positive height");
     let slant = (max_x - min_x) / 4;
 
     let (x1, y1) = to_svg_coords(Position::new(min_x + slant, min_y));
@@ -441,7 +479,7 @@ fn render_parallelogram(ctx: &mut RenderContext<'_>, start: Position, end: Posit
         r#"  <polygon points="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
         points, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     if let Some(text) = label {
         let cx = (x1 + x2 + x3 + x4) / 4;
@@ -451,12 +489,15 @@ fn render_parallelogram(ctx: &mut RenderContext<'_>, start: Position, end: Posit
             r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
             cx, cy, ctx.color, escape_xml(text)
         )
-        .unwrap();
+        .expect("write to String is infallible");
     }
 }
 
 /// Render a hexagon
 fn render_hexagon(ctx: &mut RenderContext<'_>, center: Position, radius_x: i32, radius_y: i32, label: Option<&str>) {
+    debug_assert!(radius_x > 0, "Hexagon radius_x must be positive");
+    debug_assert!(radius_y > 0, "Hexagon radius_y must be positive");
+    
     let (cx, cy) = ctx.to_svg(center);
     let rx = radius_x * CHAR_WIDTH;
     let ry = radius_y * CHAR_HEIGHT;
@@ -477,7 +518,7 @@ fn render_hexagon(ctx: &mut RenderContext<'_>, center: Position, radius_x: i32, 
         r#"  <polygon points="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
         points, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     if let Some(text) = label {
         writeln!(
@@ -485,7 +526,7 @@ fn render_hexagon(ctx: &mut RenderContext<'_>, center: Position, radius_x: i32, 
             r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
             cx, cy, ctx.color, escape_xml(text)
         )
-        .unwrap();
+        .expect("write to String is infallible");
     }
 }
 
@@ -497,6 +538,8 @@ fn render_trapezoid(ctx: &mut RenderContext<'_>, start: Position, end: Position,
     let max_x = start.x.max(end.x);
     let min_y = start.y.min(end.y);
     let max_y = start.y.max(end.y);
+    debug_assert!(max_x > min_x, "Trapezoid must have positive width");
+    debug_assert!(max_y > min_y, "Trapezoid must have positive height");
     let inset = (max_x - min_x) / 4;
 
     let (x1, y1) = to_svg_coords(Position::new(min_x + inset, min_y));
@@ -510,7 +553,7 @@ fn render_trapezoid(ctx: &mut RenderContext<'_>, start: Position, end: Position,
         r#"  <polygon points="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
         points, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     if let Some(text) = label {
         let cx = (x1 + x2 + x3 + x4) / 4;
@@ -520,7 +563,7 @@ fn render_trapezoid(ctx: &mut RenderContext<'_>, start: Position, end: Position,
             r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
             cx, cy, ctx.color, escape_xml(text)
         )
-        .unwrap();
+        .expect("write to String is infallible");
     }
 }
 
@@ -534,6 +577,8 @@ fn render_rounded_rect(ctx: &mut RenderContext<'_>, start: Position, end: Positi
     let y = y1.min(y2);
     let width = (x2 - x1).abs();
     let height = (y2 - y1).abs();
+    debug_assert!(width > 0, "RoundedRect width must be positive");
+    debug_assert!(height > 0, "RoundedRect height must be positive");
     let radius = CHAR_WIDTH.min(CHAR_HEIGHT) / 2;
 
     writeln!(
@@ -541,7 +586,7 @@ fn render_rounded_rect(ctx: &mut RenderContext<'_>, start: Position, end: Positi
         r#"  <rect x="{}" y="{}" width="{}" height="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
         x, y, width, height, radius, radius, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     if let Some(text) = label {
         let cx = x + width / 2;
@@ -551,7 +596,7 @@ fn render_rounded_rect(ctx: &mut RenderContext<'_>, start: Position, end: Positi
             r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
             cx, cy, ctx.color, escape_xml(text)
         )
-        .unwrap();
+        .expect("write to String is infallible");
     }
 }
 
@@ -565,6 +610,8 @@ fn render_cylinder(ctx: &mut RenderContext<'_>, start: Position, end: Position, 
     let y = y1.min(y2);
     let width = (x2 - x1).abs();
     let height = (y2 - y1).abs();
+    debug_assert!(width > 0, "Cylinder width must be positive");
+    debug_assert!(height > CHAR_HEIGHT, "Cylinder height must be sufficient for ellipse");
     let ellipse_height = CHAR_HEIGHT;
 
     // Top ellipse
@@ -573,7 +620,7 @@ fn render_cylinder(ctx: &mut RenderContext<'_>, start: Position, end: Position, 
         r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
         x + width / 2, y + ellipse_height / 2, width / 2, ellipse_height / 2, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     // Body
     writeln!(
@@ -581,7 +628,7 @@ fn render_cylinder(ctx: &mut RenderContext<'_>, start: Position, end: Position, 
         r#"  <rect x="{}" y="{}" width="{}" height="{}" stroke="none" fill="white"/>"#,
         x, y + ellipse_height / 2, width, height - ellipse_height
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     // Left side
     writeln!(
@@ -589,7 +636,7 @@ fn render_cylinder(ctx: &mut RenderContext<'_>, start: Position, end: Position, 
         r#"  <line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="1"/>"#,
         x, y + ellipse_height / 2, x, y + height - ellipse_height / 2, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     // Right side
     writeln!(
@@ -597,7 +644,7 @@ fn render_cylinder(ctx: &mut RenderContext<'_>, start: Position, end: Position, 
         r#"  <line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="1"/>"#,
         x + width, y + ellipse_height / 2, x + width, y + height - ellipse_height / 2, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     // Bottom ellipse
     writeln!(
@@ -605,7 +652,7 @@ fn render_cylinder(ctx: &mut RenderContext<'_>, start: Position, end: Position, 
         r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
         x + width / 2, y + height - ellipse_height / 2, width / 2, ellipse_height / 2, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     if let Some(text) = label {
         writeln!(
@@ -613,7 +660,7 @@ fn render_cylinder(ctx: &mut RenderContext<'_>, start: Position, end: Position, 
             r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
             x + width / 2, y + height / 2, ctx.color, escape_xml(text)
         )
-        .unwrap();
+        .expect("write to String is infallible");
     }
 }
 
@@ -627,6 +674,8 @@ fn render_cloud(ctx: &mut RenderContext<'_>, start: Position, end: Position, lab
     let y = y1.min(y2);
     let width = (x2 - x1).abs();
     let height = (y2 - y1).abs();
+    debug_assert!(width > 0, "Cloud width must be positive");
+    debug_assert!(height > 0, "Cloud height must be positive");
 
     // Approximate cloud with overlapping ellipses
     let r = height / 3;
@@ -635,25 +684,25 @@ fn render_cloud(ctx: &mut RenderContext<'_>, start: Position, end: Position, lab
         r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
         x + r, y + height / 2, r, r, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
     writeln!(
         ctx.output,
         r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
         x + width / 2, y + r, r * 3 / 2, r, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
     writeln!(
         ctx.output,
         r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
         x + width - r, y + height / 2, r, r, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
     writeln!(
         ctx.output,
         r#"  <ellipse cx="{}" cy="{}" rx="{}" ry="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
         x + width / 2, y + height - r, r * 3 / 2, r, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     if let Some(text) = label {
         writeln!(
@@ -661,15 +710,18 @@ fn render_cloud(ctx: &mut RenderContext<'_>, start: Position, end: Position, lab
             r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
             x + width / 2, y + height / 2, ctx.color, escape_xml(text)
         )
-        .unwrap();
+        .expect("write to String is infallible");
     }
 }
 
 /// Render a star shape
 fn render_star(ctx: &mut RenderContext<'_>, center: Position, outer_radius: i32, _inner_radius: i32, label: Option<&str>) {
+    debug_assert!(outer_radius > 0, "Star outer_radius must be positive");
+    
     let (cx, cy) = ctx.to_svg(center);
     let r_out = outer_radius * CHAR_WIDTH;
     let r_in = r_out / 2;
+    debug_assert!(r_out > r_in, "Star outer radius must be greater than inner radius");
 
     // 5-pointed star
     let mut points = String::new();
@@ -689,7 +741,7 @@ fn render_star(ctx: &mut RenderContext<'_>, center: Position, outer_radius: i32,
         r#"  <polygon points="{}" stroke="{}" stroke-width="1" fill="white"/>"#,
         points, ctx.color
     )
-    .unwrap();
+    .expect("write to String is infallible");
 
     if let Some(text) = label {
         writeln!(
@@ -697,7 +749,7 @@ fn render_star(ctx: &mut RenderContext<'_>, center: Position, outer_radius: i32,
             r#"  <text x="{}" y="{}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="12" fill="{}">{}</text>"#,
             cx, cy, ctx.color, escape_xml(text)
         )
-        .unwrap();
+        .expect("write to String is infallible");
     }
 }
 
@@ -771,10 +823,10 @@ mod tests {
 
         let mut doc = Document::new();
         for kind in shapes {
-            doc.add_shape(kind).unwrap();
+            doc.add_shape(kind).expect("write to String is infallible");
         }
         let mut view = ShapeView::default();
-        view.rebuild(&doc).unwrap();
+        view.rebuild(&doc).expect("write to String is infallible");
         view
     }
 
@@ -963,16 +1015,16 @@ mod tests {
 
     #[test]
     fn save_svg_creates_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().expect("write to String is infallible");
         let file_path = temp_dir.path().join("test.svg");
 
         let view = build_shape_view(vec![make_rect(0, 0, 10, 5)]);
-        save_svg(&view, &file_path).unwrap();
+        save_svg(&view, &file_path).expect("write to String is infallible");
 
         assert!(file_path.exists());
 
         // Verify content
-        let content = std::fs::read_to_string(&file_path).unwrap();
+        let content = std::fs::read_to_string(&file_path).expect("write to String is infallible");
         assert!(content.contains("<svg"));
         assert!(content.contains("</svg>"));
     }

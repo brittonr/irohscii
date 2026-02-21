@@ -7,6 +7,7 @@ use super::{HelpScreenState, ModeContext, ModeHandler, ModeTransition};
 
 impl ModeHandler for HelpScreenState {
     fn handle_key(&mut self, _ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
+        debug_assert!(self.scroll < 10000, "Scroll position should be reasonable");
         match key.code {
             // Close help
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') | KeyCode::F(1) => {

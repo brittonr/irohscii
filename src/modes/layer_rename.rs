@@ -7,6 +7,7 @@ use super::{LayerRenameState, ModeContext, ModeHandler, ModeTransition};
 
 impl ModeHandler for LayerRenameState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
+        debug_assert!(self.text.len() <= 256, "Layer name should be reasonable length");
         match key.code {
             KeyCode::Enter => {
                 ctx.app.commit_layer_rename();

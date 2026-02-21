@@ -2,16 +2,27 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 use crate::app::App;
 
+/// Scroll amount per tick
+const SCROLL_AMOUNT: i32 = 3;
+
+// Compile-time assertion: scroll amount must be positive
+const _: () = assert!(SCROLL_AMOUNT > 0, "SCROLL_AMOUNT must be positive");
+
 /// Handle mouse events for ellipse drawing tool
 /// Ellipse is drawn from center outward (click sets center, drag sets radii)
 pub fn handle_ellipse_event(app: &mut App, event: MouseEvent) {
+    debug_assert!(event.column < u16::MAX, "Event column coordinate out of valid range");
+    debug_assert!(event.row < u16::MAX, "Event row coordinate out of valid range");
+    
     match event.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             let pos = app.viewport.screen_to_canvas(event.column, event.row);
+            debug_assert!(app.shape_state.is_none(), "Shape state should be None before starting new shape");
             app.start_shape(pos);
         }
         MouseEventKind::Drag(MouseButton::Left) => {
             let pos = app.viewport.screen_to_canvas(event.column, event.row);
+            debug_assert!(app.shape_state.is_some(), "Shape state should exist during drag");
             app.update_shape(pos);
         }
         MouseEventKind::Up(MouseButton::Left) => {
@@ -21,16 +32,16 @@ pub fn handle_ellipse_event(app: &mut App, event: MouseEvent) {
             app.cancel_shape();
         }
         MouseEventKind::ScrollUp => {
-            app.viewport.pan(0, -3);
+            app.viewport.pan(0, -SCROLL_AMOUNT);
         }
         MouseEventKind::ScrollDown => {
-            app.viewport.pan(0, 3);
+            app.viewport.pan(0, SCROLL_AMOUNT);
         }
         MouseEventKind::ScrollLeft => {
-            app.viewport.pan(-3, 0);
+            app.viewport.pan(-SCROLL_AMOUNT, 0);
         }
         MouseEventKind::ScrollRight => {
-            app.viewport.pan(3, 0);
+            app.viewport.pan(SCROLL_AMOUNT, 0);
         }
         _ => {}
     }

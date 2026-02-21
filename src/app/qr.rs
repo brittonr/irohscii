@@ -19,6 +19,13 @@ pub struct QrLine {
     pub text: String,
 }
 
+// Quiet zone size for terminal display
+const TERMINAL_QUIET_ZONE: usize = 1;
+
+// Compile-time assertion that quiet zone is reasonable
+const _: () = assert!(TERMINAL_QUIET_ZONE > 0, "quiet zone must be positive");
+const _: () = assert!(TERMINAL_QUIET_ZONE < 10, "quiet zone should be small for terminal");
+
 /// Generate QR code lines from a ticket string.
 ///
 /// Returns a Vec of `QrLine` suitable for rendering in a terminal.
@@ -31,10 +38,13 @@ pub fn ticket_to_qr_lines(ticket: &str) -> Result<Vec<QrLine>, String> {
 
     let modules = code.to_colors();
     let width = code.width();
-    let quiet = 1; // 1-module quiet zone (minimal for terminal display)
+    let quiet = TERMINAL_QUIET_ZONE;
 
     let total_w = width + 2 * quiet;
     let total_h = width + 2 * quiet;
+
+    debug_assert!(total_w > 0, "postcondition: total width is positive");
+    debug_assert!(total_h > 0, "postcondition: total height is positive");
 
     // Build a boolean grid (true = dark module)
     let mut grid = vec![vec![false; total_w]; total_h];
@@ -69,6 +79,10 @@ pub fn ticket_to_qr_lines(ticket: &str) -> Result<Vec<QrLine>, String> {
         row += 2;
     }
 
+    debug_assert!(!lines.is_empty(), "postcondition: generated at least one line");
+    debug_assert!(lines.iter().all(|l| l.text.chars().count() == total_w), 
+                  "postcondition: all lines have same character width");
+
     Ok(lines)
 }
 
@@ -77,7 +91,7 @@ pub fn ticket_to_qr_lines(ticket: &str) -> Result<Vec<QrLine>, String> {
 ///
 /// Returns `(width_cols, height_rows)` — the terminal columns and rows
 /// needed to display the QR code.
-pub fn qr_dimensions(ticket: &str) -> Result<(usize, usize), String> {
+pub fn qr_dimensions(ticket: &str) -> Result<(u32, u32), String> {
     use qrcode::QrCode;
 
     let code = QrCode::new(ticket.as_bytes()).map_err(|e| format!("QR encode error: {e}"))?;
@@ -85,9 +99,17 @@ pub fn qr_dimensions(ticket: &str) -> Result<(usize, usize), String> {
     let quiet = 1;
     let total_w = width + 2 * quiet;
     let total_h = width + 2 * quiet;
+    
+    debug_assert!(total_w > 0, "postcondition: width is positive");
+    debug_assert!(total_h > 0, "postcondition: height is positive");
+    
     // Each pair of rows -> 1 terminal row
     let term_rows = total_h.div_ceil(2);
-    Ok((total_w, term_rows))
+    
+    let w_u32 = u32::try_from(total_w).expect("QR width should fit in u32");
+    let h_u32 = u32::try_from(term_rows).expect("QR height should fit in u32");
+    
+    Ok((w_u32, h_u32))
 }
 
 /// Decode a QR code from an image file and return the contained string.
@@ -95,9 +117,14 @@ pub fn qr_dimensions(ticket: &str) -> Result<(usize, usize), String> {
 /// Supports PNG and JPEG image formats. The image is converted to grayscale
 /// and scanned for QR codes using the `rqrr` library.
 pub fn decode_qr_from_file(path: &Path) -> Result<String, String> {
+    debug_assert!(path.as_os_str().len() > 0, "precondition: path is non-empty");
+
     let img = image::open(path).map_err(|e| format!("Failed to open image: {e}"))?;
 
     let gray = img.to_luma8();
+    
+    debug_assert!(gray.width() > 0, "postcondition: image has width");
+    debug_assert!(gray.height() > 0, "postcondition: image has height");
 
     let mut prepared = rqrr::PreparedImage::prepare(gray);
     let grids = prepared.detect_grids();
@@ -110,8 +137,19 @@ pub fn decode_qr_from_file(path: &Path) -> Result<String, String> {
         .decode()
         .map_err(|e| format!("Failed to decode QR code: {e}"))?;
 
+    debug_assert!(!content.is_empty(), "postcondition: decoded content is non-empty");
+
     Ok(content)
 }
+
+// Image QR code constants
+const IMAGE_QUIET_ZONE: usize = 4;
+const MODULE_PIXELS: usize = 8;
+
+// Compile-time assertions for image QR code parameters
+const _: () = assert!(IMAGE_QUIET_ZONE >= 4, "image quiet zone should be at least 4 for standard compliance");
+const _: () = assert!(MODULE_PIXELS >= 1, "module size must be positive");
+const _: () = assert!(MODULE_PIXELS <= 32, "module size should be reasonable");
 
 /// Save a QR code as a PNG image file.
 ///
@@ -131,21 +169,27 @@ pub fn save_qr_to_png(ticket: &str, output_path: &Path) -> Result<(), String> {
     use qrcode::QrCode;
     use image::{GrayImage, Luma};
 
+    debug_assert!(!ticket.is_empty(), "precondition: ticket is non-empty");
+    debug_assert!(output_path.as_os_str().len() > 0, "precondition: output path is non-empty");
+
     // Generate QR code
     let code = QrCode::new(ticket.as_bytes()).map_err(|e| format!("QR encode error: {e}"))?;
 
     let modules = code.to_colors();
     let width = code.width();
-    let quiet = 4; // 4-module quiet zone (standard for image QR codes)
+    let quiet = IMAGE_QUIET_ZONE;
 
     let total_size = width + 2 * quiet;
 
     // Module size in pixels (8x8 for good scannability)
-    let module_px = 8;
+    let module_px = MODULE_PIXELS;
     let img_size = total_size * module_px;
 
+    debug_assert!(img_size > 0, "postcondition: image size is positive");
+
     // Create a white image
-    let mut img = GrayImage::from_pixel(img_size as u32, img_size as u32, Luma([255u8]));
+    let img_size_u32 = u32::try_from(img_size).expect("QR image size should fit in u32");
+    let mut img = GrayImage::from_pixel(img_size_u32, img_size_u32, Luma([255u8]));
 
     // Draw QR modules
     for row in 0..width {
@@ -159,8 +203,14 @@ pub fn save_qr_to_png(ticket: &str, output_path: &Path) -> Result<(), String> {
                     for dx in 0..module_px {
                         let px = start_x + dx;
                         let py = start_y + dy;
-                        if px < img_size && py < img_size {
-                            img.put_pixel(px as u32, py as u32, Luma([0u8]));
+                        let px_in_bounds = px < img_size;
+                        let py_in_bounds = py < img_size;
+                        if px_in_bounds {
+                            if py_in_bounds {
+                                let px_u32 = u32::try_from(px).expect("pixel x should fit in u32");
+                                let py_u32 = u32::try_from(py).expect("pixel y should fit in u32");
+                                img.put_pixel(px_u32, py_u32, Luma([0u8]));
+                            }
                         }
                     }
                 }
@@ -177,6 +227,8 @@ pub fn save_qr_to_png(ticket: &str, output_path: &Path) -> Result<(), String> {
     // Save to PNG
     img.save(output_path)
         .map_err(|e| format!("Failed to save PNG: {e}"))?;
+
+    debug_assert!(output_path.exists(), "postcondition: output file was created");
 
     Ok(())
 }
@@ -206,8 +258,8 @@ mod tests {
         let (w, h) = qr_dimensions(ticket).expect("should compute dimensions");
         let lines = ticket_to_qr_lines(ticket).expect("should encode");
 
-        assert_eq!(lines.len(), h);
-        assert_eq!(lines[0].text.chars().count(), w);
+        assert_eq!(lines.len(), h as usize);
+        assert_eq!(lines[0].text.chars().count(), w as usize);
     }
 
     #[test]

@@ -115,10 +115,14 @@ impl DocumentStore for LocalDocumentStore {
             changed
         };
 
-        // Update metadata
-        if changed && let Some(meta) = self.metas.write().await.get_mut(&id.to_string()) {
-            meta.touch();
-            meta.size_bytes = doc.save().len() as u64;
+        // Update metadata (decomposed compound condition)
+        if changed {
+            if let Some(meta) = self.metas.write().await.get_mut(&id.to_string()) {
+                meta.touch();
+                let doc_len = doc.save().len();
+                debug_assert!(doc_len <= u64::MAX as usize, "document too large for u64");
+                meta.size_bytes = doc_len as u64;
+            }
         }
 
         // Notify application only when document content actually changed
@@ -146,12 +150,16 @@ impl DocumentStore for LocalDocumentStore {
         let mut applied: u32 = 0;
         for change in &changes {
             if let Ok(n) = doc.load_incremental(&change.bytes) {
-                applied += n as u32;
+                let n_u32 = n.min(u32::MAX as usize);
+                debug_assert!(n == n_u32, "applied changes count overflow");
+                applied = applied.saturating_add(n_u32 as u32);
             }
         }
         self.save(id, &mut doc).await?;
         let new_heads: Vec<String> = doc.get_heads().iter().map(|h| hex::encode(h.0)).collect();
-        let new_size = doc.save().len() as u64;
+        let doc_len = doc.save().len();
+        debug_assert!(doc_len <= u64::MAX as usize, "document too large for u64");
+        let new_size = doc_len as u64;
         Ok(ApplyResult {
             changes_applied: applied > 0,
             change_count: applied,
@@ -181,7 +189,9 @@ impl DocumentStore for LocalDocumentStore {
         })?;
         self.save(target_id, &mut target).await?;
         let new_heads: Vec<String> = target.get_heads().iter().map(|h| hex::encode(h.0)).collect();
-        let new_size = target.save().len() as u64;
+        let doc_len = target.save().len();
+        debug_assert!(doc_len <= u64::MAX as usize, "document too large for u64");
+        let new_size = doc_len as u64;
         Ok(ApplyResult {
             changes_applied: true,
             change_count: 1,

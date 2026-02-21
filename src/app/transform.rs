@@ -7,6 +7,8 @@ use super::App;
 impl App {
     /// Flip selected shapes horizontally (mirror across vertical axis)
     pub fn flip_horizontal(&mut self) {
+        debug_assert!(!self.selected.is_empty(), "precondition: has shapes to flip");
+        
         if self.selected.is_empty() {
             self.set_status("Select shapes to flip");
             return;
@@ -15,6 +17,10 @@ impl App {
             return;
         };
         let center_x = (min_x + max_x) / 2;
+        
+        debug_assert!(self.selected.iter().all(|&id| self.shape_view.get(id).is_some()), 
+                      "precondition: all selected shapes exist in view");
+        
         self.save_undo_state();
         for &id in self.selected.clone().iter() {
             if let Ok(Some(kind)) = self.doc.read_shape(id) {
@@ -24,10 +30,14 @@ impl App {
         }
         self.rebuild_view();
         self.set_status("Flipped horizontal");
+        
+        debug_assert!(self.shape_view.len() > 0, "postcondition: view contains shapes");
     }
 
     /// Flip selected shapes vertically (mirror across horizontal axis)
     pub fn flip_vertical(&mut self) {
+        debug_assert!(!self.selected.is_empty(), "precondition: has shapes to flip");
+        
         if self.selected.is_empty() {
             self.set_status("Select shapes to flip");
             return;
@@ -36,6 +46,10 @@ impl App {
             return;
         };
         let center_y = (min_y + max_y) / 2;
+        
+        debug_assert!(self.selected.iter().all(|&id| self.shape_view.get(id).is_some()), 
+                      "precondition: all selected shapes exist in view");
+        
         self.save_undo_state();
         for &id in self.selected.clone().iter() {
             if let Ok(Some(kind)) = self.doc.read_shape(id) {
@@ -45,10 +59,14 @@ impl App {
         }
         self.rebuild_view();
         self.set_status("Flipped vertical");
+        
+        debug_assert!(self.shape_view.len() > 0, "postcondition: view contains shapes");
     }
 
     /// Rotate selected shapes 90 degrees clockwise
     pub fn rotate_90_cw(&mut self) {
+        debug_assert!(!self.selected.is_empty(), "precondition: has shapes to rotate");
+        
         if self.selected.is_empty() {
             self.set_status("Select shapes to rotate");
             return;
@@ -57,6 +75,10 @@ impl App {
             return;
         };
         let center = Position::new((min_x + max_x) / 2, (min_y + max_y) / 2);
+        
+        debug_assert!(self.selected.iter().all(|&id| self.shape_view.get(id).is_some()), 
+                      "precondition: all selected shapes exist in view");
+        
         self.save_undo_state();
         for &id in self.selected.clone().iter() {
             if let Ok(Some(kind)) = self.doc.read_shape(id) {
@@ -66,10 +88,14 @@ impl App {
         }
         self.rebuild_view();
         self.set_status("Rotated 90 CW");
+        
+        debug_assert!(self.shape_view.len() > 0, "postcondition: view contains shapes");
     }
 
     /// Rotate selected shapes 90 degrees counter-clockwise
     pub fn rotate_90_ccw(&mut self) {
+        debug_assert!(!self.selected.is_empty(), "precondition: has shapes to rotate");
+        
         if self.selected.is_empty() {
             self.set_status("Select shapes to rotate");
             return;
@@ -78,6 +104,10 @@ impl App {
             return;
         };
         let center = Position::new((min_x + max_x) / 2, (min_y + max_y) / 2);
+        
+        debug_assert!(self.selected.iter().all(|&id| self.shape_view.get(id).is_some()), 
+                      "precondition: all selected shapes exist in view");
+        
         self.save_undo_state();
         for &id in self.selected.clone().iter() {
             if let Ok(Some(kind)) = self.doc.read_shape(id) {
@@ -87,5 +117,7 @@ impl App {
         }
         self.rebuild_view();
         self.set_status("Rotated 90 CCW");
+        
+        debug_assert!(self.shape_view.len() > 0, "postcondition: view contains shapes");
     }
 }

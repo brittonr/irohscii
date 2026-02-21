@@ -14,6 +14,16 @@ use tokio::sync::{Mutex, mpsc, watch};
 use crate::SyncableDocument;
 use crate::document::SyncMessage;
 
+// Protocol constants
+const MAX_MESSAGE_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
+const MAX_SYNC_ITERATIONS: usize = 100_000;
+const MAX_MESSAGES_PER_ROUND: usize = 1000;
+
+// Compile-time assertions
+const _: () = assert!(MAX_MESSAGE_SIZE > 0);
+const _: () = assert!(MAX_SYNC_ITERATIONS > 0);
+const _: () = assert!(MAX_MESSAGES_PER_ROUND > 0);
+
 /// Document sync protocol handler for Iroh.
 ///
 /// Generic over the document type `D` which must implement [`SyncableDocument`].
@@ -95,7 +105,15 @@ impl<D: SyncableDocument> DocumentProtocol<D> {
         // Send initial sync messages
         self.send_all_sync_messages(send, &mut sync_state).await?;
 
+        let mut iteration = 0;
         loop {
+            iteration += 1;
+            debug_assert!(iteration <= MAX_SYNC_ITERATIONS, "sync loop exceeded max iterations");
+            if iteration > MAX_SYNC_ITERATIONS {
+                tracing::warn!("sync loop exceeded {} iterations, terminating", MAX_SYNC_ITERATIONS);
+                break;
+            }
+            
             tokio::select! {
                 // Local changes - send sync messages
                 result = change_rx.changed() => {
@@ -121,7 +139,9 @@ impl<D: SyncableDocument> DocumentProtocol<D> {
                             self.send_all_sync_messages(send, &mut sync_state).await?;
                             // Notify main thread of changes
                             let doc = self.inner.doc.lock().await;
-                            let _ = self.inner.sync_tx.send(doc.clone()).await;
+                            if let Err(e) = self.inner.sync_tx.send(doc.clone()).await {
+                                tracing::warn!("failed to send document update to main thread: {}", e);
+                            }
                         }
                         Err(_) => break, // Connection error
                     }
@@ -138,7 +158,15 @@ impl<D: SyncableDocument> DocumentProtocol<D> {
         writer: &mut W,
         sync_state: &mut D::SyncState,
     ) -> Result<()> {
+        let mut count = 0;
         loop {
+            count += 1;
+            if count > MAX_MESSAGES_PER_ROUND {
+                tracing::warn!("send_all_sync_messages exceeded {} messages, stopping", MAX_MESSAGES_PER_ROUND);
+                send_msg(writer, &[]).await?;
+                break;
+            }
+            
             let msg = {
                 let doc = self.inner.doc.lock().await;
                 doc.generate_sync_message(sync_state)
@@ -171,7 +199,10 @@ impl<D: SyncableDocument> ProtocolHandler for DocumentProtocol<D> {
 
 /// Send a message with length prefix.
 async fn send_msg<W: AsyncWriteExt + Unpin>(writer: &mut W, data: &[u8]) -> Result<()> {
-    let len = data.len() as u64;
+    let len = u64::try_from(data.len())
+        .map_err(|_| anyhow::anyhow!("message too large: {} bytes", data.len()))?;
+    debug_assert!(data.len() as u64 <= MAX_MESSAGE_SIZE, "message size {} exceeds limit", data.len());
+    
     writer.write_all(&len.to_le_bytes()).await?;
     if !data.is_empty() {
         writer.write_all(data).await?;
@@ -184,13 +215,19 @@ async fn send_msg<W: AsyncWriteExt + Unpin>(writer: &mut W, data: &[u8]) -> Resu
 async fn recv_msg<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Vec<u8>> {
     let mut len_bytes = [0u8; 8];
     reader.read_exact(&mut len_bytes).await?;
-    let len = u64::from_le_bytes(len_bytes) as usize;
+    let len = u64::from_le_bytes(len_bytes);
+    
+    if len > MAX_MESSAGE_SIZE {
+        return Err(anyhow::anyhow!("message too large: {} bytes (max: {})", len, MAX_MESSAGE_SIZE));
+    }
 
     if len == 0 {
         return Ok(Vec::new());
     }
 
-    let mut data = vec![0u8; len];
+    let len_usize = usize::try_from(len)
+        .map_err(|_| anyhow::anyhow!("message size {} exceeds usize", len))?;
+    let mut data = vec![0u8; len_usize];
     reader.read_exact(&mut data).await?;
     Ok(data)
 }

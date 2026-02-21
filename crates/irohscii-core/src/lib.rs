@@ -22,3 +22,26 @@ pub use shapes::{
 
 // Re-export geometry types for convenience
 pub use irohscii_geometry::{LineStyle, Position, Viewport};
+
+// Compile-time assertions for core type properties
+const _: () = {
+    // Ensure ID types are reasonably sized (should be 16 bytes for UUID)
+    const EXPECTED_UUID_SIZE: usize = 16;
+    assert!(std::mem::size_of::<LayerId>() == EXPECTED_UUID_SIZE);
+    assert!(std::mem::size_of::<DocumentId>() == EXPECTED_UUID_SIZE);
+    assert!(std::mem::size_of::<GroupId>() == EXPECTED_UUID_SIZE);
+    assert!(std::mem::size_of::<ShapeId>() == EXPECTED_UUID_SIZE);
+};
+
+// Compile-time assertions for type safety guarantees
+const _: () = {
+    // Core types must be Send + Sync for thread safety
+    const fn assert_send_sync<T: Send + Sync>() {}
+    
+    assert_send_sync::<LayerId>();
+    assert_send_sync::<DocumentId>();
+    assert_send_sync::<GroupId>();
+    assert_send_sync::<ShapeId>();
+    assert_send_sync::<Layer>();
+    assert_send_sync::<Document>();
+};

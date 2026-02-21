@@ -22,6 +22,14 @@ use crate::{PeerId, PresenceData, PresenceMessage, SyncableDocument};
 use presence_protocol::PresenceProtocol;
 use protocol::DocumentProtocol;
 
+// Protocol constants
+const MAX_EVENT_LOOP_ITERATIONS: usize = 1_000_000;
+const MAX_DISABLED_ITERATIONS: usize = 100_000;
+
+// Compile-time assertions
+const _: () = assert!(MAX_EVENT_LOOP_ITERATIONS > 0);
+const _: () = assert!(MAX_DISABLED_ITERATIONS > 0);
+
 /// Configuration for collaboration behavior.
 #[derive(Debug, Clone)]
 pub struct CollabConfig {
@@ -249,10 +257,12 @@ where
         {
             Ok(rt) => rt,
             Err(e) => {
-                let _ = event_tx.send(CollabEvent::Error(format!(
+                if let Err(send_err) = event_tx.send(CollabEvent::Error(format!(
                     "Failed to create tokio runtime: {}",
                     e
-                )));
+                ))) {
+                    eprintln!("Failed to send runtime error event: {}", send_err);
+                }
                 return;
             }
         };
@@ -268,9 +278,9 @@ where
                 presence_alpn,
             )
             .await
-            {
-                let _ = event_tx.send(CollabEvent::Error(e.to_string()));
-            }
+                && let Err(send_err) = event_tx.send(CollabEvent::Error(e.to_string())) {
+                    eprintln!("Failed to send error event: {}", send_err);
+                }
         });
     });
 
@@ -309,6 +319,62 @@ pub fn decode_ticket(ticket: &str, prefix: &str) -> Result<EndpointAddr> {
     }
 }
 
+/// Create and configure the Iroh endpoint.
+async fn create_endpoint(config: &CollabConfig) -> Result<Endpoint> {
+    let mut builder = Endpoint::builder();
+    if !config.disable_discovery {
+        builder = builder
+            .discovery(DnsDiscovery::n0_dns())
+            .discovery(PkarrPublisher::n0_dns());
+    }
+    builder.bind().await.map_err(|e| anyhow::anyhow!("Failed to bind endpoint: {}", e))
+}
+
+/// Setup protocol handlers and derive local peer ID.
+fn setup_protocols<D, P>(
+    endpoint: &Endpoint,
+    initial_doc: D,
+    doc_alpn: Vec<u8>,
+    presence_alpn: Vec<u8>,
+) -> Result<(
+    PeerId,
+    String,
+    DocumentProtocol<D>,
+    PresenceProtocol<P>,
+    tokio_mpsc::Receiver<D>,
+    tokio_mpsc::Receiver<PresenceMessage<P>>,
+)>
+where
+    D: SyncableDocument,
+    P: PresenceData,
+{
+    // Create ticket from endpoint address
+    let addr = endpoint.addr();
+    let ticket_string = encode_ticket(&addr, "collab1");
+
+    // Derive local peer ID from endpoint's public key
+    let public_key = endpoint.id();
+    let local_peer_id = PeerId::from_bytes(public_key.as_bytes())
+        .ok_or_else(|| anyhow::anyhow!("PublicKey must be 32 bytes"))?;
+
+    // Create document protocol handler
+    let (doc_tx, doc_rx) = tokio_mpsc::channel(10);
+    let doc_protocol = DocumentProtocol::new(initial_doc, doc_tx, doc_alpn);
+
+    // Create presence protocol handler
+    let (presence_tx, presence_rx) = tokio_mpsc::channel(64);
+    let presence_protocol = PresenceProtocol::<P>::new(local_peer_id, presence_tx, presence_alpn);
+
+    Ok((
+        local_peer_id,
+        ticket_string,
+        doc_protocol,
+        presence_protocol,
+        doc_rx,
+        presence_rx,
+    ))
+}
+
 /// Main async collaboration loop.
 async fn run_collab<D, P>(
     config: CollabConfig,
@@ -324,34 +390,16 @@ where
     P: PresenceData,
 {
     // Create iroh endpoint with optional discovery
-    let mut builder = Endpoint::builder();
-    if !config.disable_discovery {
-        builder = builder
-            .discovery(DnsDiscovery::n0_dns())
-            .discovery(PkarrPublisher::n0_dns());
-    }
-    let endpoint = builder.bind().await?;
+    let endpoint = create_endpoint(&config).await?;
 
-    // Create ticket from endpoint address
-    let addr = endpoint.addr();
-    let ticket_string = encode_ticket(&addr, "collab1");
-
-    // Derive local peer ID from endpoint's public key
-    let public_key = endpoint.id();
-    let local_peer_id = PeerId::from_bytes(public_key.as_bytes())
-        .ok_or_else(|| anyhow::anyhow!("PublicKey must be 32 bytes"))?;
+    // Setup protocols
+    let (local_peer_id, ticket_string, doc_protocol, presence_protocol, doc_rx, presence_rx) =
+        setup_protocols::<D, P>(&endpoint, initial_doc, doc_alpn.clone(), presence_alpn.clone())?;
 
     // Send ticket back to main thread
-    let _ = ticket_tx.send(ticket_string.clone());
-
-    // Create document protocol handler
-    let (doc_tx, mut doc_rx) = tokio_mpsc::channel(10);
-    let doc_protocol = DocumentProtocol::new(initial_doc, doc_tx, doc_alpn.clone());
-
-    // Create presence protocol handler
-    let (presence_tx, mut presence_rx) = tokio_mpsc::channel(64);
-    let presence_protocol =
-        PresenceProtocol::<P>::new(local_peer_id, presence_tx, presence_alpn.clone());
+    if let Err(e) = ticket_tx.send(ticket_string.clone()) {
+        tracing::warn!("failed to send ticket to main thread: {}", e);
+    }
 
     // Build router with both protocols
     let router = iroh::protocol::Router::builder(endpoint.clone())
@@ -360,107 +408,270 @@ where
         .spawn();
 
     // Notify that we're ready
-    let _ = event_tx.send(CollabEvent::Ready {
+    if let Err(e) = event_tx.send(CollabEvent::Ready {
         ticket: ticket_string.clone(),
         local_peer_id,
-    });
+    }) {
+        tracing::warn!("failed to send Ready event: {}", e);
+    }
 
     match config.mode {
         CollabMode::Active { join_ticket } => {
-            // Connect to remote peer if we have a ticket
-            let doc_handle = if let Some(ref remote_ticket) = join_ticket {
-                let endpoint_addr = decode_ticket(remote_ticket, "collab1")?;
-                let conn = endpoint.connect(endpoint_addr.clone(), &doc_alpn).await?;
-
-                let protocol_clone = doc_protocol.clone();
-                Some(tokio::spawn(async move {
-                    if let Err(e) = protocol_clone.run_sync_loop(conn).await {
-                        eprintln!("Document sync loop error: {}", e);
-                    }
-                }))
-            } else {
-                None
-            };
-
-            // Connect presence protocol if joining
-            let presence_handle = if let Some(ref remote_ticket) = join_ticket {
-                let endpoint_addr = decode_ticket(remote_ticket, "collab1")?;
-                let conn = endpoint.connect(endpoint_addr, &presence_alpn).await?;
-
-                let presence_clone = presence_protocol.clone();
-                Some(tokio::spawn(async move {
-                    if let Err(e) = presence_clone.run_presence_loop(conn).await {
-                        eprintln!("Presence loop error: {}", e);
-                    }
-                }))
-            } else {
-                None
-            };
-
-            // Main event loop
-            loop {
-                tokio::select! {
-                    Some(doc) = doc_rx.recv() => {
-                        let _ = event_tx.send(CollabEvent::DocumentChanged { doc: Box::new(doc) });
-                    }
-                    Some(msg) = presence_rx.recv() => {
-                        match msg {
-                            PresenceMessage::Update(presence) => {
-                                let _ = event_tx.send(CollabEvent::PresenceUpdate(presence));
-                            }
-                            PresenceMessage::Leave { peer_id } => {
-                                let _ = event_tx.send(CollabEvent::PresenceRemoved { peer_id });
-                            }
-                            PresenceMessage::RequestAll => {
-                                // Handled internally by presence protocol
-                            }
-                        }
-                    }
-                    _ = tokio::time::sleep(Duration::from_millis(50)) => {
-                        match command_rx.try_recv() {
-                            Ok(CollabCommand::SyncDocument { doc }) => {
-                                if let Err(e) = doc_protocol.merge_and_notify(&doc).await {
-                                    let _ = event_tx.send(CollabEvent::Error(e.to_string()));
-                                }
-                            }
-                            Ok(CollabCommand::BroadcastPresence(presence)) => {
-                                presence_protocol.broadcast(presence);
-                            }
-                            Ok(CollabCommand::Shutdown) => {
-                                presence_protocol.broadcast_leave();
-                                if let Some(h) = &doc_handle {
-                                    h.abort();
-                                }
-                                if let Some(h) = &presence_handle {
-                                    h.abort();
-                                }
-                                break;
-                            }
-                            Err(std_mpsc::TryRecvError::Empty) => {}
-                            Err(std_mpsc::TryRecvError::Disconnected) => {
-                                if let Some(h) = &doc_handle {
-                                    h.abort();
-                                }
-                                if let Some(h) = &presence_handle {
-                                    h.abort();
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
+            handle_active_mode(
+                endpoint,
+                doc_alpn,
+                presence_alpn,
+                join_ticket,
+                doc_protocol,
+                presence_protocol,
+                doc_rx,
+                presence_rx,
+                event_tx,
+                command_rx,
+            )
+            .await?;
         }
         CollabMode::Disabled => {
-            // Wait for shutdown command
-            loop {
-                if let Ok(CollabCommand::Shutdown) = command_rx.recv() {
-                    break;
-                }
-            }
+            handle_disabled_mode(command_rx).await;
         }
     }
 
     router.shutdown().await?;
     Ok(())
+}
+
+/// Handle active collaboration mode.
+async fn handle_active_mode<D, P>(
+    endpoint: Endpoint,
+    doc_alpn: Vec<u8>,
+    presence_alpn: Vec<u8>,
+    join_ticket: Option<String>,
+    doc_protocol: DocumentProtocol<D>,
+    presence_protocol: PresenceProtocol<P>,
+    doc_rx: tokio_mpsc::Receiver<D>,
+    presence_rx: tokio_mpsc::Receiver<PresenceMessage<P>>,
+    event_tx: std_mpsc::Sender<CollabEvent<D, P>>,
+    command_rx: std_mpsc::Receiver<CollabCommand<D, P>>,
+) -> Result<()>
+where
+    D: SyncableDocument,
+    P: PresenceData,
+{
+    // Connect to remote peer if we have a ticket
+    let doc_handle = if let Some(ref remote_ticket) = join_ticket {
+        Some(connect_document_sync(&endpoint, remote_ticket, &doc_alpn, doc_protocol.clone()).await?)
+    } else {
+        None
+    };
+
+    // Connect presence protocol if joining
+    let presence_handle = if let Some(ref remote_ticket) = join_ticket {
+        Some(connect_presence_sync(&endpoint, remote_ticket, &presence_alpn, presence_protocol.clone()).await?)
+    } else {
+        None
+    };
+
+    // Main event loop
+    run_active_event_loop(
+        doc_rx,
+        presence_rx,
+        event_tx,
+        command_rx,
+        doc_protocol,
+        presence_protocol,
+        doc_handle,
+        presence_handle,
+    )
+    .await
+}
+
+/// Connect document sync to remote peer.
+async fn connect_document_sync<D: SyncableDocument>(
+    endpoint: &Endpoint,
+    remote_ticket: &str,
+    doc_alpn: &[u8],
+    doc_protocol: DocumentProtocol<D>,
+) -> Result<tokio::task::JoinHandle<()>> {
+    let endpoint_addr = decode_ticket(remote_ticket, "collab1")?;
+    let conn = endpoint.connect(endpoint_addr.clone(), doc_alpn).await?;
+
+    Ok(tokio::spawn(async move {
+        if let Err(e) = doc_protocol.run_sync_loop(conn).await {
+            tracing::error!("Document sync loop error: {}", e);
+        }
+    }))
+}
+
+/// Connect presence sync to remote peer.
+async fn connect_presence_sync<P: PresenceData>(
+    endpoint: &Endpoint,
+    remote_ticket: &str,
+    presence_alpn: &[u8],
+    presence_protocol: PresenceProtocol<P>,
+) -> Result<tokio::task::JoinHandle<()>> {
+    let endpoint_addr = decode_ticket(remote_ticket, "collab1")?;
+    let conn = endpoint.connect(endpoint_addr, presence_alpn).await?;
+
+    Ok(tokio::spawn(async move {
+        if let Err(e) = presence_protocol.run_presence_loop(conn).await {
+            tracing::error!("Presence loop error: {}", e);
+        }
+    }))
+}
+
+/// Run the main event loop for active collaboration.
+async fn run_active_event_loop<D, P>(
+    mut doc_rx: tokio_mpsc::Receiver<D>,
+    mut presence_rx: tokio_mpsc::Receiver<PresenceMessage<P>>,
+    event_tx: std_mpsc::Sender<CollabEvent<D, P>>,
+    command_rx: std_mpsc::Receiver<CollabCommand<D, P>>,
+    doc_protocol: DocumentProtocol<D>,
+    presence_protocol: PresenceProtocol<P>,
+    doc_handle: Option<tokio::task::JoinHandle<()>>,
+    presence_handle: Option<tokio::task::JoinHandle<()>>,
+) -> Result<()>
+where
+    D: SyncableDocument,
+    P: PresenceData,
+{
+    let mut iteration = 0;
+    
+    loop {
+        iteration += 1;
+        debug_assert!(iteration <= MAX_EVENT_LOOP_ITERATIONS, "event loop exceeded max iterations");
+        if iteration > MAX_EVENT_LOOP_ITERATIONS {
+            tracing::warn!("event loop exceeded {} iterations, terminating", MAX_EVENT_LOOP_ITERATIONS);
+            break;
+        }
+        
+        tokio::select! {
+            Some(doc) = doc_rx.recv() => {
+                if let Err(e) = event_tx.send(CollabEvent::DocumentChanged { doc: Box::new(doc) }) {
+                    tracing::warn!("failed to send DocumentChanged event: {}", e);
+                }
+            }
+            Some(msg) = presence_rx.recv() => {
+                handle_presence_message(msg, &event_tx);
+            }
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                match command_rx.try_recv() {
+                    Ok(cmd) => {
+                        if process_command(
+                            cmd,
+                            &doc_protocol,
+                            &presence_protocol,
+                            &event_tx,
+                            &doc_handle,
+                            &presence_handle,
+                        )
+                        .await?
+                        {
+                            break; // Shutdown requested
+                        }
+                    }
+                    Err(std_mpsc::TryRecvError::Empty) => {}
+                    Err(std_mpsc::TryRecvError::Disconnected) => {
+                        cleanup_handles(&doc_handle, &presence_handle);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Handle a presence message from a peer.
+fn handle_presence_message<D, P>(
+    msg: PresenceMessage<P>,
+    event_tx: &std_mpsc::Sender<CollabEvent<D, P>>,
+) where
+    P: PresenceData,
+{
+    match msg {
+        PresenceMessage::Update(presence) => {
+            if let Err(e) = event_tx.send(CollabEvent::PresenceUpdate(presence)) {
+                tracing::warn!("failed to send PresenceUpdate event: {}", e);
+            }
+        }
+        PresenceMessage::Leave { peer_id } => {
+            if let Err(e) = event_tx.send(CollabEvent::PresenceRemoved { peer_id }) {
+                tracing::warn!("failed to send PresenceRemoved event: {}", e);
+            }
+        }
+        PresenceMessage::RequestAll => {
+            // Handled internally by presence protocol
+        }
+    }
+}
+
+/// Process a command from the main thread.
+/// Returns true if shutdown was requested.
+async fn process_command<D, P>(
+    cmd: CollabCommand<D, P>,
+    doc_protocol: &DocumentProtocol<D>,
+    presence_protocol: &PresenceProtocol<P>,
+    event_tx: &std_mpsc::Sender<CollabEvent<D, P>>,
+    doc_handle: &Option<tokio::task::JoinHandle<()>>,
+    presence_handle: &Option<tokio::task::JoinHandle<()>>,
+) -> Result<bool>
+where
+    D: SyncableDocument,
+    P: PresenceData,
+{
+    match cmd {
+        CollabCommand::SyncDocument { doc } => {
+            if let Err(e) = doc_protocol.merge_and_notify(&doc).await
+                && let Err(send_err) = event_tx.send(CollabEvent::Error(e.to_string())) {
+                    tracing::warn!("failed to send Error event: {}", send_err);
+                }
+            Ok(false)
+        }
+        CollabCommand::BroadcastPresence(presence) => {
+            presence_protocol.broadcast(presence);
+            Ok(false)
+        }
+        CollabCommand::Shutdown => {
+            presence_protocol.broadcast_leave();
+            cleanup_handles(doc_handle, presence_handle);
+            Ok(true)
+        }
+    }
+}
+
+/// Clean up task handles by aborting them.
+fn cleanup_handles(
+    doc_handle: &Option<tokio::task::JoinHandle<()>>,
+    presence_handle: &Option<tokio::task::JoinHandle<()>>,
+) {
+    if let Some(h) = doc_handle {
+        h.abort();
+    }
+    if let Some(h) = presence_handle {
+        h.abort();
+    }
+}
+
+/// Handle disabled collaboration mode (offline).
+async fn handle_disabled_mode<D, P>(command_rx: std_mpsc::Receiver<CollabCommand<D, P>>)
+where
+    D: SyncableDocument,
+    P: PresenceData,
+{
+    let mut iteration = 0;
+    
+    // Wait for shutdown command
+    loop {
+        iteration += 1;
+        debug_assert!(iteration <= MAX_DISABLED_ITERATIONS, "disabled mode loop exceeded max iterations");
+        if iteration > MAX_DISABLED_ITERATIONS {
+            tracing::warn!("disabled mode loop exceeded {} iterations, terminating", MAX_DISABLED_ITERATIONS);
+            break;
+        }
+        
+        if let Ok(CollabCommand::Shutdown) = command_rx.recv() {
+            break;
+        }
+    }
 }

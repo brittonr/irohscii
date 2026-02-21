@@ -107,7 +107,17 @@ impl PresenceProtocol {
         // Request peer's presence on connect
         send_presence_msg(send, &PresenceMessage::RequestAll).await?;
 
+        // Bounded loop - will exit on connection close or error
+        const MAX_ITERATIONS: u32 = 100_000;
+        let mut iteration_count: u32 = 0;
+        
         loop {
+            iteration_count = iteration_count.saturating_add(1);
+            if iteration_count >= MAX_ITERATIONS {
+                eprintln!("Presence sync loop exceeded max iterations, closing");
+                break;
+            }
+            
             tokio::select! {
                 // Outgoing: broadcast our updates to this peer
                 result = outgoing_rx.recv() => {
@@ -162,7 +172,11 @@ async fn send_presence_msg<W: AsyncWriteExt + Unpin>(
     msg: &PresenceMessage,
 ) -> Result<()> {
     let data = rmp_serde::to_vec(msg)?;
-    let len = data.len() as u32;
+    let data_len = data.len();
+    if data_len > u32::MAX as usize {
+        anyhow::bail!("Presence message too large: {} bytes", data_len);
+    }
+    let len = data_len as u32;
     writer.write_all(&len.to_le_bytes()).await?;
     writer.write_all(&data).await?;
     writer.flush().await?;
@@ -173,8 +187,15 @@ async fn send_presence_msg<W: AsyncWriteExt + Unpin>(
 async fn recv_presence_msg<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<PresenceMessage> {
     let mut len_bytes = [0u8; 4];
     reader.read_exact(&mut len_bytes).await?;
-    let len = u32::from_le_bytes(len_bytes) as usize;
-
+    let len_u32 = u32::from_le_bytes(len_bytes);
+    
+    // Sanity check message size (16MB limit)
+    const MAX_MESSAGE_SIZE: u32 = 16 * 1024 * 1024;
+    if len_u32 > MAX_MESSAGE_SIZE {
+        anyhow::bail!("Presence message too large: {} bytes", len_u32);
+    }
+    
+    let len = len_u32 as usize;
     let mut data = vec![0u8; len];
     reader.read_exact(&mut data).await?;
 

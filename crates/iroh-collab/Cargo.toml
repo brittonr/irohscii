@@ -28,6 +28,9 @@ data-encoding = { workspace = true }
 # Error handling
 anyhow = { workspace = true }
 
+# Logging
+tracing = { workspace = true }
+
 # Optional: Automerge CRDT backend
 automerge = { workspace = true, optional = true }
 

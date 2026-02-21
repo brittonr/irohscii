@@ -14,7 +14,7 @@ use automerge::Automerge;
 use irohscii_core::Document;
 
 /// How many snapshots to keep in memory cache for disk-backed mode
-const MEMORY_CACHE_SIZE: usize = 20;
+pub(crate) const MEMORY_CACHE_SIZE: u32 = 20;
 
 /// Manages undo/redo with document snapshots (memory or disk-backed)
 #[allow(dead_code)]
@@ -30,23 +30,25 @@ enum UndoStorage {
     /// Memory-only storage with max history limit
     Memory {
         stack: Vec<Vec<u8>>,
-        max_history: usize,
+        max_history: u32,
     },
     /// Disk-backed storage with memory cache for recent items
     Disk {
         /// Directory for snapshot files
         dir: PathBuf,
         /// Current stack size (number of snapshots)
-        count: usize,
+        count: u32,
         /// In-memory cache of recent snapshots (index, bytes)
-        cache: VecDeque<(usize, Vec<u8>)>,
+        cache: VecDeque<(u32, Vec<u8>)>,
     },
 }
 
 #[allow(dead_code)]
 impl UndoManager {
     /// Create a new memory-only undo manager
-    pub fn new(max_history: usize) -> Self {
+    pub fn new(max_history: u32) -> Self {
+        debug_assert!(max_history > 0, "max_history must be positive");
+        
         Self {
             storage: UndoStorage::Memory {
                 stack: Vec::new(),
@@ -58,6 +60,8 @@ impl UndoManager {
 
     /// Create a disk-backed undo manager for unlimited history
     pub fn new_disk_backed(session_id: &str) -> io::Result<Self> {
+        debug_assert!(!session_id.is_empty(), "session_id must not be empty");
+        
         let dir = dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("irohscii")
@@ -66,17 +70,22 @@ impl UndoManager {
 
         fs::create_dir_all(&dir)?;
 
+        debug_assert!(dir.exists(), "Undo directory should exist after creation");
+
         // Count existing snapshots
         let count = fs::read_dir(&dir)?
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "snap"))
             .count();
 
+        debug_assert!(count <= u32::MAX as usize, "Snapshot count should fit in u32");
+        let count = count as u32;
+
         Ok(Self {
             storage: UndoStorage::Disk {
                 dir,
                 count,
-                cache: VecDeque::with_capacity(MEMORY_CACHE_SIZE),
+                cache: VecDeque::with_capacity(MEMORY_CACHE_SIZE as usize),
             },
             redo_stack: Vec::new(),
         })
@@ -85,29 +94,47 @@ impl UndoManager {
     /// Save current state before mutation
     pub fn save_state(&mut self, doc: &Document) {
         let bytes = doc.automerge().save();
+        debug_assert!(!bytes.is_empty(), "Serialized document should not be empty");
 
         match &mut self.storage {
             UndoStorage::Memory { stack, max_history } => {
+                let prev_len = stack.len();
                 stack.push(bytes);
+                
+                debug_assert_eq!(stack.len(), prev_len + 1, "Push should increase stack size by 1");
+                
                 // Limit history size
-                while stack.len() > *max_history {
+                while stack.len() > *max_history as usize {
                     stack.remove(0);
                 }
+                
+                debug_assert!(
+                    stack.len() <= *max_history as usize,
+                    "Stack size should not exceed max_history"
+                );
             }
             UndoStorage::Disk { dir, count, cache } => {
                 // Write to disk
                 let path = dir.join(format!("{:08}.snap", count));
                 if let Err(e) = fs::write(&path, &bytes) {
-                    eprintln!("Warning: Failed to write undo snapshot: {}", e);
+                    eprintln!("ERROR: Failed to write undo snapshot to {:?}: {}", path, e);
+                    eprintln!("       Undo history may be incomplete.");
                     return;
                 }
 
+                debug_assert!(path.exists(), "Snapshot file should exist after writing");
+
                 // Add to cache
-                if cache.len() >= MEMORY_CACHE_SIZE {
+                if cache.len() >= MEMORY_CACHE_SIZE as usize {
                     cache.pop_front();
                 }
                 cache.push_back((*count, bytes));
                 *count += 1;
+                
+                debug_assert!(
+                    cache.len() <= MEMORY_CACHE_SIZE as usize,
+                    "Cache size should not exceed MEMORY_CACHE_SIZE"
+                );
             }
         }
 
@@ -128,15 +155,21 @@ impl UndoManager {
                 // Try cache first
                 let bytes = if let Some(pos) = cache.iter().position(|(idx, _)| *idx == target_idx)
                 {
-                    let (_, b) = cache.remove(pos)?;
+                    let removed = cache.remove(pos);
+                    debug_assert!(removed.is_some(), "Position exists but remove returned None");
+                    let (_, b) = removed?;
                     b
                 } else {
                     // Load from disk
                     let path = dir.join(format!("{:08}.snap", target_idx));
                     match fs::read(&path) {
-                        Ok(b) => b,
+                        Ok(b) => {
+                            debug_assert!(!b.is_empty(), "Snapshot file should not be empty");
+                            b
+                        }
                         Err(e) => {
-                            eprintln!("Warning: Failed to read undo snapshot: {}", e);
+                            eprintln!("ERROR: Failed to read undo snapshot from {:?}: {}", path, e);
+                            eprintln!("       Cannot undo to previous state.");
                             return None;
                         }
                     }
@@ -144,95 +177,178 @@ impl UndoManager {
 
                 // Delete the file
                 let path = dir.join(format!("{:08}.snap", target_idx));
-                let _ = fs::remove_file(&path);
+                if let Err(e) = fs::remove_file(&path) {
+                    eprintln!("WARNING: Failed to delete undo snapshot {:?}: {}", path, e);
+                    // Continue anyway - snapshot was read successfully
+                }
                 *count -= 1;
 
                 Some(bytes)
             }
         }?;
 
+        debug_assert!(!prev_bytes.is_empty(), "Previous state bytes should not be empty");
+
         // Save current for redo
-        self.redo_stack.push(current_doc.automerge().save());
+        let current_bytes = current_doc.automerge().save();
+        debug_assert!(!current_bytes.is_empty(), "Current state bytes should not be empty");
+        self.redo_stack.push(current_bytes);
 
         // Load previous state
-        Automerge::load(&prev_bytes).ok()
+        match Automerge::load(&prev_bytes) {
+            Ok(doc) => Some(doc),
+            Err(e) => {
+                eprintln!("ERROR: Failed to deserialize undo snapshot: {}", e);
+                eprintln!("       Undo snapshot may be corrupted.");
+                None
+            }
+        }
     }
 
     /// Redo to next state, returns the next automerge doc
     pub fn redo(&mut self, current_doc: &Document) -> Option<Automerge> {
         let next_bytes = self.redo_stack.pop()?;
+        debug_assert!(!next_bytes.is_empty(), "Redo stack entry should not be empty");
 
         // Save current for undo (don't clear redo stack here)
         let current_bytes = current_doc.automerge().save();
+        debug_assert!(!current_bytes.is_empty(), "Current state bytes should not be empty");
+        
         match &mut self.storage {
             UndoStorage::Memory { stack, max_history } => {
                 stack.push(current_bytes);
-                while stack.len() > *max_history {
+                while stack.len() > *max_history as usize {
                     stack.remove(0);
                 }
+                debug_assert!(
+                    stack.len() <= *max_history as usize,
+                    "Stack size should not exceed max_history after redo"
+                );
             }
             UndoStorage::Disk { dir, count, cache } => {
                 let path = dir.join(format!("{:08}.snap", count));
                 if let Err(e) = fs::write(&path, &current_bytes) {
-                    eprintln!("Warning: Failed to write undo snapshot: {}", e);
+                    eprintln!("ERROR: Failed to write undo snapshot to {:?}: {}", path, e);
+                    eprintln!("       Redo may not be undoable.");
+                    // Don't return early - we can still complete the redo operation
                 } else {
-                    if cache.len() >= MEMORY_CACHE_SIZE {
+                    debug_assert!(path.exists(), "Snapshot file should exist after writing");
+                    
+                    if cache.len() >= MEMORY_CACHE_SIZE as usize {
                         cache.pop_front();
                     }
                     cache.push_back((*count, current_bytes));
                     *count += 1;
+                    
+                    debug_assert!(
+                        cache.len() <= MEMORY_CACHE_SIZE as usize,
+                        "Cache size should not exceed MEMORY_CACHE_SIZE after redo"
+                    );
                 }
             }
         }
 
         // Load next state
-        Automerge::load(&next_bytes).ok()
+        match Automerge::load(&next_bytes) {
+            Ok(doc) => Some(doc),
+            Err(e) => {
+                eprintln!("ERROR: Failed to deserialize redo snapshot: {}", e);
+                eprintln!("       Redo snapshot may be corrupted.");
+                None
+            }
+        }
     }
 
     /// Check if undo is available
     pub fn can_undo(&self) -> bool {
-        match &self.storage {
+        let result = match &self.storage {
             UndoStorage::Memory { stack, .. } => !stack.is_empty(),
             UndoStorage::Disk { count, .. } => *count > 0,
-        }
+        };
+        debug_assert_eq!(
+            result,
+            self.undo_count() > 0,
+            "can_undo should match undo_count > 0"
+        );
+        result
     }
 
     /// Check if redo is available
     pub fn can_redo(&self) -> bool {
-        !self.redo_stack.is_empty()
+        let result = !self.redo_stack.is_empty();
+        debug_assert_eq!(
+            result,
+            self.redo_count() > 0,
+            "can_redo should match redo_count > 0"
+        );
+        result
     }
 
     /// Clear all history
     pub fn clear(&mut self) {
         match &mut self.storage {
-            UndoStorage::Memory { stack, .. } => stack.clear(),
+            UndoStorage::Memory { stack, .. } => {
+                stack.clear();
+                debug_assert!(stack.is_empty(), "Stack should be empty after clear");
+            }
             UndoStorage::Disk { dir, count, cache } => {
                 // Delete all snapshot files
-                if let Ok(entries) = fs::read_dir(dir) {
-                    for entry in entries.filter_map(|e| e.ok()) {
-                        if entry.path().extension().is_some_and(|ext| ext == "snap") {
-                            let _ = fs::remove_file(entry.path());
+                let dir_path = dir.clone();
+                match fs::read_dir(&dir_path) {
+                    Ok(entries) => {
+                        for entry in entries {
+                            match entry {
+                                Ok(e) => {
+                                    if e.path().extension().is_some_and(|ext| ext == "snap") {
+                                        if let Err(err) = fs::remove_file(e.path()) {
+                                            eprintln!(
+                                                "WARNING: Failed to delete snapshot {:?}: {}",
+                                                e.path(),
+                                                err
+                                            );
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("WARNING: Failed to read directory entry: {}", e);
+                                }
+                            }
                         }
+                    }
+                    Err(e) => {
+                        eprintln!("WARNING: Failed to read undo directory {:?}: {}", dir_path, e);
                     }
                 }
                 *count = 0;
                 cache.clear();
+                debug_assert_eq!(*count, 0, "Count should be 0 after clear");
+                debug_assert!(cache.is_empty(), "Cache should be empty after clear");
             }
         }
         self.redo_stack.clear();
+        debug_assert!(self.redo_stack.is_empty(), "Redo stack should be empty after clear");
+        debug_assert!(!self.can_undo(), "Should not be able to undo after clear");
+        debug_assert!(!self.can_redo(), "Should not be able to redo after clear");
     }
 
     /// Get the number of undo states available
-    pub fn undo_count(&self) -> usize {
+    pub fn undo_count(&self) -> u32 {
         match &self.storage {
-            UndoStorage::Memory { stack, .. } => stack.len(),
+            UndoStorage::Memory { stack, .. } => {
+                debug_assert!(stack.len() <= u32::MAX as usize, "Stack size should fit in u32");
+                stack.len() as u32
+            }
             UndoStorage::Disk { count, .. } => *count,
         }
     }
 
     /// Get the number of redo states available
-    pub fn redo_count(&self) -> usize {
-        self.redo_stack.len()
+    pub fn redo_count(&self) -> u32 {
+        debug_assert!(
+            self.redo_stack.len() <= u32::MAX as usize,
+            "Redo stack size should fit in u32"
+        );
+        self.redo_stack.len() as u32
     }
 
     /// Check if this is a disk-backed manager
@@ -243,16 +359,47 @@ impl UndoManager {
     /// Cleanup disk storage (call on session close if not saving)
     pub fn cleanup_disk_storage(&mut self) {
         if let UndoStorage::Disk { dir, count, cache } = &mut self.storage {
+            let dir_path = dir.clone();
+            
             // Delete all snapshot files
-            if let Ok(entries) = fs::read_dir(&dir) {
-                for entry in entries.filter_map(|e| e.ok()) {
-                    let _ = fs::remove_file(entry.path());
+            match fs::read_dir(&dir_path) {
+                Ok(entries) => {
+                    for entry in entries {
+                        match entry {
+                            Ok(e) => {
+                                if let Err(err) = fs::remove_file(e.path()) {
+                                    eprintln!(
+                                        "WARNING: Failed to delete snapshot {:?} during cleanup: {}",
+                                        e.path(),
+                                        err
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("WARNING: Failed to read directory entry during cleanup: {}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("WARNING: Failed to read undo directory {:?} during cleanup: {}", dir_path, e);
                 }
             }
+            
             // Try to remove the directory itself
-            let _ = fs::remove_dir(&dir);
+            if let Err(e) = fs::remove_dir(&dir_path) {
+                // This is expected to fail if directory is not empty or doesn't exist
+                // Only log if it's an unexpected error
+                if e.kind() != io::ErrorKind::NotFound {
+                    eprintln!("INFO: Could not remove undo directory {:?}: {}", dir_path, e);
+                }
+            }
+            
             *count = 0;
             cache.clear();
+            
+            debug_assert_eq!(*count, 0, "Count should be 0 after cleanup");
+            debug_assert!(cache.is_empty(), "Cache should be empty after cleanup");
         }
     }
 }

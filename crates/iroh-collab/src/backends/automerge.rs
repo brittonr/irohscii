@@ -146,14 +146,14 @@ mod tests {
         let mut doc = Automerge::new();
         {
             let mut tx = doc.transaction();
-            tx.put(ROOT, "test", "value").unwrap();
+            tx.put(ROOT, "test", "value").expect("put should succeed");
             tx.commit();
         }
 
         let syncable = AutomergeDocument::new(doc);
         let bytes = syncable.save();
 
-        let loaded = AutomergeDocument::load(&bytes).unwrap();
+        let loaded = AutomergeDocument::load(&bytes).expect("load should succeed");
         assert!(!loaded.doc().is_empty());
     }
 
@@ -162,21 +162,21 @@ mod tests {
         let mut doc1 = Automerge::new();
         {
             let mut tx = doc1.transaction();
-            tx.put(ROOT, "key1", "value1").unwrap();
+            tx.put(ROOT, "key1", "value1").expect("put should succeed");
             tx.commit();
         }
 
         let mut doc2 = doc1.fork();
         {
             let mut tx = doc2.transaction();
-            tx.put(ROOT, "key2", "value2").unwrap();
+            tx.put(ROOT, "key2", "value2").expect("put should succeed");
             tx.commit();
         }
 
         let mut syncable1 = AutomergeDocument::new(doc1);
         let mut syncable2 = AutomergeDocument::new(doc2);
 
-        syncable1.merge(&mut syncable2).unwrap();
+        syncable1.merge(&mut syncable2).expect("merge should succeed");
         // After merge, syncable1 should have both keys
     }
 
@@ -191,7 +191,7 @@ mod tests {
         let mut doc1 = Automerge::new();
         {
             let mut tx = doc1.transaction();
-            tx.put(ROOT, "test", "hello").unwrap();
+            tx.put(ROOT, "test", "hello").expect("put should succeed");
             tx.commit();
         }
         let syncable1 = AutomergeDocument::new(doc1);
@@ -203,10 +203,11 @@ mod tests {
         // Sync from 1 to 2
         while let Some(msg) = syncable1.generate_sync_message(&mut state1) {
             let encoded = msg.encode();
-            let decoded = AutomergeSyncMessage::decode(&encoded).unwrap();
+            let decoded = AutomergeSyncMessage::decode(&encoded)
+                .expect("decode should succeed");
             syncable2
                 .receive_sync_message(&mut state2, decoded)
-                .unwrap();
+                .expect("receive should succeed");
         }
 
         // Sync back from 2 to 1 (should be in sync now)

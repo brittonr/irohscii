@@ -11,23 +11,28 @@ impl App {
             use std::io::Write;
             use std::process::{Command, Stdio};
 
+            debug_assert!(!ticket.is_empty(), "precondition: ticket is non-empty");
+
             // macOS: use pbcopy
             if cfg!(target_os = "macos") {
-                if let Ok(mut child) = Command::new("pbcopy")
+                let spawn_result = Command::new("pbcopy")
                     .stdin(Stdio::piped())
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
-                    .spawn()
-                    && let Some(mut stdin) = child.stdin.take()
-                {
-                    let ticket_clone = ticket.clone();
-                    std::thread::spawn(move || {
-                        let _ = stdin.write_all(ticket_clone.as_bytes());
-                        drop(stdin);
-                        let _ = child.wait();
-                    });
-                    self.set_status(format!("Copied: {}", ticket));
-                    return;
+                    .spawn();
+                
+                if let Ok(mut child) = spawn_result {
+                    let stdin_option = child.stdin.take();
+                    if let Some(mut stdin) = stdin_option {
+                        let ticket_clone = ticket.clone();
+                        std::thread::spawn(move || {
+                            let _ = stdin.write_all(ticket_clone.as_bytes());
+                            drop(stdin);
+                            let _ = child.wait();
+                        });
+                        self.set_status(format!("Copied: {}", ticket));
+                        return;
+                    }
                 }
                 self.set_status("pbcopy not available");
                 return;
@@ -50,22 +55,25 @@ impl App {
             }
 
             // Fall back to xsel
-            if let Ok(mut child) = Command::new("xsel")
+            let spawn_result = Command::new("xsel")
                 .args(["--clipboard", "--input"])
                 .stdin(Stdio::piped())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .spawn()
-                && let Some(mut stdin) = child.stdin.take()
-            {
-                let ticket_clone = ticket.clone();
-                std::thread::spawn(move || {
-                    let _ = stdin.write_all(ticket_clone.as_bytes());
-                    drop(stdin);
-                    let _ = child.wait();
-                });
-                self.set_status(format!("Copied: {}", ticket));
-                return;
+                .spawn();
+            
+            if let Ok(mut child) = spawn_result {
+                let stdin_option = child.stdin.take();
+                if let Some(mut stdin) = stdin_option {
+                    let ticket_clone = ticket.clone();
+                    std::thread::spawn(move || {
+                        let _ = stdin.write_all(ticket_clone.as_bytes());
+                        drop(stdin);
+                        let _ = child.wait();
+                    });
+                    self.set_status(format!("Copied: {}", ticket));
+                    return;
+                }
             }
 
             self.set_status("Install wl-copy or xsel for clipboard");
@@ -86,6 +94,10 @@ impl App {
             }
         }
         let count = self.clipboard.len();
+        
+        debug_assert!(count > 0, "postcondition: clipboard contains yanked shapes");
+        debug_assert!(count <= self.selected.len(), "postcondition: clipboard size is valid");
+        
         self.set_status(format!(
             "Yanked {} shape{}",
             count,
@@ -98,6 +110,9 @@ impl App {
         if self.clipboard.is_empty() {
             return;
         }
+        
+        let clipboard_size = self.clipboard.len();
+        
         self.save_undo_state();
         self.selected.clear();
         for kind in self.clipboard.clone() {
@@ -109,6 +124,10 @@ impl App {
         self.rebuild_view();
         self.doc.mark_dirty();
         let count = self.selected.len();
+        
+        debug_assert!(count > 0, "postcondition: some shapes were pasted");
+        debug_assert!(count <= clipboard_size, "postcondition: pasted count is valid");
+        
         self.set_status(format!(
             "Pasted {} shape{}",
             count,
@@ -123,6 +142,8 @@ impl App {
             return;
         }
 
+        let original_count = self.selected.len();
+
         self.save_undo_state();
 
         // Collect shapes to duplicate
@@ -134,6 +155,9 @@ impl App {
                 shapes_to_add.push(new_kind);
             }
         }
+
+        debug_assert!(shapes_to_add.len() == original_count, 
+                      "precondition: all selected shapes exist in view");
 
         // Add duplicated shapes and select them
         self.selected.clear();
@@ -147,6 +171,10 @@ impl App {
         self.doc.mark_dirty();
 
         let count = self.selected.len();
+        
+        debug_assert!(count > 0, "postcondition: duplicated shapes were created");
+        debug_assert!(count <= original_count, "postcondition: duplicate count is valid");
+        
         self.set_status(format!(
             "Duplicated {} shape{}",
             count,

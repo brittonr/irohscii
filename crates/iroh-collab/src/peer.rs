@@ -14,9 +14,10 @@ impl PeerId {
     ///
     /// Returns `None` if the slice is shorter than 32 bytes.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() >= 32 {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&bytes[..32]);
+        const PEER_ID_SIZE: usize = 32;
+        if bytes.len() >= PEER_ID_SIZE {
+            let mut arr = [0u8; PEER_ID_SIZE];
+            arr.copy_from_slice(&bytes[..PEER_ID_SIZE]);
             Some(Self(arr))
         } else {
             None
@@ -35,7 +36,8 @@ impl PeerId {
     /// Useful for assigning consistent colors to peers in collaborative UIs.
     /// The index is guaranteed to be in range `0..palette_size`.
     pub fn color_index(&self, palette_size: usize) -> usize {
-        (self.0[0] as usize) % palette_size
+        debug_assert!(palette_size > 0, "palette_size must be positive");
+        usize::from(self.0[0]) % palette_size
     }
 
     /// Get the raw bytes of this peer ID.
@@ -64,7 +66,7 @@ mod tests {
         let bytes = [42u8; 32];
         let peer_id = PeerId::from_bytes(&bytes);
         assert!(peer_id.is_some());
-        assert_eq!(peer_id.unwrap().0, bytes);
+        assert_eq!(peer_id.expect("should parse valid bytes").0, bytes);
     }
 
     #[test]
@@ -80,7 +82,7 @@ mod tests {
         let peer_id = PeerId::from_bytes(&bytes);
         assert!(peer_id.is_some());
         // Should only use first 32 bytes
-        assert_eq!(peer_id.unwrap().0, [42u8; 32]);
+        assert_eq!(peer_id.expect("should parse longer bytes").0, [42u8; 32]);
     }
 
     #[test]
@@ -123,8 +125,8 @@ mod tests {
     #[test]
     fn peer_id_serialization_roundtrip() {
         let peer_id = PeerId([42u8; 32]);
-        let bytes = rmp_serde::to_vec(&peer_id).unwrap();
-        let decoded: PeerId = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = rmp_serde::to_vec(&peer_id).expect("serialization should succeed");
+        let decoded: PeerId = rmp_serde::from_slice(&bytes).expect("deserialization should succeed");
         assert_eq!(peer_id, decoded);
     }
 }

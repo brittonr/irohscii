@@ -171,14 +171,17 @@ mod tests {
 
     impl TestPresence {
         fn new(peer_id: PeerId, x: i32, y: i32) -> Self {
+            let timestamp_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be after UNIX epoch")
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX);
             Self {
                 peer_id,
                 cursor_x: x,
                 cursor_y: y,
-                timestamp_ms: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u64,
+                timestamp_ms,
             }
         }
     }
@@ -218,7 +221,7 @@ mod tests {
         assert_eq!(manager.peer_count(), 1);
         assert!(manager.has_peer(&remote_id));
 
-        let stored = manager.get_peer(&remote_id).unwrap();
+        let stored = manager.get_peer(&remote_id).expect("peer should exist");
         assert_eq!(stored.cursor_x, 10);
         assert_eq!(stored.cursor_y, 20);
     }
@@ -257,7 +260,7 @@ mod tests {
         manager.update_peer(TestPresence::new(remote_id, 30, 40));
 
         assert_eq!(manager.peer_count(), 1);
-        let stored = manager.get_peer(&remote_id).unwrap();
+        let stored = manager.get_peer(&remote_id).expect("peer should exist");
         assert_eq!(stored.cursor_x, 30);
         assert_eq!(stored.cursor_y, 40);
     }
@@ -280,8 +283,9 @@ mod tests {
         let presence = TestPresence::new(peer_id, 10, 20);
 
         let msg: PresenceMessage<TestPresence> = PresenceMessage::Update(presence.clone());
-        let bytes = rmp_serde::to_vec(&msg).unwrap();
-        let decoded: PresenceMessage<TestPresence> = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = rmp_serde::to_vec(&msg).expect("serialization should succeed");
+        let decoded: PresenceMessage<TestPresence> = rmp_serde::from_slice(&bytes)
+            .expect("deserialization should succeed");
 
         if let PresenceMessage::Update(p) = decoded {
             assert_eq!(p.cursor_x, 10);
@@ -296,8 +300,9 @@ mod tests {
         let peer_id = PeerId([1u8; 32]);
         let msg: PresenceMessage<TestPresence> = PresenceMessage::Leave { peer_id };
 
-        let bytes = rmp_serde::to_vec(&msg).unwrap();
-        let decoded: PresenceMessage<TestPresence> = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = rmp_serde::to_vec(&msg).expect("serialization should succeed");
+        let decoded: PresenceMessage<TestPresence> = rmp_serde::from_slice(&bytes)
+            .expect("deserialization should succeed");
 
         if let PresenceMessage::Leave {
             peer_id: decoded_id,

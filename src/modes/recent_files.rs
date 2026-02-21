@@ -7,6 +7,7 @@ use super::{ModeContext, ModeHandler, ModeTransition, RecentFilesState};
 
 impl ModeHandler for RecentFilesState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
+        debug_assert!(self.selected < 1000, "Selected index should be reasonable");
         match key.code {
             KeyCode::Esc => ModeTransition::Normal,
             KeyCode::Up | KeyCode::Char('k') => {
@@ -14,7 +15,8 @@ impl ModeHandler for RecentFilesState {
                 ModeTransition::Stay
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                let max = ctx.app.recent_files.len().saturating_sub(1);
+                let max_usize = ctx.app.recent_files.len().saturating_sub(1);
+                let max = u32::try_from(max_usize).unwrap_or(u32::MAX);
                 self.selected = (self.selected + 1).min(max);
                 ModeTransition::Stay
             }

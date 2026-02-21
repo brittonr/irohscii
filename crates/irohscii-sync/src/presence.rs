@@ -31,6 +31,9 @@ pub const PEER_COLORS: &[Color] = &[
     Color::LightMagenta,
 ];
 
+// Compile-time assertion: color palette must fit in u8
+const _: () = assert!(PEER_COLORS.len() <= 256, "PEER_COLORS palette too large for u8");
+
 /// Tool kind for presence (simplified from Tool enum)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolKind {
@@ -122,11 +125,15 @@ impl PeerPresence {
         active_layer_id: Option<LayerId>,
         drag_start_ms: Option<u64>,
     ) -> Self {
-        let color_index = peer_id.color_index(PEER_COLORS.len()) as u8;
+        let color_idx = peer_id.color_index(PEER_COLORS.len());
+        debug_assert!(color_idx < 256, "color_index must fit in u8");
+        let color_index = color_idx as u8;
+        
         let timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_millis() as u64;
+            .as_millis()
+            .min(u64::MAX as u128) as u64;
 
         Self {
             peer_id,
@@ -160,7 +167,9 @@ pub enum PresenceMessage {
 
 /// Get color for a peer based on their color index
 pub fn peer_color(presence: &PeerPresence) -> Color {
-    PEER_COLORS[presence.color_index as usize % PEER_COLORS.len()]
+    let idx = usize::from(presence.color_index) % PEER_COLORS.len();
+    debug_assert!(idx < PEER_COLORS.len(), "color index out of bounds");
+    PEER_COLORS[idx]
 }
 
 /// Manages all peer presence states

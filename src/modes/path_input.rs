@@ -11,8 +11,24 @@ use ratatui::style::Color;
 
 use super::{ModeContext, ModeHandler, ModeTransition, PathInputKind, PathInputState};
 
+const _: () = {
+    // Ensure PathInputKind covers all expected cases
+    const fn check_path_kind_coverage() {
+        let _ = PathInputKind::FileSave;
+        let _ = PathInputKind::FileOpen;
+        let _ = PathInputKind::DocSave;
+        let _ = PathInputKind::DocOpen;
+        let _ = PathInputKind::SvgExport;
+        let _ = PathInputKind::ClusterConnect;
+        let _ = PathInputKind::QrDecode;
+        let _ = PathInputKind::JoinSession;
+    }
+    check_path_kind_coverage();
+};
+
 impl ModeHandler for PathInputState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
+        debug_assert!(self.path.len() <= 4096, "Path length should be reasonable");
         match key.code {
             KeyCode::Esc => {
                 // Cancel - just return to normal
@@ -59,13 +75,14 @@ impl ModeHandler for PathInputState {
 impl PathInputState {
     /// Tab-complete the current path, updating self.path directly.
     fn complete_path(&mut self, ctx: &mut ModeContext<'_>) {
+        debug_assert!(self.path.len() <= 4096);
+        
         let current_path = &self.path;
-
         let path = std::path::Path::new(current_path);
 
-        let (dir, prefix) = if current_path.ends_with('/')
-            || current_path.ends_with(std::path::MAIN_SEPARATOR)
-        {
+        let ends_with_slash = current_path.ends_with('/');
+        let ends_with_sep = current_path.ends_with(std::path::MAIN_SEPARATOR);
+        let (dir, prefix) = if ends_with_slash || ends_with_sep {
             (std::path::PathBuf::from(current_path), String::new())
         } else if let Some(parent) = path.parent() {
             let parent_path = if parent.as_os_str().is_empty() {
@@ -87,8 +104,13 @@ impl PathInputState {
                 .filter_map(|e| e.ok())
                 .filter_map(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
-                    if name.to_lowercase().starts_with(&prefix.to_lowercase()) {
-                        let full_path = if dir.as_os_str() == "." {
+                    let name_lower = name.to_lowercase();
+                    let prefix_lower = prefix.to_lowercase();
+                    let matches_prefix = name_lower.starts_with(&prefix_lower);
+                    
+                    if matches_prefix {
+                        let is_current_dir = dir.as_os_str() == ".";
+                        let full_path = if is_current_dir {
                             name.clone()
                         } else {
                             dir.join(&name).to_string_lossy().to_string()

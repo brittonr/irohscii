@@ -35,7 +35,8 @@ impl PeerId {
     /// Useful for assigning consistent colors to peers in collaborative UIs.
     /// The index is guaranteed to be in range `0..palette_size`.
     pub fn color_index(&self, palette_size: usize) -> usize {
-        (self.0[0] as usize) % palette_size
+        debug_assert!(palette_size > 0, "palette_size must be non-zero");
+        usize::from(self.0[0]) % palette_size
     }
 
     /// Get the raw bytes of this peer ID.

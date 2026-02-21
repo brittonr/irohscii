@@ -7,6 +7,7 @@ use super::{ConfirmDialogState, ModeContext, ModeHandler, ModeTransition};
 
 impl ModeHandler for ConfirmDialogState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
+        // The action is stored in self.action, validated by the mode transition
         match key.code {
             // Yes - confirm the action
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {

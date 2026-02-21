@@ -12,60 +12,56 @@ use super::{
 };
 use crate::app::{PopupKind, Tool, BRUSHES, COLORS, TOOLS};
 
-impl ModeHandler for LeaderMenuState {
-    fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
+impl LeaderMenuState {
+    /// Handle popup selection commands (tool, color, brush)
+    fn handle_popup_selection(ctx: &mut ModeContext<'_>, key: KeyEvent) -> Option<ModeTransition> {
+        debug_assert!(TOOLS.len() > 0 && COLORS.len() > 0 && BRUSHES.len() > 0);
+        
         match key.code {
-            // Space Space → Select tool directly
             KeyCode::Char(' ') => {
                 ctx.app.set_tool(Tool::Select);
-                ModeTransition::Normal
+                Some(ModeTransition::Normal)
             }
-
-            // Tool selection popup
             KeyCode::Char('t') => {
                 let idx = TOOLS
                     .iter()
                     .position(|&t| t == ctx.app.current_tool)
-                    .unwrap_or(0);
-                ModeTransition::to(Mode::SelectionPopup(SelectionPopupState {
+                    .unwrap_or(0) as u32;
+                Some(ModeTransition::to(Mode::SelectionPopup(SelectionPopupState {
                     kind: PopupKind::Tool,
                     selected: idx,
                     trigger_key: None,
-                }))
+                })))
             }
-
-            // Color selection popup
             KeyCode::Char('c') => {
                 let idx = COLORS
                     .iter()
                     .position(|&c| c == ctx.app.current_color)
-                    .unwrap_or(0);
-                ModeTransition::to(Mode::SelectionPopup(SelectionPopupState {
+                    .unwrap_or(0) as u32;
+                Some(ModeTransition::to(Mode::SelectionPopup(SelectionPopupState {
                     kind: PopupKind::Color,
                     selected: idx,
                     trigger_key: None,
-                }))
+                })))
             }
-
-            // Brush selection popup
             KeyCode::Char('b') => {
                 let idx = BRUSHES
                     .iter()
                     .position(|&b| b == ctx.app.brush_char)
-                    .unwrap_or(0);
-                ModeTransition::to(Mode::SelectionPopup(SelectionPopupState {
+                    .unwrap_or(0) as u32;
+                Some(ModeTransition::to(Mode::SelectionPopup(SelectionPopupState {
                     kind: PopupKind::Brush,
                     selected: idx,
                     trigger_key: None,
-                }))
+                })))
             }
+            _ => None,
+        }
+    }
 
-            // Help screen
-            KeyCode::Char('?') | KeyCode::Char('h') => {
-                ModeTransition::to(Mode::HelpScreen(HelpScreenState { scroll: 0 }))
-            }
-
-            // Save file
+    /// Handle file operations (save, open, export)
+    fn handle_file_ops(ctx: &mut ModeContext<'_>, key: KeyEvent) -> Option<ModeTransition> {
+        match key.code {
             KeyCode::Char('s') => {
                 let path = ctx
                     .app
@@ -73,19 +69,15 @@ impl ModeHandler for LeaderMenuState {
                     .as_ref()
                     .map(|p| p.display().to_string())
                     .unwrap_or_default();
-                ModeTransition::to(Mode::PathInput(PathInputState {
+                Some(ModeTransition::to(Mode::PathInput(PathInputState {
                     path,
                     kind: PathInputKind::FileSave,
-                }))
+                })))
             }
-
-            // Open file
-            KeyCode::Char('o') => ModeTransition::to(Mode::PathInput(PathInputState {
+            KeyCode::Char('o') => Some(ModeTransition::to(Mode::PathInput(PathInputState {
                 path: String::new(),
                 kind: PathInputKind::FileOpen,
-            })),
-
-            // Export SVG
+            }))),
             KeyCode::Char('e') => {
                 let path = ctx
                     .app
@@ -93,31 +85,82 @@ impl ModeHandler for LeaderMenuState {
                     .as_ref()
                     .map(|p| p.with_extension("svg").display().to_string())
                     .unwrap_or_else(|| "export.svg".to_string());
-                ModeTransition::to(Mode::PathInput(PathInputState {
+                Some(ModeTransition::to(Mode::PathInput(PathInputState {
                     path,
                     kind: PathInputKind::SvgExport,
-                }))
+                })))
             }
+            _ => None,
+        }
+    }
 
-            // New document
+    /// Handle sync/networking commands (QR, cluster, join)
+    fn handle_sync_ops(ctx: &mut ModeContext<'_>, key: KeyEvent) -> Option<ModeTransition> {
+        match key.code {
+            KeyCode::Char('T') => {
+                ctx.app.copy_ticket_to_clipboard();
+                Some(ModeTransition::Normal)
+            }
+            KeyCode::Char('Q') => {
+                if let Some(ref ticket) = ctx.app.sync_ticket {
+                    Some(ModeTransition::to(Mode::QrCodeDisplay(QrCodeDisplayState {
+                        ticket: ticket.clone(),
+                    })))
+                } else {
+                    ctx.app.set_status("No sync session active");
+                    Some(ModeTransition::Normal)
+                }
+            }
+            KeyCode::Char('D') => Some(ModeTransition::to(Mode::PathInput(PathInputState {
+                path: String::new(),
+                kind: PathInputKind::QrDecode,
+            }))),
+            KeyCode::Char('K') => Some(ModeTransition::to(Mode::PathInput(PathInputState {
+                path: String::new(),
+                kind: PathInputKind::ClusterConnect,
+            }))),
+            KeyCode::Char('J') => Some(ModeTransition::to(Mode::PathInput(PathInputState {
+                path: String::new(),
+                kind: PathInputKind::JoinSession,
+            }))),
+            _ => None,
+        }
+    }
+}
+
+impl ModeHandler for LeaderMenuState {
+    fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
+        debug_assert!(TOOLS.len() > 0, "TOOLS array must not be empty");
+        debug_assert!(COLORS.len() > 0, "COLORS array must not be empty");
+        debug_assert!(BRUSHES.len() > 0, "BRUSHES array must not be empty");
+        
+        // Try helper functions
+        if let Some(transition) = Self::handle_popup_selection(ctx, key) {
+            return transition;
+        }
+        if let Some(transition) = Self::handle_file_ops(ctx, key) {
+            return transition;
+        }
+        if let Some(transition) = Self::handle_sync_ops(ctx, key) {
+            return transition;
+        }
+        // Handle remaining commands
+        match key.code {
+            KeyCode::Char('?') | KeyCode::Char('h') => {
+                ModeTransition::to(Mode::HelpScreen(HelpScreenState { scroll: 0 }))
+            }
             KeyCode::Char('n') => {
                 ctx.app.request_new_document();
                 ModeTransition::Normal
             }
-
-            // Toggle grid
             KeyCode::Char('g') => {
                 ctx.app.toggle_grid();
                 ModeTransition::Normal
             }
-
-            // Toggle layer panel
             KeyCode::Char('l') => {
                 ctx.app.toggle_layer_panel();
                 ModeTransition::Normal
             }
-
-            // Toggle participants
             KeyCode::Char('p') => {
                 ctx.app.show_participants = !ctx.app.show_participants;
                 let msg = if ctx.app.show_participants {
@@ -128,50 +171,8 @@ impl ModeHandler for LeaderMenuState {
                 ctx.app.set_status(msg);
                 ModeTransition::Normal
             }
-
-            // Copy sync ticket to clipboard
-            KeyCode::Char('T') => {
-                ctx.app.copy_ticket_to_clipboard();
-                ModeTransition::Normal
-            }
-
-            // Show sync ticket as QR code
-            KeyCode::Char('Q') => {
-                if let Some(ref ticket) = ctx.app.sync_ticket {
-                    ModeTransition::to(Mode::QrCodeDisplay(QrCodeDisplayState {
-                        ticket: ticket.clone(),
-                    }))
-                } else {
-                    ctx.app.set_status("No sync session active");
-                    ModeTransition::Normal
-                }
-            }
-
-            // Decode QR code from image file
-            KeyCode::Char('D') => ModeTransition::to(Mode::PathInput(PathInputState {
-                path: String::new(),
-                kind: PathInputKind::QrDecode,
-            })),
-
-            // Connect to cluster
-            KeyCode::Char('K') => ModeTransition::to(Mode::PathInput(PathInputState {
-                path: String::new(),
-                kind: PathInputKind::ClusterConnect,
-            })),
-
-            // Join session
-            KeyCode::Char('J') => ModeTransition::to(Mode::PathInput(PathInputState {
-                path: String::new(),
-                kind: PathInputKind::JoinSession,
-            })),
-
-            // Quit
             KeyCode::Char('q') => ModeTransition::Action(ModeAction::Quit),
-
-            // Cancel / back to normal
             KeyCode::Esc => ModeTransition::Normal,
-
-            // Any other key dismisses the menu (Helix-style)
             _ => ModeTransition::Normal,
         }
     }

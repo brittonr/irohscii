@@ -17,21 +17,29 @@ fn render_label_to_grid(
     bounds: (i32, i32, i32, i32),
     text: &str,
 ) {
+    debug_assert!(!text.is_empty(), "Label text should not be empty");
+    
     let (min_x, min_y, max_x, max_y) = bounds;
+    debug_assert!(max_x >= min_x, "Label bounds: max_x must be >= min_x");
+    debug_assert!(max_y >= min_y, "Label bounds: max_y must be >= min_y");
+    
     let center_y = (min_y + max_y) / 2;
-    let shape_width = (max_x - min_x + 1) as usize;
+    let shape_width = i32::try_from(max_x - min_x + 1)
+        .ok()
+        .and_then(|w| usize::try_from(w).ok())
+        .unwrap_or(0);
     let text_len = text.chars().count();
 
     let inner_width = shape_width.saturating_sub(2);
     let start_offset = if text_len < inner_width {
-        ((inner_width - text_len) / 2) as i32 + 1
+        i32::try_from((inner_width - text_len) / 2).unwrap_or(0) + 1
     } else {
         1
     };
     let start_x = min_x + start_offset;
 
     for (i, ch) in text.chars().enumerate() {
-        let x = start_x + i as i32;
+        let x = start_x + i32::try_from(i).unwrap_or(i32::MAX);
         if x >= max_x {
             break;
         }
@@ -39,9 +47,8 @@ fn render_label_to_grid(
     }
 }
 
-/// Render shapes to a text string
-fn render_shapes_to_text(shapes: &ShapeView) -> String {
-    // Build a sparse grid
+/// Build a character grid from shapes
+fn build_shape_grid(shapes: &ShapeView) -> HashMap<Position, char> {
     let mut grid: HashMap<Position, char> = HashMap::new();
 
     for shape in shapes.iter() {
@@ -115,7 +122,8 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
             }
             ShapeKind::Text { pos, content, .. } => {
                 for (i, ch) in content.chars().enumerate() {
-                    grid.insert(Position::new(pos.x + i as i32, pos.y), ch);
+                    let offset = i32::try_from(i).unwrap_or(i32::MAX);
+                    grid.insert(Position::new(pos.x + offset, pos.y), ch);
                 }
             }
             ShapeKind::Triangle {
@@ -209,11 +217,15 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
         }
     }
 
+    grid
+}
+
+/// Calculate the bounding box of a character grid
+fn calculate_grid_bounds(grid: &HashMap<Position, char>) -> Option<(i32, i32, i32, i32)> {
     if grid.is_empty() {
-        return String::new();
+        return None;
     }
 
-    // Find bounds
     let mut min_x = i32::MAX;
     let mut min_y = i32::MAX;
     let mut max_x = i32::MIN;
@@ -226,7 +238,18 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
         max_y = max_y.max(pos.y);
     }
 
-    // Render to string
+    debug_assert!(max_x >= min_x, "Grid bounds: max_x must be >= min_x");
+    debug_assert!(max_y >= min_y, "Grid bounds: max_y must be >= min_y");
+
+    Some((min_x, min_y, max_x, max_y))
+}
+
+/// Render a character grid to a string
+fn render_grid_to_string(grid: &HashMap<Position, char>, bounds: (i32, i32, i32, i32)) -> String {
+    let (min_x, min_y, max_x, max_y) = bounds;
+    debug_assert!(max_x >= min_x, "render_grid: max_x must be >= min_x");
+    debug_assert!(max_y >= min_y, "render_grid: max_y must be >= min_y");
+
     let mut lines = Vec::new();
     for y in min_y..=max_y {
         let mut line = String::new();
@@ -245,10 +268,30 @@ fn render_shapes_to_text(shapes: &ShapeView) -> String {
     lines.join("\n")
 }
 
+/// Render shapes to a text string
+fn render_shapes_to_text(shapes: &ShapeView) -> String {
+    let grid = build_shape_grid(shapes);
+    
+    if grid.is_empty() {
+        return String::new();
+    }
+
+    let Some(bounds) = calculate_grid_bounds(&grid) else {
+        return String::new();
+    };
+
+    render_grid_to_string(&grid, bounds)
+}
+
 /// Save shapes to a file (renders as ASCII art)
 pub fn save_ascii(shapes: &ShapeView, path: &Path) -> Result<()> {
+    debug_assert!(path.parent().map_or(true, |p| p.exists()), 
+        "Parent directory should exist or path should be relative");
+    
     let content = render_shapes_to_text(shapes);
     fs::write(path, content).with_context(|| format!("Failed to save to {:?}", path))?;
+    
+    debug_assert!(path.exists(), "File should exist after writing");
     Ok(())
 }
 
@@ -257,13 +300,19 @@ pub fn load_ascii(path: &Path) -> Result<Vec<ShapeKind>> {
     let content =
         fs::read_to_string(path).with_context(|| format!("Failed to read from {:?}", path))?;
 
+    debug_assert!(path.exists(), "Path should exist before reading");
     let mut shapes = Vec::new();
 
     // Import each line as a separate text shape
     for (y, line) in content.lines().enumerate() {
         if !line.is_empty() {
+            let y_pos = i32::try_from(y)
+                .unwrap_or_else(|_| {
+                    // If line number exceeds i32::MAX, saturate
+                    i32::MAX
+                });
             shapes.push(ShapeKind::Text {
-                pos: Position::new(0, y as i32),
+                pos: Position::new(0, y_pos),
                 content: line.to_string(),
                 color: ShapeColor::default(),
             });
@@ -409,7 +458,8 @@ mod tests {
         // Check each line is at correct y position
         for (i, shape) in shapes.iter().enumerate() {
             if let ShapeKind::Text { pos, content, .. } = shape {
-                assert_eq!(pos.y, i as i32);
+                let expected_y = i32::try_from(i).expect("test line count fits in i32");
+                assert_eq!(pos.y, expected_y);
                 assert_eq!(pos.x, 0);
                 assert!(!content.is_empty());
             } else {

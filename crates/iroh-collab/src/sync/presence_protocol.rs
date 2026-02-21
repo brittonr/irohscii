@@ -13,6 +13,14 @@ use tokio::sync::{RwLock, broadcast, mpsc};
 
 use crate::{PeerId, PresenceData, PresenceMessage};
 
+// Protocol constants
+const MAX_PRESENCE_MSG_SIZE: u32 = 1024 * 1024; // 1 MB
+const MAX_PRESENCE_ITERATIONS: usize = 100_000;
+
+// Compile-time assertions
+const _: () = assert!(MAX_PRESENCE_MSG_SIZE > 0);
+const _: () = assert!(MAX_PRESENCE_ITERATIONS > 0);
+
 /// Presence protocol handler for Iroh.
 ///
 /// Generic over the presence type `P` which must implement [`PresenceData`].
@@ -73,17 +81,18 @@ impl<P: PresenceData> PresenceProtocol<P> {
             *guard = Some(presence.clone());
         }
         // Broadcast to all peer connections
-        let _ = self
-            .inner
-            .outgoing_tx
-            .send(PresenceMessage::Update(presence));
+        if let Err(e) = self.inner.outgoing_tx.send(PresenceMessage::Update(presence)) {
+            tracing::debug!("failed to broadcast presence update: {}", e);
+        }
     }
 
     /// Notify peers we're leaving.
     pub fn broadcast_leave(&self) {
-        let _ = self.inner.outgoing_tx.send(PresenceMessage::Leave {
+        if let Err(e) = self.inner.outgoing_tx.send(PresenceMessage::Leave {
             peer_id: self.inner.local_peer_id,
-        });
+        }) {
+            tracing::debug!("failed to broadcast leave message: {}", e);
+        }
     }
 
     /// Handle incoming connection (as acceptor/server).
@@ -109,7 +118,15 @@ impl<P: PresenceData> PresenceProtocol<P> {
         // Request peer's presence on connect
         send_presence_msg(send, &PresenceMessage::<P>::RequestAll).await?;
 
+        let mut iteration = 0;
         loop {
+            iteration += 1;
+            debug_assert!(iteration <= MAX_PRESENCE_ITERATIONS, "presence loop exceeded max iterations");
+            if iteration > MAX_PRESENCE_ITERATIONS {
+                tracing::warn!("presence loop exceeded {} iterations, terminating", MAX_PRESENCE_ITERATIONS);
+                break;
+            }
+            
             tokio::select! {
                 // Outgoing: broadcast our updates to this peer
                 result = outgoing_rx.recv() => {
@@ -131,13 +148,14 @@ impl<P: PresenceData> PresenceProtocol<P> {
                     match result {
                         Ok(msg) => {
                             // Handle RequestAll by sending our current presence
-                            if matches!(msg, PresenceMessage::RequestAll) {
-                                if let Some(presence) = self.inner.local_presence.read().await.as_ref() {
+                            if matches!(msg, PresenceMessage::RequestAll)
+                                && let Some(presence) = self.inner.local_presence.read().await.as_ref() {
                                     send_presence_msg(send, &PresenceMessage::Update(presence.clone())).await?;
                                 }
-                            }
                             // Forward to main thread
-                            let _ = self.inner.incoming_tx.send(msg).await;
+                            if let Err(e) = self.inner.incoming_tx.send(msg).await {
+                                tracing::warn!("failed to forward presence message to main thread: {}", e);
+                            }
                         }
                         Err(_) => break, // Connection closed
                     }
@@ -165,7 +183,10 @@ async fn send_presence_msg<P: PresenceData, W: AsyncWriteExt + Unpin>(
     msg: &PresenceMessage<P>,
 ) -> Result<()> {
     let data = rmp_serde::to_vec(msg)?;
-    let len = data.len() as u32;
+    let len = u32::try_from(data.len())
+        .map_err(|_| anyhow::anyhow!("presence message too large: {} bytes", data.len()))?;
+    debug_assert!(len <= MAX_PRESENCE_MSG_SIZE, "presence message size {} exceeds limit", len);
+    
     writer.write_all(&len.to_le_bytes()).await?;
     writer.write_all(&data).await?;
     writer.flush().await?;
@@ -178,9 +199,15 @@ async fn recv_presence_msg<P: PresenceData, R: AsyncReadExt + Unpin>(
 ) -> Result<PresenceMessage<P>> {
     let mut len_bytes = [0u8; 4];
     reader.read_exact(&mut len_bytes).await?;
-    let len = u32::from_le_bytes(len_bytes) as usize;
+    let len = u32::from_le_bytes(len_bytes);
+    
+    if len > MAX_PRESENCE_MSG_SIZE {
+        return Err(anyhow::anyhow!("presence message too large: {} bytes (max: {})", len, MAX_PRESENCE_MSG_SIZE));
+    }
 
-    let mut data = vec![0u8; len];
+    let len_usize = usize::try_from(len)
+        .map_err(|_| anyhow::anyhow!("message size {} exceeds usize", len))?;
+    let mut data = vec![0u8; len_usize];
     reader.read_exact(&mut data).await?;
 
     Ok(rmp_serde::from_slice(&data)?)

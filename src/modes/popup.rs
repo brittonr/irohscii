@@ -9,23 +9,28 @@ use crate::app::{PopupKind, BRUSHES, COLORS, TOOLS};
 impl SelectionPopupState {
     /// Navigate within the popup grid
     fn navigate(&mut self, dx: i32, dy: i32) {
+        debug_assert!(TOOLS.len() > 0 && COLORS.len() > 0 && BRUSHES.len() > 0);
+        
         let (cols, total) = match self.kind {
-            PopupKind::Tool => (3, TOOLS.len()),
-            PopupKind::Color => (4, COLORS.len()),
-            PopupKind::Brush => (6, BRUSHES.len()),
+            PopupKind::Tool => (3u32, TOOLS.len() as u32),
+            PopupKind::Color => (4u32, COLORS.len() as u32),
+            PopupKind::Brush => (6u32, BRUSHES.len() as u32),
         };
         let rows = total.div_ceil(cols);
         let row = self.selected / cols;
         let col = self.selected % cols;
-        let new_col = (col as i32 + dx).clamp(0, cols as i32 - 1) as usize;
-        let new_row = (row as i32 + dy).clamp(0, rows as i32 - 1) as usize;
+        let new_col = (col as i32 + dx).clamp(0, cols as i32 - 1) as u32;
+        let new_row = (row as i32 + dy).clamp(0, rows as i32 - 1) as u32;
         let new_selected = new_row * cols + new_col;
         self.selected = new_selected.min(total - 1);
     }
 }
 
+const _: () = assert!(u32::MAX as usize >= 256, "u32 must fit popup selections");
+
 impl ModeHandler for SelectionPopupState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
+        debug_assert!(self.selected < 256, "Selection index should be reasonable");
         match key.code {
             // hjkl navigation
             KeyCode::Char('h') | KeyCode::Left => {
@@ -46,7 +51,7 @@ impl ModeHandler for SelectionPopupState {
             }
             // Enter to confirm
             KeyCode::Enter => {
-                ctx.app.confirm_popup_selection_with_index(self.kind, self.selected);
+                ctx.app.confirm_popup_selection_with_index(self.kind, self.selected as u32);
                 ModeTransition::Normal
             }
             // Escape to cancel

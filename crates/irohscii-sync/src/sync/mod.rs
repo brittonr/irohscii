@@ -148,17 +148,21 @@ pub fn start_sync_thread(config: SyncConfig) -> Result<SyncHandle> {
         {
             Ok(rt) => rt,
             Err(e) => {
-                let _ = event_tx.send(SyncEvent::Error(format!(
+                if let Err(send_err) = event_tx.send(SyncEvent::Error(format!(
                     "Failed to create tokio runtime: {}",
                     e
-                )));
+                ))) {
+                    eprintln!("Failed to send runtime error event: {}", send_err);
+                }
                 return;
             }
         };
 
         rt.block_on(async move {
             if let Err(e) = run_sync(config, event_tx.clone(), command_rx, endpoint_id_tx).await {
-                let _ = event_tx.send(SyncEvent::Error(e.to_string()));
+                if let Err(send_err) = event_tx.send(SyncEvent::Error(e.to_string())) {
+                    eprintln!("Failed to send sync error event: {}", send_err);
+                }
             }
         });
     });
@@ -238,13 +242,24 @@ async fn do_sync(
     }
 }
 
-/// Main async sync loop
-async fn run_sync(
-    config: SyncConfig,
-    event_tx: std_mpsc::Sender<SyncEvent>,
-    mut command_rx: tokio_mpsc::Receiver<SyncCommand>,
-    endpoint_id_tx: std_mpsc::Sender<String>,
-) -> Result<()> {
+/// Setup context for the sync session
+struct SyncSession {
+    endpoint: Endpoint,
+    store: Arc<LocalDocumentStore>,
+    doc_id: DocumentId,
+    local_peer_id: PeerId,
+    presence_protocol: PresenceProtocol,
+    store_change_rx: tokio_mpsc::Receiver<String>,
+    presence_rx: tokio_mpsc::Receiver<PresenceMessage>,
+    router: iroh::protocol::Router,
+}
+
+/// Initialize the sync session - create endpoint, store, and protocol handlers
+async fn setup_sync_session(
+    config: &SyncConfig,
+    endpoint_id_tx: &std_mpsc::Sender<String>,
+    event_tx: &std_mpsc::Sender<SyncEvent>,
+) -> Result<SyncSession> {
     // Create iroh endpoint, optionally with n0 discovery (DNS + Pkarr)
     let mut builder = Endpoint::builder();
     if !config.disable_discovery {
@@ -260,14 +275,21 @@ async fn run_sync(
 
     // Derive our local peer ID from the endpoint's public key
     let public_key = endpoint.id();
+    debug_assert_eq!(
+        public_key.as_bytes().len(),
+        32,
+        "Iroh PublicKey must be 32 bytes"
+    );
     let local_peer_id = PeerId::from_bytes(public_key.as_bytes())
         .ok_or_else(|| anyhow::anyhow!("PublicKey must be 32 bytes"))?;
 
     // Send our ticket string back to main thread
-    let _ = endpoint_id_tx.send(ticket_string.clone());
+    if let Err(e) = endpoint_id_tx.send(ticket_string.clone()) {
+        eprintln!("Failed to send endpoint ID to main thread: {}", e);
+    }
 
     // Create the document store with a channel for sync notifications
-    let (store_change_tx, mut store_change_rx) = tokio_mpsc::channel(10);
+    let (store_change_tx, store_change_rx) = tokio_mpsc::channel(10);
     let store = Arc::new(LocalDocumentStore::new(store_change_tx));
 
     // Create the document ID for our session
@@ -282,7 +304,7 @@ async fn run_sync(
     let sync_handler = Arc::new(AutomergeSyncHandler::new(store.clone()));
 
     // Create the presence protocol handler
-    let (presence_tx, mut presence_rx) = tokio_mpsc::channel(64);
+    let (presence_tx, presence_rx) = tokio_mpsc::channel(64);
     let presence_protocol = PresenceProtocol::new(local_peer_id, presence_tx);
 
     // Build the router with both protocols
@@ -292,37 +314,151 @@ async fn run_sync(
         .spawn();
 
     // Notify that we're ready with our peer ID
-    let _ = event_tx.send(SyncEvent::Ready {
+    if let Err(e) = event_tx.send(SyncEvent::Ready {
         endpoint_id: ticket_string.clone(),
         local_peer_id,
-    });
+    }) {
+        eprintln!("Failed to send Ready event: {}", e);
+    }
 
+    debug_assert!(
+        store.exists(&doc_id).await?,
+        "Document must exist before starting sync"
+    );
+
+    Ok(SyncSession {
+        endpoint,
+        store,
+        doc_id,
+        local_peer_id,
+        presence_protocol,
+        store_change_rx,
+        presence_rx,
+        router,
+    })
+}
+
+/// Establish initial peer connection (if join ticket provided)
+async fn connect_to_peer(
+    endpoint: &Endpoint,
+    ticket: &str,
+    event_tx: &std_mpsc::Sender<SyncEvent>,
+) -> Option<Connection> {
+    match decode_ticket(ticket) {
+        Ok(endpoint_addr) => {
+            match endpoint.connect(endpoint_addr, AUTOMERGE_SYNC_ALPN).await {
+                Ok(conn) => Some(conn),
+                Err(e) => {
+                    if let Err(send_err) = event_tx.send(SyncEvent::Error(format!(
+                        "Failed to connect to peer: {}", e
+                    ))) {
+                        eprintln!("Failed to send peer connection error: {}", send_err);
+                    }
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            if let Err(send_err) = event_tx.send(SyncEvent::Error(format!(
+                "Invalid peer ticket: {}", e
+            ))) {
+                eprintln!("Failed to send ticket decode error: {}", send_err);
+            }
+            None
+        }
+    }
+}
+
+/// Establish initial cluster connection (if cluster ticket provided)
+async fn connect_to_cluster(
+    endpoint: &Endpoint,
+    cluster_ticket: &str,
+    event_tx: &std_mpsc::Sender<SyncEvent>,
+) -> (Option<Connection>, Option<CapabilityToken>) {
+    match decode_cluster_ticket(cluster_ticket) {
+        Ok((cluster_addr, ticket_cap)) => {
+            match endpoint.connect(cluster_addr, AUTOMERGE_SYNC_ALPN).await {
+                Ok(conn) => (Some(conn), ticket_cap),
+                Err(e) => {
+                    if let Err(send_err) = event_tx.send(SyncEvent::Error(format!(
+                        "Failed to connect to cluster: {}", e
+                    ))) {
+                        eprintln!("Failed to send cluster connection error: {}", send_err);
+                    }
+                    (None, ticket_cap)
+                }
+            }
+        }
+        Err(e) => {
+            if let Err(send_err) = event_tx.send(SyncEvent::Error(format!(
+                "Invalid cluster ticket: {}", e
+            ))) {
+                eprintln!("Failed to send cluster ticket error: {}", send_err);
+            }
+            (None, None)
+        }
+    }
+}
+
+/// Connect presence protocol to a peer
+async fn connect_presence(
+    endpoint: &Endpoint,
+    ticket: &str,
+    presence_protocol: &PresenceProtocol,
+) -> Option<tokio::task::JoinHandle<()>> {
+    match decode_ticket(ticket) {
+        Ok(endpoint_addr) => {
+            match endpoint.connect(endpoint_addr, PresenceProtocol::ALPN).await {
+                Ok(conn) => {
+                    let presence_clone = presence_protocol.clone();
+                    Some(tokio::spawn(async move {
+                        if let Err(e) = presence_clone.run_presence_loop(conn).await {
+                            eprintln!("Presence loop error: {}", e);
+                        }
+                    }))
+                }
+                Err(e) => {
+                    eprintln!("Failed to connect presence protocol: {}", e);
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Invalid ticket for presence connection: {}", e);
+            None
+        }
+    }
+}
+
+/// Main async sync loop
+async fn run_sync(
+    config: SyncConfig,
+    event_tx: std_mpsc::Sender<SyncEvent>,
+    mut command_rx: tokio_mpsc::Receiver<SyncCommand>,
+    endpoint_id_tx: std_mpsc::Sender<String>,
+) -> Result<()> {
+    let session = setup_sync_session(&config, &endpoint_id_tx, &event_tx).await?;
+    let SyncSession {
+        endpoint,
+        store,
+        doc_id,
+        local_peer_id,
+        presence_protocol,
+        mut store_change_rx,
+        mut presence_rx,
+        router,
+    } = session;
+    
+    debug_assert!(!local_peer_id.as_bytes().is_empty(), "local_peer_id must be valid");
+    
     match config.mode {
         SyncMode::Active { join_ticket } => {
             // Shutdown flag for clean periodic sync termination
             let shutting_down = Arc::new(AtomicBool::new(false));
 
-            // Resolve peer address (if joining)
-            let peer_endpoint_addr = if let Some(ref remote_ticket) = join_ticket {
-                Some(decode_ticket(remote_ticket)?)
-            } else {
-                None
-            };
-
-            // Establish a persistent sync connection to the peer (reused for all syncs).
-            // QUIC connections support multiplexed streams, so sync_with_peer() opens
-            // a new bi-stream each time on this same connection.
-            // Mutable so ConnectPeer can replace it mid-session.
-            let mut sync_conn: Option<Connection> = if let Some(ref endpoint_addr) = peer_endpoint_addr {
-                match endpoint.connect(endpoint_addr.clone(), AUTOMERGE_SYNC_ALPN).await {
-                    Ok(conn) => Some(conn),
-                    Err(e) => {
-                        let _ = event_tx.send(SyncEvent::Error(format!(
-                            "Failed to connect to peer: {}", e
-                        )));
-                        None
-                    }
-                }
+            // Establish a persistent sync connection to the peer (if joining)
+            let mut sync_conn: Option<Connection> = if let Some(ref remote_ticket) = join_ticket {
+                connect_to_peer(&endpoint, remote_ticket, &event_tx).await
             } else {
                 None
             };
@@ -332,24 +468,12 @@ async fn run_sync(
             let mut cluster_cap: Option<CapabilityToken> = config.cluster_capability.clone();
 
             // Establish a persistent connection to the aspen cluster node (if configured).
-            // This is independent of peer sync — the cluster provides durable storage
-            // while peer sync provides real-time collaboration.
-            // Mutable so ConnectCluster can attach one mid-session.
             let mut cluster_conn: Option<Connection> = if let Some(ref cluster_ticket) = config.cluster_ticket {
-                // Parse the ticket — amsync1 tickets include the capability token
-                let (cluster_addr, ticket_cap) = decode_cluster_ticket(cluster_ticket)?;
+                let (conn, ticket_cap) = connect_to_cluster(&endpoint, cluster_ticket, &event_tx).await;
                 if ticket_cap.is_some() {
                     cluster_cap = ticket_cap;
                 }
-                match endpoint.connect(cluster_addr, AUTOMERGE_SYNC_ALPN).await {
-                    Ok(conn) => Some(conn),
-                    Err(e) => {
-                        let _ = event_tx.send(SyncEvent::Error(format!(
-                            "Failed to connect to cluster: {}", e
-                        )));
-                        None
-                    }
-                }
+                conn
             } else {
                 None
             };
@@ -365,19 +489,8 @@ async fn run_sync(
             }
 
             // Connect presence protocol on a separate connection (different ALPN)
-            // Mutable so ConnectPeer can replace it mid-session.
-            let mut presence_handle = if let Some(ref endpoint_addr) = peer_endpoint_addr {
-                match endpoint.connect(endpoint_addr.clone(), PresenceProtocol::ALPN).await {
-                    Ok(conn) => {
-                        let presence_clone = presence_protocol.clone();
-                        Some(tokio::spawn(async move {
-                            if let Err(e) = presence_clone.run_presence_loop(conn).await {
-                                eprintln!("Presence loop error: {}", e);
-                            }
-                        }))
-                    }
-                    Err(_) => None,
-                }
+            let mut presence_handle = if let Some(ref remote_ticket) = join_ticket {
+                connect_presence(&endpoint, remote_ticket, &presence_protocol).await
             } else {
                 None
             };
@@ -395,22 +508,34 @@ async fn run_sync(
             let mut cluster_interval = tokio::time::interval(Duration::from_secs(2));
             cluster_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-            // Main loop
+            // Main loop (bounded for safety)
+            const MAX_LOOP_ITERATIONS: u32 = 1_000_000;
+            let mut loop_count: u32 = 0;
+            
             loop {
+                loop_count = loop_count.saturating_add(1);
+                if loop_count >= MAX_LOOP_ITERATIONS {
+                    eprintln!("Sync loop exceeded max iterations, shutting down");
+                    break;
+                }
                 tokio::select! {
                     // Store notified us of changes from sync
                     Some(_doc_id_str) = store_change_rx.recv() => {
                         if let Some(bytes) = store.get_bytes(&doc_id).await {
                             match Automerge::load(&bytes) {
                                 Ok(doc) => {
-                                    let _ = event_tx.send(SyncEvent::RemoteChanges {
+                                    if let Err(send_err) = event_tx.send(SyncEvent::RemoteChanges {
                                         doc: Box::new(doc),
-                                    });
+                                    }) {
+                                        eprintln!("Failed to send RemoteChanges event: {}", send_err);
+                                    }
                                 }
                                 Err(e) => {
-                                    let _ = event_tx.send(SyncEvent::Error(
+                                    if let Err(send_err) = event_tx.send(SyncEvent::Error(
                                         format!("Failed to load doc: {}", e),
-                                    ));
+                                    )) {
+                                        eprintln!("Failed to send doc load error: {}", send_err);
+                                    }
                                 }
                             }
                         }
@@ -419,20 +544,26 @@ async fn run_sync(
                     Some(msg) = presence_rx.recv() => {
                         match msg {
                             PresenceMessage::Update(presence) => {
-                                let _ = event_tx.send(SyncEvent::PresenceUpdate(presence));
+                                if let Err(e) = event_tx.send(SyncEvent::PresenceUpdate(presence)) {
+                                    eprintln!("Failed to send PresenceUpdate event: {}", e);
+                                }
                             }
                             PresenceMessage::Leave { peer_id } => {
-                                let _ = event_tx.send(SyncEvent::PresenceRemoved { peer_id });
+                                if let Err(e) = event_tx.send(SyncEvent::PresenceRemoved { peer_id }) {
+                                    eprintln!("Failed to send PresenceRemoved event: {}", e);
+                                }
                             }
                             PresenceMessage::RequestAll => {}
                         }
                     }
                     // Periodic sync with peer — pull remote changes (skipped if recent push)
                     _ = sync_interval.tick() => {
-                        if !shutting_down.load(Ordering::Relaxed)
-                            && last_explicit_sync.elapsed() >= Duration::from_millis(500)
-                            && let Some(ref conn) = sync_conn
-                        {
+                        let not_shutting_down = !shutting_down.load(Ordering::Relaxed);
+                        let not_recent_sync = last_explicit_sync.elapsed() >= Duration::from_millis(500);
+                        let has_connection = sync_conn.is_some();
+                        
+                        if not_shutting_down && not_recent_sync && has_connection {
+                            let Some(ref conn) = sync_conn else { continue; };
                             let store_clone = store.clone();
                             let doc_id_clone = doc_id.clone();
                             let conn_clone = conn.clone();
@@ -446,7 +577,11 @@ async fn run_sync(
                     }
                     // Periodic sync with cluster (less frequent, for persistence)
                     _ = cluster_interval.tick() => {
-                        if !shutting_down.load(Ordering::Relaxed) && let Some(ref conn) = cluster_conn {
+                        let not_shutting_down = !shutting_down.load(Ordering::Relaxed);
+                        let has_cluster = cluster_conn.is_some();
+                        
+                        if not_shutting_down && has_cluster {
+                            let Some(ref conn) = cluster_conn else { continue; };
                             let store_clone = store.clone();
                             let doc_id_clone = doc_id.clone();
                             let conn_clone = conn.clone();
@@ -466,9 +601,11 @@ async fn run_sync(
                                 // Update the local store (no notification to avoid feedback loop)
                                 let bytes = doc.save();
                                 if let Err(e) = store.update_from_app(&doc_id, &bytes).await {
-                                    let _ = event_tx.send(SyncEvent::Error(
+                                    if let Err(send_err) = event_tx.send(SyncEvent::Error(
                                         format!("Failed to update store: {}", e),
-                                    ));
+                                    )) {
+                                        eprintln!("Failed to send store update error: {}", send_err);
+                                    }
                                 }
 
                                 // Record that we just synced (suppresses redundant periodic pull)
@@ -510,16 +647,20 @@ async fn run_sync(
                                                 cluster_conn = Some(conn);
                                             }
                                             Err(e) => {
-                                                let _ = event_tx.send(SyncEvent::Error(
+                                                if let Err(send_err) = event_tx.send(SyncEvent::Error(
                                                     format!("Failed to connect to cluster: {}", e),
-                                                ));
+                                                )) {
+                                                    eprintln!("Failed to send cluster connect error: {}", send_err);
+                                                }
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        let _ = event_tx.send(SyncEvent::Error(
+                                        if let Err(send_err) = event_tx.send(SyncEvent::Error(
                                             format!("Invalid cluster ticket: {}", e),
-                                        ));
+                                        )) {
+                                            eprintln!("Failed to send cluster ticket error: {}", send_err);
+                                        }
                                     }
                                 }
                             }
@@ -538,9 +679,11 @@ async fn run_sync(
                                                 sync_conn = Some(conn);
                                             }
                                             Err(e) => {
-                                                let _ = event_tx.send(SyncEvent::Error(
+                                                if let Err(send_err) = event_tx.send(SyncEvent::Error(
                                                     format!("Failed to connect to peer: {}", e),
-                                                ));
+                                                )) {
+                                                    eprintln!("Failed to send peer connect error: {}", send_err);
+                                                }
                                                 // Don't return early, still try to connect presence
                                             }
                                         }
@@ -555,16 +698,20 @@ async fn run_sync(
                                                 }));
                                             }
                                             Err(e) => {
-                                                let _ = event_tx.send(SyncEvent::Error(
+                                                if let Err(send_err) = event_tx.send(SyncEvent::Error(
                                                     format!("Failed to connect presence: {}", e),
-                                                ));
+                                                )) {
+                                                    eprintln!("Failed to send presence connect error: {}", send_err);
+                                                }
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        let _ = event_tx.send(SyncEvent::Error(
+                                        if let Err(send_err) = event_tx.send(SyncEvent::Error(
                                             format!("Invalid peer ticket: {}", e),
-                                        ));
+                                        )) {
+                                            eprintln!("Failed to send peer ticket error: {}", send_err);
+                                        }
                                     }
                                 }
                             }
@@ -590,7 +737,17 @@ async fn run_sync(
             }
         }
         SyncMode::Disabled => {
+            // Bounded loop for disabled mode
+            const MAX_DISABLED_ITERATIONS: u32 = 100_000;
+            let mut iteration_count: u32 = 0;
+            
             loop {
+                iteration_count = iteration_count.saturating_add(1);
+                if iteration_count >= MAX_DISABLED_ITERATIONS {
+                    eprintln!("Disabled sync loop exceeded max iterations");
+                    break;
+                }
+                
                 match command_rx.recv().await {
                     Some(SyncCommand::Shutdown) | None => break,
                     _ => {}

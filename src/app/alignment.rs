@@ -7,6 +7,7 @@ use super::App;
 impl App {
     /// Align selected shapes to left edge
     pub fn align_left(&mut self) {
+        
         if self.selected.len() < 2 {
             self.set_status("Select at least 2 shapes to align");
             return;
@@ -14,6 +15,10 @@ impl App {
         let Some((target_x, _, _, _)) = self.get_selection_bounds() else {
             return;
         };
+        
+        debug_assert!(self.selected.iter().all(|&id| self.shape_view.get(id).is_some()), 
+                      "precondition: all selected shapes exist in view");
+        
         self.save_undo_state();
         for &id in self.selected.clone().iter() {
             if let Some(shape) = self.shape_view.get(id) {
@@ -26,10 +31,13 @@ impl App {
         }
         self.rebuild_view();
         self.set_status("Aligned left");
+        
+        debug_assert!(self.shape_view.len() > 0, "postcondition: view contains shapes");
     }
 
     /// Align selected shapes to right edge
     pub fn align_right(&mut self) {
+        
         if self.selected.len() < 2 {
             self.set_status("Select at least 2 shapes to align");
             return;
@@ -37,6 +45,10 @@ impl App {
         let Some((_, _, target_x, _)) = self.get_selection_bounds() else {
             return;
         };
+        
+        debug_assert!(self.selected.iter().all(|&id| self.shape_view.get(id).is_some()), 
+                      "precondition: all selected shapes exist in view");
+        
         self.save_undo_state();
         for &id in self.selected.clone().iter() {
             if let Some(shape) = self.shape_view.get(id) {
@@ -49,10 +61,13 @@ impl App {
         }
         self.rebuild_view();
         self.set_status("Aligned right");
+        
+        debug_assert!(self.shape_view.len() > 0, "postcondition: view contains shapes");
     }
 
     /// Align selected shapes to top edge
     pub fn align_top(&mut self) {
+        
         if self.selected.len() < 2 {
             self.set_status("Select at least 2 shapes to align");
             return;
@@ -60,6 +75,10 @@ impl App {
         let Some((_, target_y, _, _)) = self.get_selection_bounds() else {
             return;
         };
+        
+        debug_assert!(self.selected.iter().all(|&id| self.shape_view.get(id).is_some()), 
+                      "precondition: all selected shapes exist in view");
+        
         self.save_undo_state();
         for &id in self.selected.clone().iter() {
             if let Some(shape) = self.shape_view.get(id) {
@@ -72,10 +91,13 @@ impl App {
         }
         self.rebuild_view();
         self.set_status("Aligned top");
+        
+        debug_assert!(self.shape_view.len() > 0, "postcondition: view contains shapes");
     }
 
     /// Align selected shapes to bottom edge
     pub fn align_bottom(&mut self) {
+        
         if self.selected.len() < 2 {
             self.set_status("Select at least 2 shapes to align");
             return;
@@ -83,6 +105,10 @@ impl App {
         let Some((_, _, _, target_y)) = self.get_selection_bounds() else {
             return;
         };
+        
+        debug_assert!(self.selected.iter().all(|&id| self.shape_view.get(id).is_some()), 
+                      "precondition: all selected shapes exist in view");
+        
         self.save_undo_state();
         for &id in self.selected.clone().iter() {
             if let Some(shape) = self.shape_view.get(id) {
@@ -95,10 +121,13 @@ impl App {
         }
         self.rebuild_view();
         self.set_status("Aligned bottom");
+        
+        debug_assert!(self.shape_view.len() > 0, "postcondition: view contains shapes");
     }
 
     /// Align selected shapes to horizontal center
     pub fn align_center_h(&mut self) {
+        
         if self.selected.len() < 2 {
             self.set_status("Select at least 2 shapes to align");
             return;
@@ -107,6 +136,10 @@ impl App {
             return;
         };
         let target_center = (min_x + max_x) / 2;
+        
+        debug_assert!(self.selected.iter().all(|&id| self.shape_view.get(id).is_some()), 
+                      "precondition: all selected shapes exist in view");
+        
         self.save_undo_state();
         for &id in self.selected.clone().iter() {
             if let Some(shape) = self.shape_view.get(id) {
@@ -120,10 +153,13 @@ impl App {
         }
         self.rebuild_view();
         self.set_status("Aligned center (horizontal)");
+        
+        debug_assert!(self.shape_view.len() > 0, "postcondition: view contains shapes");
     }
 
     /// Align selected shapes to vertical center
     pub fn align_center_v(&mut self) {
+        
         if self.selected.len() < 2 {
             self.set_status("Select at least 2 shapes to align");
             return;
@@ -132,6 +168,10 @@ impl App {
             return;
         };
         let target_center = (min_y + max_y) / 2;
+        
+        debug_assert!(self.selected.iter().all(|&id| self.shape_view.get(id).is_some()), 
+                      "precondition: all selected shapes exist in view");
+        
         self.save_undo_state();
         for &id in self.selected.clone().iter() {
             if let Some(shape) = self.shape_view.get(id) {
@@ -145,6 +185,8 @@ impl App {
         }
         self.rebuild_view();
         self.set_status("Aligned center (vertical)");
+        
+        debug_assert!(self.shape_view.len() > 0, "postcondition: view contains shapes");
     }
 
     /// Distribute selected shapes evenly (horizontal spacing)
@@ -165,6 +207,9 @@ impl App {
             }
         }
 
+        debug_assert!(shapes.len() == self.selected.len(), 
+                      "precondition: all selected shapes exist in view");
+
         // Sort by center position (left to right)
         shapes.sort_by_key(|(_, center, _)| *center);
 
@@ -174,7 +219,12 @@ impl App {
         let total_span = last_center - first_center;
         let num_gaps = shapes.len() - 1;
 
-        if num_gaps == 0 || total_span == 0 {
+        let has_zero_gaps = num_gaps == 0;
+        let has_zero_span = total_span == 0;
+        if has_zero_gaps {
+            return;
+        }
+        if has_zero_span {
             return;
         }
 
@@ -184,8 +234,13 @@ impl App {
 
         // Move each shape to its new position (skip first and last)
         for (i, (id, current_center, _)) in shapes.iter().enumerate() {
-            if i == 0 || i == shapes.len() - 1 {
-                continue; // Keep first and last in place
+            let is_first = i == 0;
+            let is_last = i == shapes.len() - 1;
+            if is_first {
+                continue; // Keep first in place
+            }
+            if is_last {
+                continue; // Keep last in place
             }
             let target_center = first_center + (gap * i as i32);
             let dx = target_center - current_center;
@@ -196,6 +251,8 @@ impl App {
 
         self.rebuild_view();
         self.set_status("Distributed horizontally");
+        
+        debug_assert!(self.shape_view.len() > 0, "postcondition: view contains shapes");
     }
 
     /// Distribute selected shapes evenly (vertical spacing)
@@ -216,6 +273,9 @@ impl App {
             }
         }
 
+        debug_assert!(shapes.len() == self.selected.len(), 
+                      "precondition: all selected shapes exist in view");
+
         // Sort by center position (top to bottom)
         shapes.sort_by_key(|(_, center, _)| *center);
 
@@ -225,7 +285,12 @@ impl App {
         let total_span = last_center - first_center;
         let num_gaps = shapes.len() - 1;
 
-        if num_gaps == 0 || total_span == 0 {
+        let has_zero_gaps = num_gaps == 0;
+        let has_zero_span = total_span == 0;
+        if has_zero_gaps {
+            return;
+        }
+        if has_zero_span {
             return;
         }
 
@@ -235,8 +300,13 @@ impl App {
 
         // Move each shape to its new position (skip first and last)
         for (i, (id, current_center, _)) in shapes.iter().enumerate() {
-            if i == 0 || i == shapes.len() - 1 {
-                continue; // Keep first and last in place
+            let is_first = i == 0;
+            let is_last = i == shapes.len() - 1;
+            if is_first {
+                continue; // Keep first in place
+            }
+            if is_last {
+                continue; // Keep last in place
             }
             let target_center = first_center + (gap * i as i32);
             let dy = target_center - current_center;
@@ -247,5 +317,7 @@ impl App {
 
         self.rebuild_view();
         self.set_status("Distributed vertically");
+        
+        debug_assert!(self.shape_view.len() > 0, "postcondition: view contains shapes");
     }
 }

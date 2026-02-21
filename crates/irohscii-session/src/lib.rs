@@ -15,3 +15,13 @@ pub use undo::UndoManager;
 
 // Re-export core types for convenience
 pub use irohscii_core::Document;
+
+// Compile-time assertions for key invariants
+const _: () = assert!(
+    session::MAX_RECENT_SESSIONS > 0,
+    "MAX_RECENT_SESSIONS must be positive"
+);
+const _: () = assert!(
+    undo::MEMORY_CACHE_SIZE > 0,
+    "MEMORY_CACHE_SIZE must be positive"
+);
