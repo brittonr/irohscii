@@ -424,6 +424,10 @@ const PRESENCE_BROADCAST_INTERVAL: Duration = Duration::from_millis(50);
 /// 50ms is fast enough to feel real-time while avoiding per-keystroke overhead.
 const SYNC_DEBOUNCE: Duration = Duration::from_millis(50);
 
+/// Disk save debounce interval — coalesce rapid edits into a single disk write.
+/// 2 seconds is frequent enough for crash recovery without blocking the event loop.
+const DISK_SAVE_DEBOUNCE: Duration = Duration::from_secs(2);
+
 /// Maximum iterations per event loop cycle (safety bound)
 const MAX_EVENT_LOOP_ITERATIONS: u32 = 1_000_000;
 
@@ -433,6 +437,7 @@ const MAX_SYNC_EVENTS_PER_CYCLE: u32 = 100;
 // Compile-time assertions for reasonable constants
 const _: () = assert!(PRESENCE_BROADCAST_INTERVAL.as_millis() >= 10, "Presence broadcast too frequent");
 const _: () = assert!(SYNC_DEBOUNCE.as_millis() >= 10, "Sync debounce too short");
+const _: () = assert!(DISK_SAVE_DEBOUNCE.as_secs() >= 1, "Disk save debounce too short");
 const _: () = assert!(MAX_EVENT_LOOP_ITERATIONS > 0, "Event loop bound must be positive");
 const _: () = assert!(MAX_SYNC_EVENTS_PER_CYCLE > 0, "Sync event bound must be positive");
 
@@ -446,6 +451,8 @@ fn run_app(
     let mut last_stale_prune = Instant::now();
     let mut sync_pending = false;
     let mut last_sync_sent = Instant::now();
+    let mut disk_save_pending = false;
+    let mut last_disk_save = Instant::now();
     let mut iteration_count: u32 = 0;
 
     while app.running {
@@ -458,6 +465,7 @@ fn run_app(
         }
 
         flush_pending_sync_if_due(&mut sync_pending, &mut last_sync_sent, app, sync_handle);
+        flush_pending_disk_save_if_due(&mut disk_save_pending, &mut last_disk_save, app, session_manager);
         terminal.draw(|frame| ui::render(frame, &mut *app))?;
         prune_stale_peers_if_due(&mut last_stale_prune, app);
         process_sync_events(sync_handle, app);
@@ -465,10 +473,10 @@ fn run_app(
         if event::poll(Duration::from_millis(16))? {
             match event::read()? {
                 Event::Key(key) => {
-                    handle_key_event(key, app, &mut sync_pending, sync_handle, session_manager);
+                    handle_key_event(key, app, &mut sync_pending, &mut disk_save_pending, sync_handle, session_manager);
                 }
                 Event::Mouse(mouse) => {
-                    handle_mouse_event(mouse, app, &mut sync_pending, sync_handle);
+                    handle_mouse_event(mouse, app, &mut sync_pending, &mut disk_save_pending, sync_handle);
                 }
                 Event::Resize(w, h) => {
                     debug_assert!(w > 0 && h >= 2, "Invalid terminal resize dimensions");
@@ -500,6 +508,25 @@ fn flush_pending_sync_if_due(
         }
         *sync_pending = false;
         *last_sync_sent = Instant::now();
+    }
+}
+
+/// Flush pending disk save if debounce window has elapsed.
+/// Coalesces rapid edits into periodic disk writes instead of per-event I/O.
+fn flush_pending_disk_save_if_due(
+    disk_save_pending: &mut bool,
+    last_disk_save: &mut Instant,
+    app: &mut App,
+    session_manager: &mut session::SessionManager,
+) {
+    if *disk_save_pending && last_disk_save.elapsed() >= DISK_SAVE_DEBOUNCE {
+        if let (Some(session_id), Some(meta)) =
+            (&app.current_session, &mut app.current_session_meta)
+        {
+            let _ = session_manager.save_session(session_id, &mut app.doc, meta);
+        }
+        *disk_save_pending = false;
+        *last_disk_save = Instant::now();
     }
 }
 
@@ -561,6 +588,7 @@ fn handle_key_event(
     key: event::KeyEvent,
     app: &mut App,
     sync_pending: &mut bool,
+    disk_save_pending: &mut bool,
     sync_handle: Option<&SyncHandle>,
     session_manager: &mut session::SessionManager,
 ) {
@@ -568,7 +596,7 @@ fn handle_key_event(
         KeyEventKind::Press => {
             app.clear_status();
             process_key_press(key, app, session_manager);
-            mark_sync_pending_if_dirty(app, sync_pending, sync_handle, session_manager);
+            mark_sync_and_save_pending_if_dirty(app, sync_pending, disk_save_pending, sync_handle);
             handle_session_operations(app, session_manager);
             handle_sync_operations(app, sync_handle);
         }
@@ -642,23 +670,19 @@ fn handle_mode_action(
     }
 }
 
-/// Mark sync pending if changes were made
-fn mark_sync_pending_if_dirty(
-    app: &mut App,
+/// Mark sync and disk-save pending if the document is dirty.
+/// Does NOT perform I/O — just sets flags for debounced flush later.
+fn mark_sync_and_save_pending_if_dirty(
+    app: &App,
     sync_pending: &mut bool,
+    disk_save_pending: &mut bool,
     sync_handle: Option<&SyncHandle>,
-    session_manager: &mut session::SessionManager,
 ) {
-    if matches!(app.mode, Mode::Normal) {
+    if app.is_dirty() {
         if sync_handle.is_some() {
             *sync_pending = true;
         }
-        
-        if let (Some(session_id), Some(meta)) =
-            (&app.current_session, &mut app.current_session_meta)
-        {
-            let _ = session_manager.save_session(session_id, &mut app.doc, meta);
-        }
+        *disk_save_pending = true;
     }
 }
 
@@ -783,6 +807,7 @@ fn handle_mouse_event(
     mouse: event::MouseEvent,
     app: &mut App,
     sync_pending: &mut bool,
+    disk_save_pending: &mut bool,
     sync_handle: Option<&SyncHandle>,
 ) {
     update_cursor_position(app, &mouse);
@@ -795,7 +820,7 @@ fn handle_mouse_event(
         return;
     }
 
-    handle_canvas_tool_event(mouse, app, sync_pending, sync_handle);
+    handle_canvas_tool_event(mouse, app, sync_pending, disk_save_pending, sync_handle);
 }
 
 /// Update cursor position for presence
@@ -869,6 +894,7 @@ fn handle_canvas_tool_event(
     mouse: event::MouseEvent,
     app: &mut App,
     sync_pending: &mut bool,
+    disk_save_pending: &mut bool,
     sync_handle: Option<&SyncHandle>,
 ) {
     if !matches!(app.mode, Mode::Normal) {
@@ -895,11 +921,12 @@ fn handle_canvas_tool_event(
         Tool::Star => tools::handle_star_event(app, mouse),
     }
 
+    // Only set flags — actual I/O is debounced in the main loop
     if app.is_dirty() {
         if sync_handle.is_some() {
             *sync_pending = true;
         }
-        app.autosave();
+        *disk_save_pending = true;
     }
 }
 

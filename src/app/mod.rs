@@ -499,7 +499,8 @@ impl App {
         self.doc.is_dirty()
     }
 
-    /// Save document to storage if dirty
+    /// Save document to storage if dirty (used by debounced disk save)
+    #[allow(dead_code)]
     pub fn autosave(&mut self) {
         if self.doc.is_dirty()
             && let Err(e) = self.doc.save()
