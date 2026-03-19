@@ -24,6 +24,13 @@ irohscii-export = { path = "crates/irohscii-export" }
 irohscii-session = { path = "crates/irohscii-session" }
 aspen-automerge = { git = "https://github.com/brittonr/aspen.git", rev = "7a257c04" }
 
+# Subwayrat TUI components
+rat-keymap = { path = "../subwayrat/crates/rat-keymap" }
+rat-leaderkey = { path = "../subwayrat/crates/rat-leaderkey" }
+rat-widgets = { path = "../subwayrat/crates/rat-widgets" }
+rat-canvas = { path = "../subwayrat/crates/rat-canvas" }
+rat-layers = { path = "../subwayrat/crates/rat-layers" }
+
 # Terminal UI
 ratatui = { version = "0.30.0", features = [
     "all-widgets",
@@ -46,8 +53,8 @@ tokio = { version = "1", features = ["rt", "sync", "macros"] }
 tracing = "0.1"
 
 # P2P networking
-iroh = "0.95"
-iroh-base = "0.95"
+iroh = "0.97"
+iroh-base = "0.97"
 
 # CRDT
 automerge = "0.7"
@@ -93,6 +100,12 @@ irohscii-core = { workspace = true }
 irohscii-sync = { workspace = true }
 irohscii-export = { workspace = true }
 irohscii-session = { workspace = true }
+
+rat-keymap = { workspace = true }
+rat-leaderkey = { workspace = true }
+rat-widgets = { workspace = true }
+rat-canvas = { workspace = true }
+rat-layers = { workspace = true }
 
 ratatui = { workspace = true }
 crossterm = { workspace = true }

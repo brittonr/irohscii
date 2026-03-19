@@ -1,4 +1,8 @@
+mod actions;
 mod app;
+mod dispatch;
+mod keybindings;
+mod leader_menu;
 mod modes;
 mod recent_files;
 mod tools;

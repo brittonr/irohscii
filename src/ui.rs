@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use ratatui::{
     Frame,
     buffer::Buffer,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect, Margin},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget},
@@ -13,6 +13,9 @@ use crate::app::{
     App, BRUSHES, COLORS, GRID_SIZE, KeyboardShapeField, MessageSeverity, Mode, PendingAction,
     PopupKind, SnapOrientation, TOOLS, Tool,
 };
+
+// Import rat-widgets for the new UI components
+use rat_widgets;
 use crate::canvas::{
     Position, arrow_points_styled, cloud_points, cylinder_points, diamond_points,
     double_rect_points, ellipse_points, hexagon_points, line_points_styled, parallelogram_points,
@@ -145,7 +148,7 @@ fn render_mode_overlays(frame: &mut Frame, app: &App, canvas_area: Rect) {
         }
         Mode::Normal => {}
         Mode::LeaderMenu(_) => {
-            render_leader_menu(frame, canvas_area);
+            app.leader_menu.render(frame, canvas_area);
         }
         Mode::LayerRename(_) => {} // Handled in layer panel
     }
@@ -1674,25 +1677,30 @@ fn render_file_input(frame: &mut Frame, label: &str, path: &str, area: Rect) {
     // Clear the popup area
     clear_area(frame, popup_area);
 
+    // Create a text input with the path value
+    let text_input = rat_widgets::TextInput::new()
+        .with_value(path)
+        .with_focused(true);
+    
+    // Render with block wrapper
     let block = Block::default()
         .title(label)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
-    let paragraph = Paragraph::new(format!("{}▏", path))
-        .block(block)
-        .style(Style::default().fg(Color::White).bg(Color::Black));
-
-    frame.render_widget(paragraph, popup_area);
+    frame.render_widget(block, popup_area);
+    
+    // Render text input in the inner area
+    let inner = popup_area.inner(Margin::new(1, 1));
+    text_input.render(frame, inner, None);
 }
 
 /// Render recent files menu overlay
 fn render_recent_files_menu(frame: &mut Frame, app: &App, selected: usize, area: Rect) {
     debug_assert!(area.width > 0 && area.height > 0);
     
-    let file_count = app.recent_files.len();
     let width = 50.min(area.width.saturating_sub(4));
-    let height = (file_count as u16 + 2).min(12); // +2 for border, max 12 lines
+    let height = 12.min(area.height.saturating_sub(4)); // Max 12 lines
     let x = (area.width.saturating_sub(width)) / 2 + area.x;
     let y = (area.height.saturating_sub(height)) / 2 + area.y;
 
@@ -1700,350 +1708,75 @@ fn render_recent_files_menu(frame: &mut Frame, app: &App, selected: usize, area:
 
     clear_area(frame, popup_area);
 
+    // Build list items from recent files
+    let items: Vec<String> = app.recent_files.iter()
+        .map(|file| file.name.clone())
+        .collect();
+
+    let mut list = rat_widgets::ScrollableList::new(items)
+        .with_border_color(Color::Cyan);
+    list.move_to(selected);
+    
     let block = Block::default()
         .title(" Recent Files ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
-    // Build list items
-    let items: Vec<Line> = app
-        .recent_files
-        .iter()
-        .enumerate()
-        .map(|(i, file)| {
-            let style = if i == selected {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                Style::default().fg(Color::White)
-            };
-            Line::styled(format!(" {} ", file.name), style)
-        })
-        .collect();
-
-    let paragraph = Paragraph::new(items)
-        .block(block)
-        .style(Style::default().bg(Color::Black));
-
-    frame.render_widget(paragraph, popup_area);
+    frame.render_widget(block, popup_area);
+    
+    // Render list in the inner area
+    let inner = popup_area.inner(Margin::new(1, 1));
+    list.render(frame, inner, None);
 }
 
-type PopupGridInfo = (&'static str, usize, Vec<(String, Option<Color>)>, &'static str);
+
 
 /// Render selection popup for tools, colors, or brushes
 fn render_selection_popup(frame: &mut Frame, kind: PopupKind, selected: usize, area: Rect) {
     debug_assert!(area.width > 0 && area.height > 0);
     
-    let (title, cols, items, hint) = get_popup_grid_info(kind);
-    let rows = items.len().div_ceil(cols as usize);
-
-    let cell_width = get_cell_width(kind);
-    let width = (cols as u16 * cell_width + 2).min(area.width.saturating_sub(4));
-    let height = (rows as u16 + 3).min(area.height.saturating_sub(4));
-    let x = (area.width.saturating_sub(width)) / 2 + area.x;
-    let y = (area.height.saturating_sub(height)) / 2 + area.y;
-
-    let popup_area = Rect::new(x, y, width, height);
-
-    clear_area_with_bg(frame, popup_area, Color::Black);
-
-    let block = build_popup_block(title, hint);
-    frame.render_widget(block, popup_area);
-
-    render_grid_items(frame, popup_area, &items, selected, cols, cell_width, kind);
+    let (title, cols, grid_items) = build_grid_select_items(kind);
+    let mut grid_select = rat_widgets::GridSelect::new(title, grid_items, cols);
+    grid_select.set_selected(selected);
+    grid_select.render(frame, area);
 }
 
-/// Get popup grid configuration info
-fn get_popup_grid_info(kind: PopupKind) -> PopupGridInfo {
+/// Build grid select items for rat-widgets
+fn build_grid_select_items(kind: PopupKind) -> (&'static str, usize, Vec<rat_widgets::GridItem>) {
     match kind {
         PopupKind::Tool => {
-            let items: Vec<_> = TOOLS.iter().map(|t| (t.name().to_string(), None)).collect();
-            (" Select Tool ", 3, items, "hjkl: move, release key: select")
-        }
-        PopupKind::Color => {
-            let items: Vec<_> = COLORS
-                .iter()
-                .map(|c| (c.name().to_string(), Some(c.to_ratatui())))
+            let items: Vec<_> = TOOLS.iter()
+                .map(|t| rat_widgets::GridItem::new(t.name()))
                 .collect();
-            (
-                " Select Color ",
-                4,
-                items,
-                "hjkl: move, release key: select",
-            )
-        }
-        PopupKind::Brush => {
-            let items: Vec<_> = BRUSHES.iter().map(|&ch| (ch.to_string(), None)).collect();
-            (
-                " Select Brush ",
-                6,
-                items,
-                "hjkl: move, release key: select",
-            )
-        }
-    }
-}
-
-/// Get cell width for popup kind
-fn get_cell_width(kind: PopupKind) -> u16 {
-    match kind {
-        PopupKind::Tool => 10,  // Tool names are longer
-        PopupKind::Color => 8,  // Color names + colored block
-        PopupKind::Brush => 3,  // Just the character
-    }
-}
-
-/// Build block for popup
-fn build_popup_block(title: &'static str, hint: &'static str) -> Block<'static> {
-    Block::default()
-        .title(title)
-        .title_bottom(Line::from(Span::styled(
-            format!(" {} ", hint),
-            Style::default().fg(Color::DarkGray),
-        )))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
-}
-
-/// Render grid items in popup
-fn render_grid_items(
-    frame: &mut Frame,
-    popup_area: Rect,
-    items: &[(String, Option<Color>)],
-    selected: usize,
-    cols: usize,
-    cell_width: u16,
-    kind: PopupKind,
-) {
-    debug_assert!(popup_area.width > 2 && popup_area.height > 2);
-    debug_assert!(cols > 0);
-    
-    let inner_x = popup_area.x + 1;
-    let inner_y = popup_area.y + 1;
-    let inner_width = popup_area.width.saturating_sub(2);
-
-    for (idx, (label, color_opt)) in items.iter().enumerate() {
-        let row = idx / cols;
-        let col = idx % cols;
-        let item_x = inner_x + (col as u16 * cell_width);
-        let item_y = inner_y + row as u16;
-
-        if item_y >= popup_area.y + popup_area.height - 1 {
-            break;
-        }
-        if item_x >= inner_x + inner_width {
-            continue;
-        }
-
-        let is_selected = idx == selected;
-        render_grid_item(frame, item_x, item_y, label, *color_opt, is_selected, cell_width, inner_width, inner_x, kind);
-    }
-}
-
-/// Render a single grid item
-fn render_grid_item(
-    frame: &mut Frame,
-    item_x: u16,
-    item_y: u16,
-    label: &str,
-    color_opt: Option<Color>,
-    is_selected: bool,
-    cell_width: u16,
-    inner_width: u16,
-    inner_x: u16,
-    kind: PopupKind,
-) {
-    let base_style = if is_selected {
-        Style::default().fg(Color::Black).bg(Color::Cyan)
-    } else {
-        Style::default().fg(Color::White).bg(Color::Black)
-    };
-
-    match kind {
-        PopupKind::Tool => {
-            render_tool_item(frame, item_x, item_y, label, base_style, cell_width, inner_width, inner_x);
+            (" Select Tool ", 3, items)
         }
         PopupKind::Color => {
-            render_color_item(frame, item_x, item_y, label, color_opt, is_selected, base_style, inner_width, inner_x);
+            let items: Vec<_> = COLORS.iter()
+                .map(|c| rat_widgets::GridItem::new(c.name()).with_color(c.to_ratatui()))
+                .collect();
+            (" Select Color ", 4, items)
         }
         PopupKind::Brush => {
-            render_brush_item(frame, item_x, item_y, label, base_style);
+            let items: Vec<_> = BRUSHES.iter()
+                .map(|&ch| rat_widgets::GridItem::new(ch))
+                .collect();
+            (" Select Brush ", 6, items)
         }
     }
 }
 
-/// Render a tool item in the grid
-fn render_tool_item(frame: &mut Frame, item_x: u16, item_y: u16, label: &str, style: Style, cell_width: u16, inner_width: u16, inner_x: u16) {
-    let display = format!("{:^width$}", label, width = (cell_width - 1) as usize);
-    for (i, ch) in display.chars().take((cell_width - 1) as usize).enumerate() {
-        let px = item_x + i as u16;
-        if px < inner_x + inner_width {
-            frame.buffer_mut()[(px, item_y)]
-                .set_char(ch)
-                .set_style(style);
-        }
-    }
-}
 
-/// Render a color item in the grid
-fn render_color_item(frame: &mut Frame, item_x: u16, item_y: u16, label: &str, color_opt: Option<Color>, is_selected: bool, base_style: Style, inner_width: u16, inner_x: u16) {
-    // Render colored block
-    if let Some(color) = color_opt {
-        let color_style = if is_selected {
-            Style::default().fg(color).bg(Color::Cyan)
-        } else {
-            Style::default().fg(color).bg(Color::Black)
-        };
-        frame.buffer_mut()[(item_x, item_y)]
-            .set_char('█')
-            .set_style(color_style);
-        frame.buffer_mut()[(item_x + 1, item_y)]
-            .set_char('█')
-            .set_style(color_style);
-    }
-    
-    // Render abbreviated name (first 4 chars)
-    let abbrev: String = label.chars().take(4).collect();
-    for (i, ch) in abbrev.chars().enumerate() {
-        let px = item_x + 2 + i as u16;
-        if px < inner_x + inner_width {
-            frame.buffer_mut()[(px, item_y)]
-                .set_char(ch)
-                .set_style(base_style);
-        }
-    }
-}
-
-/// Render a brush item in the grid
-fn render_brush_item(frame: &mut Frame, item_x: u16, item_y: u16, label: &str, style: Style) {
-    let ch = label.chars().next().unwrap_or(' ');
-    frame.buffer_mut()[(item_x + 1, item_y)]
-        .set_char(ch)
-        .set_style(style);
-}
 
 /// Render confirmation dialog overlay
 fn render_confirm_dialog(frame: &mut Frame, action: &PendingAction, area: Rect) {
     debug_assert!(area.width > 0 && area.height > 0);
     
-    let title = action.title();
-    let message = action.message();
-
-    let width = 50.min(area.width.saturating_sub(4));
-    let height = 5;
-    let x = (area.width.saturating_sub(width)) / 2 + area.x;
-    let y = (area.height.saturating_sub(height)) / 2 + area.y;
-
-    let popup_area = Rect::new(x, y, width, height);
-
-    clear_area_with_bg(frame, popup_area, Color::Black);
-
-    let block = Block::default()
-        .title(format!(" {} ", title))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
-
-    // Build dialog content
-    let content = vec![
-        Line::from(Span::styled(message, Style::default().fg(Color::White))),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "[y]",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" Yes  "),
-            Span::styled(
-                "[n]",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" No"),
-        ]),
-    ];
-
-    let paragraph = Paragraph::new(content)
-        .block(block)
-        .style(Style::default().bg(Color::Black))
-        .alignment(ratatui::layout::Alignment::Center);
-
-    frame.render_widget(paragraph, popup_area);
+    let message = format!("{}: {}", action.title(), action.message());
+    let dialog = rat_widgets::ConfirmDialog::new(message);
+    dialog.render(frame, area);
 }
 
-/// Render the leader menu (Helix-style which-key popup)
-fn render_leader_menu(frame: &mut Frame, area: Rect) {
-    debug_assert!(area.width > 0 && area.height > 0);
-    
-    use ratatui::widgets::Clear;
 
-    let entries = get_leader_menu_entries();
-    let col_width = 14usize;
-    let cols = 2usize;
-    let rows = entries.len().div_ceil(cols);
-
-    let mut lines: Vec<Line<'_>> = Vec::new();
-    for row in 0..rows {
-        let mut spans = Vec::new();
-        for col in 0..cols {
-            let idx = row + col * rows;
-            if let Some(&(key, label)) = entries.get(idx) {
-                spans.push(Span::styled(
-                    format!(" {} ", key),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                ));
-                spans.push(Span::styled(
-                    format!("{:<width$}", label, width = col_width.saturating_sub(3)),
-                    Style::default().fg(Color::White),
-                ));
-            }
-        }
-        lines.push(Line::from(spans));
-    }
-
-    let popup_width = (col_width * cols + 2) as u16;
-    let popup_height = (rows + 2) as u16;
-
-    let x = area.x + area.width.saturating_sub(popup_width) / 2;
-    let y = area.y + area.height.saturating_sub(popup_height) / 2;
-    let popup_area = Rect::new(x, y, popup_width.min(area.width), popup_height.min(area.height));
-
-    frame.render_widget(Clear, popup_area);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
-        .title(" Space ")
-        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
-
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .style(Style::default().bg(Color::Black));
-
-    frame.render_widget(paragraph, popup_area);
-}
-
-/// Get leader menu entries
-fn get_leader_menu_entries() -> Vec<(&'static str, &'static str)> {
-    vec![
-        ("t", "tool"),
-        ("c", "color"),
-        ("b", "brush"),
-        ("g", "grid"),
-        ("l", "layers"),
-        ("p", "peers"),
-        ("s", "save"),
-        ("o", "open"),
-        ("e", "export"),
-        ("n", "new"),
-        ("T", "ticket"),
-        ("Q", "qr code"),
-        ("D", "decode qr"),
-        ("K", "cluster"),
-        ("J", "join"),
-        ("?", "help"),
-        ("q", "quit"),
-    ]
-}
 
 /// Single source of truth for all documented keybindings.
 pub fn help_sections() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
@@ -2445,28 +2178,35 @@ fn render_session_create(frame: &mut Frame, name: &str, area: Rect) {
 
     clear_area_with_bg(frame, popup_area, Color::Black);
 
+    // Create a text input with the name value
+    let text_input = rat_widgets::TextInput::new()
+        .with_value(name)
+        .with_focused(true)
+        .with_placeholder("Session name");
+    
     let block = Block::default()
         .title(" New Session ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Green));
 
-    let lines = vec![
-        Line::raw(""),
-        Line::styled(
-            format!(" Name: {}_ ", name),
-            Style::default().fg(Color::White),
-        ),
-        Line::styled(
-            " Enter:create Esc:cancel",
-            Style::default().fg(Color::DarkGray),
-        ),
-    ];
-
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .style(Style::default().bg(Color::Black));
-
-    frame.render_widget(paragraph, popup_area);
+    frame.render_widget(block, popup_area);
+    
+    // Render text input in the inner area
+    let inner = popup_area.inner(Margin::new(1, 1));
+    text_input.render(frame, inner, None);
+    
+    // Add hint at bottom
+    let hint = " Enter:create Esc:cancel";
+    let hint_y = popup_area.y + popup_area.height - 2;
+    let hint_x = popup_area.x + 1;
+    for (i, ch) in hint.chars().enumerate() {
+        let px = hint_x + i as u16;
+        if px < popup_area.x + popup_area.width - 1 {
+            frame.buffer_mut()[(px, hint_y)]
+                .set_char(ch)
+                .set_style(Style::default().fg(Color::DarkGray));
+        }
+    }
 }
 
 /// Render keyboard shape creation dialog

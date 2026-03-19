@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use iroh::Endpoint;
-use iroh::discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher};
+use iroh::endpoint::presets;
 use iroh_base::EndpointAddr;
 use tokio::sync::mpsc as tokio_mpsc;
 
@@ -321,12 +321,7 @@ pub fn decode_ticket(ticket: &str, prefix: &str) -> Result<EndpointAddr> {
 
 /// Create and configure the Iroh endpoint.
 async fn create_endpoint(config: &CollabConfig) -> Result<Endpoint> {
-    let mut builder = Endpoint::builder();
-    if !config.disable_discovery {
-        builder = builder
-            .discovery(DnsDiscovery::n0_dns())
-            .discovery(PkarrPublisher::n0_dns());
-    }
+    let builder = Endpoint::builder(presets::N0);
     builder.bind().await.map_err(|e| anyhow::anyhow!("Failed to bind endpoint: {}", e))
 }
 

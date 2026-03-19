@@ -262,6 +262,10 @@ pub struct App {
     pub doc: Document,
     /// Cached shape view for fast rendering
     pub shape_view: ShapeView,
+    /// Leader key menu state
+    pub leader_menu: rat_leaderkey::LeaderMenu<crate::actions::Action>,
+    /// Keymap for normal mode
+    pub keymap: rat_keymap::Keymap<crate::actions::Action, crate::keybindings::InputMode>,
     /// Currently selected shapes (supports multi-select)
     pub selected: HashSet<ShapeId>,
     pub viewport: Viewport,
@@ -328,9 +332,15 @@ pub struct App {
 
 impl App {
     pub fn new(width: u16, height: u16) -> Self {
+        let hidden = HashSet::new();
+        let (leader_menu, _conflicts) = rat_leaderkey::build(&[&crate::leader_menu::IrohsciiBuiltins], &hidden);
+        let keymap = crate::keybindings::build_keymap();
+        
         Self {
             doc: Document::new(),
             shape_view: ShapeView::new(),
+            leader_menu,
+            keymap,
             selected: HashSet::new(),
             viewport: Viewport::new(width, height),
             current_tool: Tool::Select,

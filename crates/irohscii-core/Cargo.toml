@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 irohscii-geometry = { workspace = true }
+rat-layers = { workspace = true }
 serde = { workspace = true }
 uuid = { workspace = true }
 automerge = { workspace = true }

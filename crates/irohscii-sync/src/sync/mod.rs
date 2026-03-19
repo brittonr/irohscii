@@ -19,7 +19,7 @@ use std::time::Duration;
 use anyhow::Result;
 use automerge::Automerge;
 use iroh::Endpoint;
-use iroh::discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher};
+use iroh::endpoint::presets;
 use iroh::endpoint::Connection;
 use iroh_base::EndpointAddr;
 use tokio::sync::mpsc as tokio_mpsc;
@@ -261,12 +261,7 @@ async fn setup_sync_session(
     event_tx: &std_mpsc::Sender<SyncEvent>,
 ) -> Result<SyncSession> {
     // Create iroh endpoint, optionally with n0 discovery (DNS + Pkarr)
-    let mut builder = Endpoint::builder();
-    if !config.disable_discovery {
-        builder = builder
-            .discovery(DnsDiscovery::n0_dns())
-            .discovery(PkarrPublisher::n0_dns());
-    }
+    let builder = Endpoint::builder(presets::N0);
     let endpoint = builder.bind().await?;
 
     // Create a ticket from the endpoint address (includes relay URL and direct addresses)

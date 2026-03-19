@@ -10,18 +10,10 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A position on the canvas (can be negative for infinite canvas feel)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Position {
-    pub x: i32,
-    pub y: i32,
-}
+// Re-export core types from rat-canvas
+pub use rat_canvas::{Position, Viewport, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP};
 
-impl Position {
-    pub fn new(x: i32, y: i32) -> Self {
-        Self { x, y }
-    }
-}
+
 
 /// Line drawing style
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -58,141 +50,7 @@ impl LineStyle {
     }
 }
 
-/// Viewport - what part of the canvas is visible
-#[derive(Debug, Clone)]
-pub struct Viewport {
-    pub offset_x: i32,
-    pub offset_y: i32,
-    pub width: u16,
-    pub height: u16,
-    /// Zoom level: 1.0 = normal, 2.0 = zoomed in (each canvas cell = 2 screen cells)
-    pub zoom: f32,
-}
 
-/// Minimum zoom level (zoomed out)
-pub const MIN_ZOOM: f32 = 0.25;
-/// Maximum zoom level (zoomed in)
-pub const MAX_ZOOM: f32 = 4.0;
-/// Zoom step for keyboard shortcuts
-pub const ZOOM_STEP: f32 = 0.25;
-
-// Compile-time assertions for zoom constants
-const _: () = assert!(MIN_ZOOM > 0.0, "MIN_ZOOM must be positive");
-const _: () = assert!(MAX_ZOOM > MIN_ZOOM, "MAX_ZOOM must be greater than MIN_ZOOM");
-const _: () = assert!(ZOOM_STEP > 0.0, "ZOOM_STEP must be positive");
-
-impl Viewport {
-    pub fn new(width: u16, height: u16) -> Self {
-        Self {
-            offset_x: 0,
-            offset_y: 0,
-            width,
-            height,
-            zoom: 1.0,
-        }
-    }
-
-    /// Convert screen coordinates to canvas coordinates
-    /// At zoom > 1.0, screen space is larger than canvas space
-    pub fn screen_to_canvas(&self, screen_x: u16, screen_y: u16) -> Position {
-        debug_assert!(self.zoom > 0.0, "zoom must be positive");
-        debug_assert!(self.width > 0, "width must be positive");
-        debug_assert!(self.height > 0, "height must be positive");
-        
-        let canvas_x = (f32::from(screen_x) / self.zoom)
-            .round()
-            .clamp(i32::MIN as f32, i32::MAX as f32) as i32;
-        let canvas_y = (f32::from(screen_y) / self.zoom)
-            .round()
-            .clamp(i32::MIN as f32, i32::MAX as f32) as i32;
-        
-        let result = Position::new(
-            canvas_x.saturating_add(self.offset_x),
-            canvas_y.saturating_add(self.offset_y),
-        );
-        
-        debug_assert!(result.x >= i32::MIN && result.x <= i32::MAX, "canvas_x in valid range");
-        debug_assert!(result.y >= i32::MIN && result.y <= i32::MAX, "canvas_y in valid range");
-        
-        result
-    }
-
-    /// Convert canvas coordinates to screen coordinates (if visible)
-    /// At zoom > 1.0, canvas positions map to larger screen areas
-    pub fn canvas_to_screen(&self, pos: Position) -> Option<(u16, u16)> {
-        debug_assert!(self.zoom > 0.0, "zoom must be positive");
-        debug_assert!(self.width > 0, "width must be positive");
-        debug_assert!(self.height > 0, "height must be positive");
-        
-        let canvas_x_offset = pos.x.saturating_sub(self.offset_x);
-        let canvas_y_offset = pos.y.saturating_sub(self.offset_y);
-        
-        let screen_x = (canvas_x_offset as f32 * self.zoom)
-            .round()
-            .clamp(i32::MIN as f32, i32::MAX as f32) as i32;
-        let screen_y = (canvas_y_offset as f32 * self.zoom)
-            .round()
-            .clamp(i32::MIN as f32, i32::MAX as f32) as i32;
-
-        if screen_x < 0 {
-            return None;
-        }
-        if screen_y < 0 {
-            return None;
-        }
-        if screen_x >= i32::from(self.width) {
-            return None;
-        }
-        if screen_y >= i32::from(self.height) {
-            return None;
-        }
-
-        Some((screen_x as u16, screen_y as u16))
-    }
-
-    /// Pan the viewport
-    pub fn pan(&mut self, dx: i32, dy: i32) {
-        self.offset_x += dx;
-        self.offset_y += dy;
-    }
-
-    /// Resize the viewport
-    pub fn resize(&mut self, width: u16, height: u16) {
-        self.width = width;
-        self.height = height;
-    }
-
-    /// Zoom in (increase zoom level)
-    pub fn zoom_in(&mut self) {
-        self.zoom = (self.zoom + ZOOM_STEP).min(MAX_ZOOM);
-    }
-
-    /// Zoom out (decrease zoom level)
-    pub fn zoom_out(&mut self) {
-        self.zoom = (self.zoom - ZOOM_STEP).max(MIN_ZOOM);
-    }
-
-    /// Reset zoom to 100%
-    pub fn reset_zoom(&mut self) {
-        self.zoom = 1.0;
-    }
-
-    /// Get the visible canvas area (number of canvas cells visible)
-    pub fn visible_canvas_size(&self) -> (u16, u16) {
-        debug_assert!(self.zoom > 0.0, "zoom must be positive");
-        debug_assert!(self.width > 0, "width must be positive");
-        debug_assert!(self.height > 0, "height must be positive");
-        
-        let visible_width = (f32::from(self.width) / self.zoom)
-            .round()
-            .clamp(0.0, u16::MAX as f32) as u16;
-        let visible_height = (f32::from(self.height) / self.zoom)
-            .round()
-            .clamp(0.0, u16::MAX as f32) as u16;
-        
-        (visible_width, visible_height)
-    }
-}
 
 /// Maximum iterations for line drawing to prevent infinite loops
 const MAX_LINE_ITERATIONS: usize = 100_000;

@@ -73,69 +73,22 @@ impl ModeHandler for PathInputState {
 }
 
 impl PathInputState {
-    /// Tab-complete the current path, updating self.path directly.
+    /// Tab-complete the current path using rat-widgets path_completer.
     fn complete_path(&mut self, ctx: &mut ModeContext<'_>) {
         debug_assert!(self.path.len() <= 4096);
         
-        let current_path = &self.path;
-        let path = std::path::Path::new(current_path);
-
-        let ends_with_slash = current_path.ends_with('/');
-        let ends_with_sep = current_path.ends_with(std::path::MAIN_SEPARATOR);
-        let (dir, prefix) = if ends_with_slash || ends_with_sep {
-            (std::path::PathBuf::from(current_path), String::new())
-        } else if let Some(parent) = path.parent() {
-            let parent_path = if parent.as_os_str().is_empty() {
-                std::path::PathBuf::from(".")
-            } else {
-                parent.to_path_buf()
-            };
-            let file_name = path
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-            (parent_path, file_name)
-        } else {
-            (std::path::PathBuf::from("."), current_path.clone())
-        };
-
-        let matches: Vec<String> = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries
-                .filter_map(|e| e.ok())
-                .filter_map(|e| {
-                    let name = e.file_name().to_string_lossy().to_string();
-                    let name_lower = name.to_lowercase();
-                    let prefix_lower = prefix.to_lowercase();
-                    let matches_prefix = name_lower.starts_with(&prefix_lower);
-                    
-                    if matches_prefix {
-                        let is_current_dir = dir.as_os_str() == ".";
-                        let full_path = if is_current_dir {
-                            name.clone()
-                        } else {
-                            dir.join(&name).to_string_lossy().to_string()
-                        };
-                        if e.path().is_dir() {
-                            Some(full_path + "/")
-                        } else {
-                            Some(full_path)
-                        }
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
-            Err(_) => return,
-        };
-
+        let matches = rat_widgets::path_completer(&self.path);
+        
         if matches.is_empty() {
             ctx.app.set_status("No matches");
             return;
         }
 
-        self.path = if matches.len() == 1 {
-            matches[0].clone()
+        if matches.len() == 1 {
+            // Single match - use it directly
+            self.path = matches[0].clone();
         } else {
+            // Multiple matches - find longest common prefix
             let first = &matches[0];
             let common_len = matches.iter().skip(1).fold(first.len(), |len, s| {
                 first
@@ -146,9 +99,11 @@ impl PathInputState {
                     .count()
             });
             let common: String = first.chars().take(common_len).collect();
+            if !common.is_empty() && common != self.path {
+                self.path = common;
+            }
             ctx.app.set_status(format!("{} matches", matches.len()));
-            common
-        };
+        }
     }
 
     /// Execute the path operation based on the kind.

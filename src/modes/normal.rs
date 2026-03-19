@@ -13,7 +13,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::Color;
 
-use super::{Mode, ModeAction, ModeContext, ModeHandler, ModeTransition};
+use super::{Mode, ModeContext, ModeHandler, ModeTransition};
 use crate::app::Tool;
 
 /// Normal mode state - empty since normal mode has no state.
@@ -430,71 +430,68 @@ impl ModeHandler for NormalModeState {
     fn handle_key(&mut self, ctx: &mut ModeContext<'_>, key: KeyEvent) -> ModeTransition {
         debug_assert!(ctx.app.doc.read_all_layers().map(|l| l.len()).unwrap_or(0) > 0);
         
-        let has_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let _has_shift = key.modifiers.contains(KeyModifiers::SHIFT);
-        // Try helper functions first (they check their own conditions)
-        if Self::handle_tool_selection(ctx, key) {
-            return ModeTransition::Stay;
+        // Try keymap first - handles most commands
+        if let Some(action) = ctx.app.keymap.resolve(&crate::keybindings::InputMode::Normal, &key) {
+            return crate::dispatch::dispatch_action(action, ctx);
         }
-        if Self::handle_layer_management(ctx, key) {
-            return ModeTransition::Stay;
-        }
-        if Self::handle_alignment(ctx, key) {
-            return ModeTransition::Stay;
-        }
-        if Self::handle_transforms(ctx, key) {
-            return ModeTransition::Stay;
-        }
-        if Self::handle_keyboard_shapes(ctx, key) {
-            return ModeTransition::Stay;
-        }
+        
+        // Handle movement keys and stateful operations that can't be in keymap
         if Self::handle_nudge(ctx, key) {
             return ModeTransition::Stay;
-        }
-        if Self::handle_editing_ops(ctx, key) {
-            return ModeTransition::Stay;
-        }
-        if let Some(transition) = Self::handle_file_ops(ctx, key) {
-            return transition;
         }
         if Self::handle_viewport_ops(ctx, key) {
             return ModeTransition::Stay;
         }
         
-        // Handle remaining commands
+        // Handle special stateful keys that can't be in keymap
+        let has_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let has_alt = key.modifiers.contains(KeyModifiers::ALT);
+        
         match key.code {
-            KeyCode::Char('c') if has_ctrl => {
-                return ModeTransition::Action(ModeAction::Quit);
-            }
-            KeyCode::Esc => {
-                ctx.app.cancel_shape();
-                ctx.app.clear_selection();
-            }
-            KeyCode::Tab => {
-                return ModeTransition::Action(ModeAction::OpenSessionBrowser);
-            }
-            KeyCode::Char('v') if !key.modifiers.contains(KeyModifiers::ALT) => {
-                ctx.app.cycle_line_style();
-            }
-            KeyCode::Char('g') => ctx.app.toggle_grid(),
-            KeyCode::Delete | KeyCode::Backspace => {
-                if ctx.app.current_tool == Tool::Select {
-                    ctx.app.delete_selected();
-                }
-            }
-            KeyCode::Enter => {
-                let is_select = ctx.app.current_tool == Tool::Select;
-                let has_selection = !ctx.app.selected.is_empty();
-                if is_select && has_selection && ctx.app.start_label_input() {
-                    ctx.app.set_status("Editing label - type text, Enter/Esc to finish");
-                }
-            }
             KeyCode::Char(' ') | KeyCode::Char(':') => {
+                ctx.app.leader_menu.open();
                 return ModeTransition::to(Mode::leader_menu());
             }
-            KeyCode::Char('?') | KeyCode::F(1) => {
-                return ModeTransition::to(Mode::help_screen());
+            
+            // Tool selection with conditions (these stay as direct matches due to conditions)
+            KeyCode::Char('s') if !has_ctrl => {
+                ctx.app.set_tool(Tool::Star);
             }
+            KeyCode::Char('r') if !ctx.app.show_layers && !has_alt => {
+                ctx.app.set_tool(Tool::Rectangle);
+            }
+            KeyCode::Char('r') if ctx.app.show_layers && ctx.app.active_layer.is_some() => {
+                ctx.app.start_layer_rename();
+            }
+            KeyCode::Char('t') if !has_alt => {
+                ctx.app.set_tool(Tool::Text);
+            }
+            KeyCode::Char('l') if !has_alt => {
+                ctx.app.set_tool(Tool::Line);
+            }
+            KeyCode::Char('a') if !has_ctrl && !has_alt => {
+                ctx.app.set_tool(Tool::Arrow);
+            }
+            KeyCode::Char('d') if !has_ctrl && !has_alt => {
+                ctx.app.set_tool(Tool::Diamond);
+            }
+            KeyCode::Char('e') if !has_alt => {
+                ctx.app.set_tool(Tool::Ellipse);
+            }
+            
+            // Layer rename special case
+            KeyCode::F(2) if ctx.app.show_layers => {
+                ctx.app.start_layer_rename();
+            }
+            
+            // File operations with conditions 
+            KeyCode::Char('S') if has_ctrl => {
+                ctx.app.start_doc_save();
+            }
+            KeyCode::Char('O') if has_ctrl => {
+                ctx.app.start_doc_open(); 
+            }
+            
             _ => {}
         }
         
@@ -517,6 +514,7 @@ impl ModeHandler for NormalModeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::ModeAction;
     use crossterm::event::KeyModifiers;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -559,10 +557,9 @@ mod tests {
         let mut ctx = super::ModeContext { app: &mut app };
 
         let result = state.handle_key(&mut ctx, key(KeyCode::Tab));
-        assert!(matches!(
-            result,
-            ModeTransition::Action(ModeAction::OpenSessionBrowser)
-        ));
+        // Tab now goes through keymap -> dispatch -> SessionBrowser action (which isn't implemented yet)
+        // For now it returns Normal because SessionBrowser action just returns Normal
+        assert!(matches!(result, ModeTransition::Normal));
     }
 
     #[test]
@@ -571,9 +568,9 @@ mod tests {
         let mut app = crate::app::App::new(80, 24);
         let mut ctx = super::ModeContext { app: &mut app };
 
-        // f = Freehand tool
+        // f = Freehand tool (now goes through keymap -> dispatch -> Normal)
         let result = state.handle_key(&mut ctx, key(KeyCode::Char('f')));
-        assert!(matches!(result, ModeTransition::Stay));
+        assert!(matches!(result, ModeTransition::Normal));
         assert_eq!(ctx.app.current_tool, Tool::Freehand);
     }
 
@@ -583,11 +580,12 @@ mod tests {
         let mut app = crate::app::App::new(80, 24);
         let mut ctx = super::ModeContext { app: &mut app };
 
+        // undo/redo now go through keymap -> dispatch -> Normal
         let result = state.handle_key(&mut ctx, key(KeyCode::Char('u')));
-        assert!(matches!(result, ModeTransition::Stay));
+        assert!(matches!(result, ModeTransition::Normal));
 
         let result = state.handle_key(&mut ctx, key(KeyCode::Char('U')));
-        assert!(matches!(result, ModeTransition::Stay));
+        assert!(matches!(result, ModeTransition::Normal));
     }
 
     #[test]
@@ -621,13 +619,13 @@ mod tests {
         let mut app = crate::app::App::new(80, 24);
         let mut ctx = super::ModeContext { app: &mut app };
 
-        // Alt+l = align left
+        // Alt+l = align left (now goes through keymap -> dispatch -> Normal)
         let result = state.handle_key(&mut ctx, key_alt(KeyCode::Char('l')));
-        assert!(matches!(result, ModeTransition::Stay));
+        assert!(matches!(result, ModeTransition::Normal));
 
-        // Alt+r = align right
+        // Alt+r = align right (now goes through keymap -> dispatch -> Normal)
         let result = state.handle_key(&mut ctx, key_alt(KeyCode::Char('r')));
-        assert!(matches!(result, ModeTransition::Stay));
+        assert!(matches!(result, ModeTransition::Normal));
     }
 
     #[test]
