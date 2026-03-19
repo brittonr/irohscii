@@ -3,18 +3,11 @@
 //! This module provides a trait-based state machine for application modes,
 //! enabling better testability, maintainability, and extensibility.
 
-mod confirm;
 mod help;
 mod keyboard_shape;
-mod label_input;
-mod layer_rename;
-
 mod normal;
 mod path_input;
-mod popup;
 mod qr_code;
-mod recent_files;
-mod session;
 mod text_input;
 
 pub use normal::NormalModeState;
@@ -27,7 +20,9 @@ use irohscii_core::{LayerId, Position, ShapeId};
 use irohscii_session::SessionId;
 
 
-use crate::app::{App, KeyboardShapeField, PendingAction, PopupKind, Tool};
+use crossterm::event::KeyCode;
+
+use crate::app::{App, KeyboardShapeField, PendingAction, PopupKind, Tool, BRUSHES, COLORS, TOOLS};
 use crate::dispatch::dispatch_action;
 
 /// Result of handling a key event in a mode.
@@ -224,6 +219,21 @@ pub struct QrCodeDisplayState {
     pub ticket: String,
 }
 
+/// Grid navigation for selection popups (tool/color/brush).
+fn popup_navigate(state: &mut SelectionPopupState, dx: i32, dy: i32) {
+    let (cols, total) = match state.kind {
+        PopupKind::Tool => (3u32, TOOLS.len() as u32),
+        PopupKind::Color => (4u32, COLORS.len() as u32),
+        PopupKind::Brush => (6u32, BRUSHES.len() as u32),
+    };
+    let row = state.selected / cols;
+    let col = state.selected % cols;
+    let rows = total.div_ceil(cols);
+    let new_col = (col as i32 + dx).clamp(0, cols as i32 - 1) as u32;
+    let new_row = (row as i32 + dy).clamp(0, rows as i32 - 1) as u32;
+    state.selected = (new_row * cols + new_col).min(total - 1);
+}
+
 /// Application mode state machine.
 ///
 /// Each variant contains the state needed for that mode.
@@ -357,7 +367,6 @@ impl Mode {
                 }
             }
             _ => {
-                // Handle all other modes with the standard context
                 let mut ctx = ModeContext { app };
                 match self {
                     Mode::Normal => {
@@ -365,18 +374,172 @@ impl Mode {
                         handler.handle_key(&mut ctx, key)
                     }
                     Mode::TextInput(state) => state.handle_key(&mut ctx, key),
-                    Mode::LabelInput(state) => state.handle_key(&mut ctx, key),
-                    Mode::LayerRename(state) => state.handle_key(&mut ctx, key),
                     Mode::PathInput(state) => state.handle_key(&mut ctx, key),
-                    Mode::RecentFiles(state) => state.handle_key(&mut ctx, key),
-                    Mode::SelectionPopup(state) => state.handle_key(&mut ctx, key),
-                    Mode::ConfirmDialog(state) => state.handle_key(&mut ctx, key),
                     Mode::HelpScreen(state) => state.handle_key(&mut ctx, key),
-                    Mode::SessionBrowser(state) => state.handle_key(&mut ctx, key),
-                    Mode::SessionCreate(state) => state.handle_key(&mut ctx, key),
                     Mode::KeyboardShapeCreate(state) => state.handle_key(&mut ctx, key),
                     Mode::QrCodeDisplay(state) => state.handle_key(&mut ctx, key),
-                    Mode::LeaderMenu(_) => unreachable!(), // Handled above
+
+                    // Confirm: y/n/enter/esc
+                    Mode::ConfirmDialog(_state) => match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                            ctx.app.confirm_pending_action();
+                            ModeTransition::Normal
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            ctx.app.cancel_pending_action();
+                            ModeTransition::Normal
+                        }
+                        _ => ModeTransition::Stay,
+                    },
+
+                    // Label input: char/backspace/delete/arrows/enter/esc
+                    Mode::LabelInput(_state) => match key.code {
+                        KeyCode::Esc | KeyCode::Enter => {
+                            ctx.app.commit_label();
+                            ModeTransition::Normal
+                        }
+                        KeyCode::Backspace => { ctx.app.backspace_label(); ModeTransition::Stay }
+                        KeyCode::Delete => { ctx.app.delete_label_char(); ModeTransition::Stay }
+                        KeyCode::Left => { ctx.app.move_label_cursor_left(); ModeTransition::Stay }
+                        KeyCode::Right => { ctx.app.move_label_cursor_right(); ModeTransition::Stay }
+                        KeyCode::Home => { ctx.app.move_label_cursor_home(); ModeTransition::Stay }
+                        KeyCode::End => { ctx.app.move_label_cursor_end(); ModeTransition::Stay }
+                        KeyCode::Char(c) => { ctx.app.add_label_char(c); ModeTransition::Stay }
+                        _ => ModeTransition::Stay,
+                    },
+
+                    // Layer rename: char/backspace/enter/esc
+                    Mode::LayerRename(_state) => match key.code {
+                        KeyCode::Enter => { ctx.app.commit_layer_rename(); ModeTransition::Normal }
+                        KeyCode::Esc => { ctx.app.cancel_layer_rename(); ModeTransition::Normal }
+                        KeyCode::Backspace => { ctx.app.backspace_layer_rename(); ModeTransition::Stay }
+                        KeyCode::Char(c) => { ctx.app.add_layer_rename_char(c); ModeTransition::Stay }
+                        _ => ModeTransition::Stay,
+                    },
+
+                    // Selection popup: hjkl/arrows grid navigation
+                    Mode::SelectionPopup(state) => {
+                        match key.code {
+                            KeyCode::Char('h') | KeyCode::Left => {
+                                popup_navigate(state, -1, 0);
+                                ModeTransition::Stay
+                            }
+                            KeyCode::Char('l') | KeyCode::Right => {
+                                popup_navigate(state, 1, 0);
+                                ModeTransition::Stay
+                            }
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                popup_navigate(state, 0, 1);
+                                ModeTransition::Stay
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                popup_navigate(state, 0, -1);
+                                ModeTransition::Stay
+                            }
+                            KeyCode::Enter => {
+                                ctx.app.confirm_popup_selection_with_index(state.kind, state.selected);
+                                ModeTransition::Normal
+                            }
+                            KeyCode::Esc => ModeTransition::Normal,
+                            _ => ModeTransition::Stay,
+                        }
+                    },
+
+                    // Recent files: jk/arrows list navigation
+                    Mode::RecentFiles(state) => match key.code {
+                        KeyCode::Esc => ModeTransition::Normal,
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            state.selected = state.selected.saturating_sub(1);
+                            ModeTransition::Stay
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            let max = ctx.app.recent_files.len().saturating_sub(1);
+                            state.selected = (state.selected + 1).min(u32::try_from(max).unwrap_or(u32::MAX));
+                            ModeTransition::Stay
+                        }
+                        KeyCode::Enter => {
+                            ctx.app.open_recent_file(state.selected);
+                            ModeTransition::Normal
+                        }
+                        _ => ModeTransition::Stay,
+                    },
+
+                    // Session browser: navigation + filter + actions
+                    Mode::SessionBrowser(state) => {
+                        match key.code {
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                let len = ctx.app.get_filtered_sessions(&state.filter, state.show_pinned_only).len() as u32;
+                                if len > 0 { state.selected = (state.selected + 1).min(len - 1); }
+                                ModeTransition::Stay
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                state.selected = state.selected.saturating_sub(1);
+                                ModeTransition::Stay
+                            }
+                            KeyCode::Enter => {
+                                let filtered = ctx.app.get_filtered_sessions(&state.filter, state.show_pinned_only);
+                                if let Some(session) = filtered.get(state.selected as usize) {
+                                    ModeTransition::Action(ModeAction::SwitchSession(session.id.clone()))
+                                } else {
+                                    ModeTransition::Normal
+                                }
+                            }
+                            KeyCode::Char('n') => ModeTransition::to(Mode::SessionCreate(SessionCreateState { name: String::new() })),
+                            KeyCode::Char('d') | KeyCode::Delete => {
+                                let filtered = ctx.app.get_filtered_sessions(&state.filter, state.show_pinned_only);
+                                if let Some(session) = filtered.get(state.selected as usize) {
+                                    if ctx.app.current_session.as_ref() == Some(&session.id) {
+                                        ctx.app.set_error("Cannot delete the active session");
+                                        ModeTransition::Stay
+                                    } else {
+                                        ModeTransition::Action(ModeAction::DeleteSession(session.id.clone()))
+                                    }
+                                } else {
+                                    ModeTransition::Stay
+                                }
+                            }
+                            KeyCode::Char('p') => {
+                                let filtered = ctx.app.get_filtered_sessions(&state.filter, state.show_pinned_only);
+                                if let Some(session) = filtered.get(state.selected as usize) {
+                                    ModeTransition::Action(ModeAction::ToggleSessionPin(session.id.clone()))
+                                } else {
+                                    ModeTransition::Stay
+                                }
+                            }
+                            KeyCode::Esc | KeyCode::Tab => ModeTransition::Normal,
+                            KeyCode::Char('*') => {
+                                state.show_pinned_only = !state.show_pinned_only;
+                                state.selected = 0;
+                                ModeTransition::Stay
+                            }
+                            KeyCode::Backspace => { state.filter.pop(); state.selected = 0; ModeTransition::Stay }
+                            KeyCode::Char(c) if c.is_alphanumeric() || c == '-' || c == '_' => {
+                                state.filter.push(c);
+                                state.selected = 0;
+                                ModeTransition::Stay
+                            }
+                            _ => ModeTransition::Stay,
+                        }
+                    },
+
+                    // Session create: type name + enter/esc
+                    Mode::SessionCreate(state) => match key.code {
+                        KeyCode::Esc => ModeTransition::Normal,
+                        KeyCode::Enter => {
+                            let trimmed = state.name.trim();
+                            if trimmed.len() >= 2 {
+                                ModeTransition::Action(ModeAction::CreateSession(trimmed.to_string()))
+                            } else {
+                                ctx.app.set_error("Session name must be at least 2 characters");
+                                ModeTransition::Stay
+                            }
+                        }
+                        KeyCode::Backspace => { state.name.pop(); ModeTransition::Stay }
+                        KeyCode::Char(c) => { state.name.push(c); ModeTransition::Stay }
+                        _ => ModeTransition::Stay,
+                    },
+
+                    Mode::LeaderMenu(_) => unreachable!(),
                 }
             }
         }
@@ -542,6 +705,11 @@ impl Mode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::KeyModifiers;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::empty())
+    }
 
     #[test]
     fn test_mode_default_is_normal() {
@@ -574,8 +742,6 @@ mod tests {
 
     #[test]
     fn test_popup_trigger_key() {
-        use crossterm::event::KeyCode;
-
         let mode = Mode::tool_popup(0, Some(KeyCode::Char(' ')));
         assert_eq!(mode.popup_trigger_key(), Some(KeyCode::Char(' ')));
 
@@ -593,5 +759,187 @@ mod tests {
         } else {
             panic!("Expected LabelInput mode");
         }
+    }
+
+    // --- confirm dialog ---
+
+    #[test]
+    fn confirm_y_confirms() {
+        let mut mode = Mode::confirm_dialog(PendingAction::NewDocument);
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Char('y'))), ModeTransition::Normal));
+    }
+
+    #[test]
+    fn confirm_n_cancels() {
+        let mut mode = Mode::confirm_dialog(PendingAction::NewDocument);
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Char('n'))), ModeTransition::Normal));
+    }
+
+    #[test]
+    fn confirm_esc_cancels() {
+        let mut mode = Mode::confirm_dialog(PendingAction::NewDocument);
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Esc)), ModeTransition::Normal));
+    }
+
+    #[test]
+    fn confirm_enter_confirms() {
+        let mut mode = Mode::confirm_dialog(PendingAction::NewDocument);
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Enter)), ModeTransition::Normal));
+    }
+
+    #[test]
+    fn confirm_unrecognized_stays() {
+        let mut mode = Mode::confirm_dialog(PendingAction::NewDocument);
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Char('x'))), ModeTransition::Stay));
+    }
+
+    // --- label input ---
+
+    #[test]
+    fn label_escape_commits() {
+        let mut mode = Mode::label_input(ShapeId(uuid::Uuid::new_v4()), "test".into());
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Esc)), ModeTransition::Normal));
+    }
+
+    #[test]
+    fn label_char_stays() {
+        let mut mode = Mode::label_input(ShapeId(uuid::Uuid::new_v4()), "test".into());
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Char('x'))), ModeTransition::Stay));
+    }
+
+    #[test]
+    fn label_arrows_stay() {
+        let mut mode = Mode::label_input(ShapeId(uuid::Uuid::new_v4()), "test".into());
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Left)), ModeTransition::Stay));
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Right)), ModeTransition::Stay));
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Home)), ModeTransition::Stay));
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::End)), ModeTransition::Stay));
+    }
+
+    // --- layer rename ---
+
+    #[test]
+    fn rename_enter_commits() {
+        let mut mode = Mode::layer_rename(LayerId(uuid::Uuid::new_v4()), "Layer 1".into());
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Enter)), ModeTransition::Normal));
+    }
+
+    #[test]
+    fn rename_esc_cancels() {
+        let mut mode = Mode::layer_rename(LayerId(uuid::Uuid::new_v4()), "Layer 1".into());
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Esc)), ModeTransition::Normal));
+    }
+
+    #[test]
+    fn rename_char_stays() {
+        let mut mode = Mode::layer_rename(LayerId(uuid::Uuid::new_v4()), "Layer 1".into());
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Char('x'))), ModeTransition::Stay));
+    }
+
+    // --- selection popup ---
+
+    #[test]
+    fn popup_esc_closes() {
+        let mut mode = Mode::tool_popup(0, None);
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Esc)), ModeTransition::Normal));
+    }
+
+    #[test]
+    fn popup_enter_confirms() {
+        let mut mode = Mode::tool_popup(0, None);
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Enter)), ModeTransition::Normal));
+    }
+
+    #[test]
+    fn popup_navigation_stays() {
+        let mut mode = Mode::tool_popup(0, None);
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Char('j'))), ModeTransition::Stay));
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Char('k'))), ModeTransition::Stay));
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Char('h'))), ModeTransition::Stay));
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Char('l'))), ModeTransition::Stay));
+    }
+
+    // --- recent files ---
+
+    #[test]
+    fn recent_esc_closes() {
+        let mut mode = Mode::recent_files();
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Esc)), ModeTransition::Normal));
+    }
+
+    #[test]
+    fn recent_navigation_stays() {
+        let mut mode = Mode::RecentFiles(RecentFilesState { selected: 1 });
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Char('k'))), ModeTransition::Stay));
+    }
+
+    #[test]
+    fn recent_enter_opens() {
+        let mut mode = Mode::recent_files();
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Enter)), ModeTransition::Normal));
+    }
+
+    // --- session browser ---
+
+    #[test]
+    fn browser_esc_closes() {
+        let mut mode = Mode::session_browser();
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Esc)), ModeTransition::Normal));
+    }
+
+    #[test]
+    fn browser_navigation_stays() {
+        let mut mode = Mode::session_browser();
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Char('j'))), ModeTransition::Stay));
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Char('k'))), ModeTransition::Stay));
+    }
+
+    #[test]
+    fn browser_n_opens_create() {
+        let mut mode = Mode::session_browser();
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Char('n'))), ModeTransition::To(_)));
+    }
+
+    // --- session create ---
+
+    #[test]
+    fn create_esc_cancels() {
+        let mut mode = Mode::session_create();
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Esc)), ModeTransition::Normal));
+    }
+
+    #[test]
+    fn create_enter_with_name_confirms() {
+        let mut mode = Mode::SessionCreate(SessionCreateState { name: "test".into() });
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Enter)), ModeTransition::Action(ModeAction::CreateSession(_))));
+    }
+
+    #[test]
+    fn create_char_stays() {
+        let mut mode = Mode::session_create();
+        let mut app = crate::app::App::new(80, 24);
+        assert!(matches!(mode.handle_key(&mut app, key(KeyCode::Char('a'))), ModeTransition::Stay));
     }
 }
